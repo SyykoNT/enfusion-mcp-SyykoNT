@@ -101,6 +101,14 @@ class EMCP_WB_GetState : NetApiHandler
 			return resp;
 		}
 
+		if (api.IsGameMode())
+		{
+			resp.status = "ok";
+			resp.mode = "game";
+			resp.message = "In game mode";
+			return resp;
+		}
+
 		// Edit mode - collect full state
 		resp.mode = "edit";
 		resp.entityCount = api.GetEditorEntityCount();
