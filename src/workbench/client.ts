@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
 import { findWorkbenchExe } from "../utils/game-paths.js";
+import { findPids } from "../utils/process.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 
@@ -505,6 +506,17 @@ export class WorkbenchClient {
       logger.info("Workbench is already running.");
       return;
     }
+    // A running Workbench whose NET API does not answer is loading, showing a dialog or hung.
+    // Starting another copy would not help and piles up instances.
+    const running = findPids(WORKBENCH_EXE);
+    if (running.length) {
+      throw new WorkbenchError(
+        `Workbench is already running (PID ${running.join(", ")}) but its NET API does not answer. ` +
+          `It may still be loading, showing a dialog, or hung. Not starting another copy; ` +
+          `check the Workbench window, or close it with wb_close (force=true if it is hung).`,
+        "LAUNCH_FAILED"
+      );
+    }
 
     // 2. Resolve the target .gproj and inject handler scripts into that mod.
     //    Handler scripts must compile as part of the opened project — Workbench
@@ -549,6 +561,7 @@ export class WorkbenchClient {
     if (resolvedGproj) {
       args.push("-gproj", resolvedGproj);
     }
+    if (this.config?.addonsDir) args.push("-addonsDir", this.config.addonsDir);
 
     // Use the game install directory as CWD so Workbench finds base game addons
     // (data/ArmaReforger.gproj with GUID 58D0FB3206B6F859) via ./addons resolution.
