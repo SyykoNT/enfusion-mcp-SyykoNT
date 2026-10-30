@@ -50,16 +50,19 @@ class EMCP_WB_Exit : NetApiHandler
 		EMCP_WB_ExitResponse resp = new EMCP_WB_ExitResponse();
 
 		WorldEditor worldEditor = Workbench.GetModule(WorldEditor);
-		// In prefab edit mode Save() opens a "Save world as" dialog and blocks the handler.
-		if (req.save && worldEditor && !worldEditor.IsPrefabEditMode())
+		WorldEditorAPI api;
+		if (worldEditor)
+			api = worldEditor.GetApi();
+
+		// Save() opens a "Save world as" dialog (blocking the handler) for an unsaved world or in prefab edit mode.
+		string worldPath;
+		if (api)
+			api.GetWorldPath(worldPath);
+		if (req.save && worldPath != "" && !worldEditor.IsPrefabEditMode())
 			resp.saved = worldEditor.Save();
 
 		resp.status = "ok";
 		resp.message = "Workbench is exiting";
-
-		WorldEditorAPI api;
-		if (worldEditor)
-			api = worldEditor.GetApi();
 
 		if (api && api.IsGameMode() && GetGame() && GetGame().GetCallqueue())
 			GetGame().GetCallqueue().CallLater(DoExit, 500);
