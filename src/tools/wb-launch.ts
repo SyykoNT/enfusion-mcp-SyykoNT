@@ -105,15 +105,15 @@ export function registerWbLaunch(
         const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { skipAutoLaunch: true, timeout: 20_000 });
         notes.push(save ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : "Closed without saving.");
       } catch (e) {
-        notes.push(`NET API exit failed (${e instanceof Error ? e.message : String(e)}).`);
-        killPids(findPids(image)); // polite WM_CLOSE
+        // In edit mode the handler exits at once, so the connection drops before it answers.
+        await sleep(1500);
+        if (findPids(image).length) notes.push(`NET API exit failed (${e instanceof Error ? e.message : String(e)}).`);
       }
       for (let i = 0; i < 10 && findPids(image).length; i++) await sleep(500);
-      if (findPids(image).length) {
-        // The scripted exit runs on the game call queue, which does not tick while no
-        // world is open — fall back to asking the window to close.
-        killPids(findPids(image));
-        for (let i = 0; i < 20 && findPids(image).length; i++) await sleep(500);
+      // Each polite close shuts one top-level window, so repeat it while waiting.
+      for (let i = 0; i < 20 && findPids(image).length; i++) {
+        if (i % 4 === 0) killPids(findPids(image));
+        await sleep(500);
       }
       if (findPids(image).length && force) {
         killPids(findPids(image), true);

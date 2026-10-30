@@ -1,8 +1,9 @@
 /**
  * EMCP_WB_Exit.c - Close Workbench cleanly
  *
- * Optionally saves the open world, answers, then exits half a second later
- * (exiting inside the handler would drop the response).
+ * Optionally saves the open world, then exits. In game mode the exit runs half a
+ * second later so the response is sent first. In edit mode the game call queue does
+ * not tick, so the exit runs at once and the client treats the dropped response as success.
  *
  * Called via NET API TCP protocol: APIFunc = "EMCP_WB_Exit"
  */
@@ -48,24 +49,23 @@ class EMCP_WB_Exit : NetApiHandler
 		EMCP_WB_ExitRequest req = EMCP_WB_ExitRequest.Cast(request);
 		EMCP_WB_ExitResponse resp = new EMCP_WB_ExitResponse();
 
-		if (req.save)
-		{
-			WorldEditor worldEditor = Workbench.GetModule(WorldEditor);
-			if (worldEditor)
-				resp.saved = worldEditor.Save();
-		}
-
-		if (GetGame() && GetGame().GetCallqueue())
-		{
-			GetGame().GetCallqueue().CallLater(DoExit, 500);
-			resp.message = "Workbench is exiting";
-		}
-		else
-		{
-			resp.message = "No call queue available; the client will close the process";
-		}
+		WorldEditor worldEditor = Workbench.GetModule(WorldEditor);
+		// In prefab edit mode Save() opens a "Save world as" dialog and blocks the handler.
+		if (req.save && worldEditor && !worldEditor.IsPrefabEditMode())
+			resp.saved = worldEditor.Save();
 
 		resp.status = "ok";
+		resp.message = "Workbench is exiting";
+
+		WorldEditorAPI api;
+		if (worldEditor)
+			api = worldEditor.GetApi();
+
+		if (api && api.IsGameMode() && GetGame() && GetGame().GetCallqueue())
+			GetGame().GetCallqueue().CallLater(DoExit, 500);
+		else
+			DoExit();
+
 		return resp;
 	}
 }
