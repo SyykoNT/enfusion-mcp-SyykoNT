@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Config } from "../config.js";
 import { generateServerConfig, validateAgainstSchema } from "../templates/server-config.js";
 import { gameGuidMap } from "../pak/rdb.js";
@@ -13,6 +13,9 @@ import { findPids, killPids, spawnDetached, newestDir, sleep } from "../utils/pr
 const IS_WIN = process.platform === "win32";
 const SERVER_APP_ID = "1874900"; // Arma Reforger Dedicated Server (anonymous login)
 const SERVER_EXE = IS_WIN ? "ArmaReforgerServer.exe" : "ArmaReforgerServer";
+const SERVER_DIAG_EXE = IS_WIN ? "ArmaReforgerServerDiag.exe" : "ArmaReforgerServerDiag";
+/** Running dedicated servers, retail or Diag build. */
+const serverPids = () => [...findPids(SERVER_EXE), ...findPids(SERVER_DIAG_EXE)];
 const STEAMCMD_EXE = IS_WIN ? "steamcmd.exe" : "steamcmd.sh";
 const STEAMCMD_URL = IS_WIN
   ? "https://steamcdn-media.akamaihd.net/client/installer/steamcmd.zip"
@@ -155,8 +158,8 @@ export function registerServer(server: McpServer, config: Config): void {
 
         if (a.action === "start") {
           if (!existsSync(exe)) return text(`Dedicated server not installed at ${config.serverPath}. Run \`server install\` first (or set ENFUSION_SERVER_PATH).`, true);
-          if (findPids(SERVER_EXE).length) return text("A dedicated server is already running — `server stop` first.", true);
-          const args = ["-config", cfgPath, "-profile", config.serverProfilePath, "-maxFPS", "60", "-logStats", "60000", "-noThrow"];
+          if (serverPids().length) return text("A dedicated server is already running. Run `server stop` first.", true);
+          const args = ["-profile", config.serverProfilePath, "-maxFPS", "60", "-logStats", "60000", "-noThrow"];
           const guids: string[] = [];
           for (const name of a.addons ?? []) {
             const gproj = resolveGproj(config, name);
@@ -166,33 +169,48 @@ export function registerServer(server: McpServer, config: Config): void {
             const g = readdirSync(packed).find((f) => f.endsWith(".gproj"));
             guids.push(readGproj(join(packed, g!)).guid);
           }
-          if (guids.length) args.push("-addonsDir", config.packedPath, "-addons", guids.join(","));
+          let note = "";
+          if (guids.length) {
+            // The server refuses -addons together with -config, and mods listed in server.json must be on the
+            // Workshop, so local builds start in -server mode (server.json settings other than scenario/port are not used).
+            const cfg = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, "utf-8")) : {};
+            const scenario = a.scenarioId ?? cfg.game?.scenarioId;
+            if (!scenario) return text("Local addons need a scenario: pass scenarioId (see `server scenarios`) or write one with `server config`.", true);
+            args.unshift("-server", scenario, "-bindPort", String(a.port ?? cfg.bindPort ?? 2001));
+            args.push("-addonsDir", config.packedPath, "-addons", guids.join(","));
+            note = "\n\nStarted in -server mode because local addons cannot be loaded through -config. Only the scenario and port from server.json apply.";
+          } else {
+            args.unshift("-config", cfgPath);
+          }
           args.push(...(a.extraArgs ?? []));
           mkdirSync(config.serverProfilePath, { recursive: true });
           const started = Date.now();
-          const pid = spawnDetached(exe, args, config.serverPath);
+          // The Diag server matches the Diag client that `game launch` uses to connect (the server rejects a dev/retail mix).
+          const diagExe = join(config.serverPath, SERVER_DIAG_EXE);
+          const runExe = existsSync(diagExe) ? diagExe : exe;
+          const pid = spawnDetached(runExe, args, config.serverPath);
           await sleep(8000);
           const logDir = newestDir(serverLogsDir(config), started - 5000);
-          const alive = findPids(SERVER_EXE).length > 0;
+          const alive = serverPids().length > 0;
           return text(
-            `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${SERVER_EXE} ${args.join(" ")}\n` +
+            `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
             (logDir ? `Logs: ${logDir}\n\n\`\`\`\n${tail(join(logDir, "console.log"), 25)}\n\`\`\`` : "") +
-            `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${a.port ?? 2001} (and the same local addons).`,
+            `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${a.port ?? 2001} (and the same local addons).${note}`,
             !alive
           );
         }
 
         if (a.action === "stop") {
-          const pids = findPids(SERVER_EXE);
+          const pids = serverPids();
           if (!pids.length) return text("No dedicated server running.");
           killPids(pids, a.force);
-          for (let i = 0; i < 20 && findPids(SERVER_EXE).length; i++) await sleep(500);
-          if (findPids(SERVER_EXE).length && !a.force) return text("Server is still shutting down (or ignored the request) — retry with force=true.", true);
+          for (let i = 0; i < 20 && serverPids().length; i++) await sleep(500);
+          if (serverPids().length && !a.force) return text("Server is still shutting down (or ignored the request). Retry with force=true.", true);
           return text(`**Server stopped** (pid ${pids.join(", ")}).`);
         }
 
         if (a.action === "status") {
-          const pids = findPids(SERVER_EXE);
+          const pids = serverPids();
           const logDir = newestDir(serverLogsDir(config));
           const installLog = join(config.steamcmdPath, "install-server.log");
           const installing = findPids(STEAMCMD_EXE).length > 0;
