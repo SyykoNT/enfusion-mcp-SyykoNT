@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseScriptIssues, readGproj } from "../../src/workbench/cli.js";
+import { parseScriptIssues, readGproj, workbenchProfileDir } from "../../src/workbench/cli.js";
+import type { Config } from "../../src/config.js";
 
 // Lines copied from a real `-wbSilent` run on Arma Reforger Tools 1.8 with a broken addon script
 const LOG = [
@@ -37,5 +38,25 @@ describe("readGproj", () => {
     const f = join(d, "a.gproj");
     writeFileSync(f, `GameProject {\n ID "My Mod"\n GUID B83297F2C2B9C62B\n TITLE "My Mod Title"\n}`);
     expect(readGproj(f)).toEqual({ id: "My Mod", guid: "B83297F2C2B9C62B", title: "My Mod Title" });
+  });
+});
+
+describe("workbenchProfileDir", () => {
+  it("uses ENFUSION_WORKBENCH_PROFILE when it has logs/, else falls back to the project path parent", () => {
+    const root = mkdtempSync(join(tmpdir(), "emcp-"));
+    const profile = join(root, "Workbench");
+    mkdirSync(join(profile, "logs"), { recursive: true });
+    const config = { projectPath: join(root, "projects") } as Config;
+    const saved = process.env.ENFUSION_WORKBENCH_PROFILE;
+    try {
+      process.env.ENFUSION_WORKBENCH_PROFILE = profile;
+      expect(workbenchProfileDir(config)).toBe(profile);
+      process.env.ENFUSION_WORKBENCH_PROFILE = join(root, "missing");
+      mkdirSync(join(root, "logs"));
+      expect(workbenchProfileDir(config)).toBe(root);
+    } finally {
+      if (saved === undefined) delete process.env.ENFUSION_WORKBENCH_PROFILE;
+      else process.env.ENFUSION_WORKBENCH_PROFILE = saved;
+    }
   });
 });

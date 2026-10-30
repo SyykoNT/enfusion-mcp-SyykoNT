@@ -1,5 +1,15 @@
 import { readdirSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve, join, sep } from "node:path";
+
+/**
+ * The "My Games" folder Arma Reforger and Workbench write to. Windows may redirect Documents to
+ * OneDrive, so use whichever candidate actually holds an Arma folder.
+ */
+export function myGamesDir(): string {
+  const dirs = [join(homedir(), "Documents", "My Games"), join(homedir(), "OneDrive", "Documents", "My Games")];
+  return dirs.find((d) => existsSync(join(d, "ArmaReforgerWorkbench")) || existsSync(join(d, "ArmaReforger"))) ?? dirs[0];
+}
 
 /**
  * Resolve the game data directory (loose/extracted files).

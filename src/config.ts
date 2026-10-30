@@ -3,6 +3,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { logger } from "./utils/logger.js";
+import { myGamesDir } from "./utils/game-paths.js";
 
 export interface Config {
   /** Path to "Arma Reforger Tools" installation */
@@ -42,13 +43,15 @@ const DEFAULT_WORKBENCH_PATH =
 
 const MCP_HOME = join(homedir(), ".enfusion-mcp");
 
+const STEAM_SERVER_PATH = resolve(DEFAULT_WORKBENCH_PATH, "..", "Arma Reforger Server");
+
 const DEFAULTS: Config = {
   workbenchPath: DEFAULT_WORKBENCH_PATH,
-  serverPath: join(MCP_HOME, "server"),
+  serverPath: existsSync(join(STEAM_SERVER_PATH, "ArmaReforgerServer.exe")) ? STEAM_SERVER_PATH : join(MCP_HOME, "server"),
   steamcmdPath: join(MCP_HOME, "steamcmd"),
   serverProfilePath: join(MCP_HOME, "server-profile"),
-  packedPath: join(homedir(), "Documents", "My Games", "ArmaReforgerWorkbench", "packed"),
-  projectPath: join(homedir(), "Documents", "My Games", "ArmaReforgerWorkbench", "addons"),
+  packedPath: join(myGamesDir(), "ArmaReforgerWorkbench", "packed"),
+  projectPath: join(myGamesDir(), "ArmaReforgerWorkbench", "addons"),
   gamePath: resolve(DEFAULT_WORKBENCH_PATH, "..", "Arma Reforger"),
   dataDir: resolve(
     dirname(fileURLToPath(import.meta.url)),

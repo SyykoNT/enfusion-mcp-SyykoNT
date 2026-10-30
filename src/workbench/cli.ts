@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
-import { findWorkbenchExe } from "../utils/game-paths.js";
+import { findWorkbenchExe, myGamesDir } from "../utils/game-paths.js";
 import { newestDir } from "../utils/process.js";
 
 export interface ScriptIssue {
@@ -33,9 +33,17 @@ export interface WorkbenchRun {
   console: string;
 }
 
-/** Workbench profile dir (holds logs/, addons/). */
+/**
+ * Workbench profile dir (holds logs/, addons/): ENFUSION_WORKBENCH_PROFILE, the parent of the
+ * project path, or the default "My Games" profile. First one with logs/ wins.
+ */
 export function workbenchProfileDir(config: Config): string {
-  return resolve(config.projectPath, "..");
+  const candidates = [
+    process.env.ENFUSION_WORKBENCH_PROFILE,
+    resolve(config.projectPath, ".."),
+    join(myGamesDir(), "ArmaReforgerWorkbench"),
+  ].filter((d): d is string => !!d);
+  return candidates.find((d) => existsSync(join(d, "logs"))) ?? resolve(config.projectPath, "..");
 }
 
 export function runWorkbench(config: Config, args: string[], timeoutMs: number): Promise<WorkbenchRun> {

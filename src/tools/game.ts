@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { myGamesDir } from "../utils/game-paths.js";
 import type { Config } from "../config.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep } from "../utils/process.js";
@@ -32,7 +32,7 @@ export function registerGame(server: McpServer, config: Config): void {
       },
     },
     async (a) => {
-      const logsDir = join(homedir(), "Documents", "My Games", "ArmaReforger", "logs");
+      const logsDir = join(myGamesDir(), "ArmaReforger", "logs");
       const running = () => [...findPids(GAME_EXE), ...findPids(GAME_DIAG_EXE)];
       try {
         if (a.action === "launch") {
