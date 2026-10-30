@@ -156,7 +156,7 @@ function generateModded(className: string, parent: string, methods?: string[]): 
       const params = extractParamNames(clean);
       lines.push(`  override ${clean}`);
       lines.push("  {");
-      lines.push(`    super.${name}(${params});`);
+      lines.push(`    ${superCall(clean, name, params)}`);
       lines.push("  }");
       lines.push("");
     }
@@ -213,7 +213,7 @@ function generateGamemode(className: string, parent: string, methods?: string[])
         const clean = stripOverride(m);
         const name = extractMethodName(clean);
         const params = extractParamNames(clean);
-        return { signature: `override ${clean}`, body: `    super.${name}(${params});\n    // TODO: implement` };
+        return { signature: `override ${clean}`, body: `    ${superCall(clean, name, params)}\n    // TODO: implement` };
       })
     : GAMEMODE_METHODS;
 
@@ -338,6 +338,12 @@ function generateBasic(className: string, parent: string, methods?: string[]): s
 /** Strip leading "override" keyword if already present */
 function stripOverride(sig: string): string {
   return sig.replace(/^\s*override\s+/, "");
+}
+
+/** "super.X(args);", with "return" when the method returns a value: "bool CanX()" → "return super.CanX();" */
+function superCall(sig: string, name: string, params: string): string {
+  const returnType = sig.slice(0, sig.indexOf(`${name}(`)).trim().split(/\s+/).pop();
+  return `${returnType && returnType !== "void" ? "return " : ""}super.${name}(${params});`;
 }
 
 /** Extract the method name from a signature like "void OnInit(int x)" → "OnInit" */

@@ -26,6 +26,17 @@ describe("generateScript", () => {
     expect(code).toContain("super.OnDamage(damageContext);");
   });
 
+  it("returns the super call for non-void modded methods", () => {
+    const code = generateScript({
+      className: "SCR_BaseGameMode",
+      scriptType: "modded",
+      parentClass: "SCR_BaseGameMode",
+      methods: ["bool CanStartSpawnPreload()", "protected void OnGameStart()"],
+    });
+    expect(code).toContain("return super.CanStartSpawnPreload();");
+    expect(code).not.toContain("return super.OnGameStart();");
+  });
+
   it("forwards parameters in super calls for modded scripts", () => {
     const code = generateScript({
       className: "SCR_CharacterControllerComponent",

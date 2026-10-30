@@ -39,7 +39,8 @@ export function parseResourceDatabase(buf: Buffer): Map<string, RdbEntry> {
     const path = buf.toString("latin1", i + 4, strEnd);
     if (!/^[\w$ .\-/()&+,'!#@~[\]]+\.\w+$/.test(path)) continue;
     const guid = Buffer.from(buf.subarray(strEnd + 7, strEnd + 15)).reverse().toString("hex").toUpperCase();
-    out.set(path.toLowerCase(), { guid, path });
+    // Scripts and other non-resource files are stored with an all-zero GUID
+    if (guid !== "0000000000000000") out.set(path.toLowerCase(), { guid, path });
     i = strEnd + 14;
   }
   return out;

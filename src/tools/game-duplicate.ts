@@ -54,7 +54,7 @@ export function registerGameDuplicate(
           .optional()
           .describe(
             "Addon folder name under ENFUSION_PROJECT_PATH (e.g., 'MyMod'). " +
-            "If omitted, the first addon found in the project path is used."
+            "If omitted, ENFUSION_DEFAULT_MOD is used."
           ),
         flatten: z
           .boolean()
