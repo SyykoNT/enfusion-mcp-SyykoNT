@@ -36,6 +36,9 @@ export interface Config {
   serverProfilePath: string;
   /** Where `mod build` writes packed addons (each in <dir>/<AddonName>). */
   packedPath: string;
+  /** Passed to Workbench as -addonsDir (comma-separated) on GUI and headless launches, so
+   *  dependencies resolve from local clones. Set via ENFUSION_ADDONS_DIR. */
+  addonsDir?: string;
 }
 
 const DEFAULT_WORKBENCH_PATH =
@@ -130,6 +133,7 @@ export function loadConfig(): Config {
   if (process.env.ENFUSION_STEAMCMD_PATH) config.steamcmdPath = process.env.ENFUSION_STEAMCMD_PATH;
   if (process.env.ENFUSION_SERVER_PROFILE) config.serverProfilePath = process.env.ENFUSION_SERVER_PROFILE;
   if (process.env.ENFUSION_PACKED_PATH) config.packedPath = process.env.ENFUSION_PACKED_PATH;
+  if (process.env.ENFUSION_ADDONS_DIR) config.addonsDir = process.env.ENFUSION_ADDONS_DIR;
   if (process.env.ENFUSION_DEFAULT_MOD) {
     config.defaultMod = process.env.ENFUSION_DEFAULT_MOD;
   }

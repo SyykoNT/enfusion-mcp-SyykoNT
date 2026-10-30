@@ -54,7 +54,8 @@ export function runWorkbench(config: Config, args: string[], timeoutMs: number):
   return new Promise((done) => {
     // CWD = game dir so ./addons/data and ./addons/core resolve (same as wb_launch)
     const cwd = existsSync(config.gamePath) ? config.gamePath : dirname(exe);
-    const proc = spawn(exe, args, { cwd, windowsHide: true, stdio: "ignore" });
+    const fullArgs = config.addonsDir ? [...args, "-addonsDir", config.addonsDir] : args;
+    const proc = spawn(exe, fullArgs, { cwd, windowsHide: true, stdio: "ignore" });
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
     const finish = (code: number | null) => {
