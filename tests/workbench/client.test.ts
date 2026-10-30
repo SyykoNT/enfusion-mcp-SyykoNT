@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
 import {
   decodePascalString,
@@ -334,5 +337,16 @@ describe("WorkbenchClient in-band error status", () => {
       { skipAutoLaunch: true }
     );
     expect(result.entityCount).toBe(0);
+  });
+});
+
+describe("cleanupHandlerScripts", () => {
+  it("removes the handler folder and the empty WorkbenchGame folder, and reports it", () => {
+    const mod = mkdtempSync(join(tmpdir(), "emcp-"));
+    const handlers = join(mod, "Scripts", "WorkbenchGame", "EnfusionMCP");
+    mkdirSync(handlers, { recursive: true });
+    writeFileSync(join(handlers, "EMCP_WB_Ping.c"), "");
+    expect(new WorkbenchClient("127.0.0.1", 1).cleanupHandlerScripts(mod)).toBe(true);
+    expect(existsSync(join(mod, "Scripts", "WorkbenchGame"))).toBe(false);
   });
 });

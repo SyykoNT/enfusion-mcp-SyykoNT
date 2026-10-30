@@ -308,7 +308,7 @@ export class WorkbenchClient {
       // Clean up empty parent dirs
       const wbGameDir = join(modDir, "Scripts", "WorkbenchGame");
       if (existsSync(wbGameDir) && readdirSync(wbGameDir).length === 0) {
-        rmSync(wbGameDir);
+        rmSync(wbGameDir, { recursive: true });
       }
       return true;
     } catch (e) {
