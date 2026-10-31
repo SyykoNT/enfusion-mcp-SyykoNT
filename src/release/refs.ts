@@ -36,6 +36,7 @@ export function collectRefs(addonDir: string, files?: string[]): Ref[] {
   const out = new Map<string, Ref>();
   for (const file of filterFiles(addonFiles(addonDir), files).filter((f) => REF_EXT.test(f))) {
     for (const m of readFileSync(join(addonDir, file), "utf-8").matchAll(REF)) {
+      if (/^0+$/.test(m[1])) continue; // an unset ResourceName, not a GUID
       const ref = { guid: m[1].toUpperCase(), path: m[2], file };
       out.set(`${ref.guid}|${ref.path}|${file}`, ref);
     }

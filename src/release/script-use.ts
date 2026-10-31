@@ -47,7 +47,8 @@ export interface Scripts { sources: string[]; unreadable: number }
 export function addonScripts(a: Pick<AddonInfo, "dir" | "source">): Scripts {
   const out: Scripts = { sources: [], unreadable: 0 };
   if (a.source === "loose") {
-    for (const f of addonFiles(a.dir).filter((f) => /^scripts\/.*\.c$/i.test(f))) out.sources.push(readFileSync(join(a.dir, f), "utf-8"));
+    // The MCP's own Workbench handlers are injected, not the addon's scripts
+    for (const f of addonFiles(a.dir).filter((f) => /^scripts\/.*\.c$/i.test(f) && !/^scripts\/workbenchgame\/enfusionmcp\//i.test(f))) out.sources.push(readFileSync(join(a.dir, f), "utf-8"));
     return out;
   }
   const vfs = vfsOf(a.dir);
