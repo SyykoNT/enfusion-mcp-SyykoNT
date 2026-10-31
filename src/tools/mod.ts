@@ -10,8 +10,8 @@ import { validateFilename, validateProjectPath } from "../utils/safe-path.js";
 import type { SearchEngine } from "../index/search-engine.js";
 import { parse, getProperty } from "../formats/enfusion-text.js";
 
-import { compileAddon, packAddon, readGproj, resolveGproj } from "../workbench/cli.js";
-import { findPids } from "../utils/process.js";
+import { checkPackOutput, compileAddon, handlerFiles, packAddon, pakSummary, readGproj, resolveGproj } from "../workbench/cli.js";
+import { findPids, workbenchCommandLines } from "../utils/process.js";
 
 // ─── create helpers ───────────────────────────────────────────────────────────
 
@@ -319,6 +319,17 @@ function checkNaming(projectPath: string): ValidationIssue[] {
   return issues;
 }
 
+/** Owner line of the shared Workbench lock file (ENFUSION_WORKBENCH_LOCK), for refusal messages. */
+function lockOwner(): string {
+  const path = process.env.ENFUSION_WORKBENCH_LOCK;
+  if (!path) return "no lock file configured (ENFUSION_WORKBENCH_LOCK)";
+  try {
+    return /^\s*owner:\s*(.+)$/m.exec(readFileSync(path, "utf-8").replace(/^\uFEFF/, ""))?.[1].trim() ?? `no owner line in ${path}`;
+  } catch {
+    return `cannot read ${path}`;
+  }
+}
+
 // ─── registerMod ──────────────────────────────────────────────────────────────
 
 export function registerMod(
@@ -359,6 +370,18 @@ export function registerMod(
           .boolean()
           .optional()
           .describe("(build/compile/pack) Run even while the Workbench GUI is open (it can crash when both work on the same addon)."),
+        allowHandlers: z
+          .boolean()
+          .optional()
+          .describe("(build/pack) Pack even if the addon holds the MCP handler scripts (local test packs only)."),
+        cleanOutput: z
+          .boolean()
+          .optional()
+          .describe("(build/pack) Pack into an output folder that holds other files too (nothing is deleted)."),
+        listPak: z
+          .boolean()
+          .optional()
+          .describe("(build/pack) List data.pak contents after packing (default true)."),
 
         // ── create params ─────────────────────────────────────────────────────
         name: z
@@ -393,7 +416,7 @@ export function registerMod(
           .describe("(validate) Specific checks to run. Runs all checks if omitted."),
       },
     },
-    async ({ action, addonName, outputPath, gprojPath, force, name, description, prefix, pattern: patternName, projectPath, checks }) => {
+    async ({ action, addonName, outputPath, gprojPath, force, allowHandlers, cleanOutput, listPak, name, description, prefix, pattern: patternName, projectPath, checks }) => {
 
       // ── build / compile / pack ─────────────────────────────────────────────
       if (action === "build" || action === "compile" || action === "pack") {
@@ -404,24 +427,45 @@ export function registerMod(
             isError: true,
           };
         }
+        const addonDir = dirname(gproj);
+        const project = readGproj(gproj);
+        const outDir = outputPath || join(config.packedPath, project.id || basename(addonDir));
+        // Cheap file checks first, all before Workbench starts (a build compiles before it packs)
+        if (action !== "compile") {
+          const handlers = allowHandlers ? [] : handlerFiles(addonDir);
+          if (handlers.length) {
+            return {
+              content: [{
+                type: "text",
+                text: `The addon contains ${handlers.length} MCP handler file(s) that would be packed: ${handlers.slice(0, 5).join(", ")}${handlers.length > 5 ? ", ..." : ""}. ` +
+                  `Run wb_cleanup modDir=${addonDir} (then restart Workbench before more wb_* calls), or pass allowHandlers=true for a local test pack.`,
+              }],
+              isError: true,
+            };
+          }
+          const outError = checkPackOutput(config, addonDir, project.guid, outDir, cleanOutput);
+          if (outError) return { content: [{ type: "text", text: outError }], isError: true };
+        }
         if (!force && findPids("ArmaReforgerWorkbenchSteamDiag.exe").length > 0) {
+          const open = workbenchCommandLines().map((w) => `PID ${w.pid} (${w.gproj || "unknown project"})`);
           return {
             content: [{
               type: "text",
-              text: "Workbench is open. A second (headless) Workbench on the same addon can crash the open one — " +
-                "close it with `wb_close` first, or pass force=true.",
+              text: `Workbench is open${open.length ? `: ${open.join(", ")}` : ""}. Lock owner: ${lockOwner()}. ` +
+                "A second headless Workbench on the same addon can crash the open one. If that Workbench is yours, close it with wb_close; " +
+                "if it belongs to another session, wait or ask the lock owner. force=true runs anyway.",
             }],
             isError: true,
           };
         }
-        const addonDir = dirname(gproj);
-        const project = readGproj(gproj);
         const lines: string[] = [`## ${action === "compile" ? "Compile" : action === "pack" ? "Pack" : "Build"}: ${project.id || basename(addonDir)}`, ""];
 
         try {
+          let compiled: { ok: boolean; errors: unknown[]; warnings: unknown[] } | undefined;
           if (action !== "pack") {
             const c = await compileAddon(config, gproj);
             const own = c.errors.filter((e) => e.inAddon);
+            compiled = { ok: c.ok, errors: own, warnings: c.warnings };
             lines.push(`**Scripts:** ${c.ok ? "compiled OK" : "FAILED"} (${c.run.seconds}s${c.run.timedOut ? ", timed out" : ""})`);
             if (own.length) {
               lines.push("", "### Errors in this addon");
@@ -443,10 +487,18 @@ export function registerMod(
             lines.push("");
           }
 
-          const outDir = outputPath || join(config.packedPath, project.id || basename(addonDir));
           const p = await packAddon(config, gproj, outDir);
           lines.push(`**Pack:** ${p.ok ? "OK" : "FAILED"} (${p.run.seconds}s) → \`${outDir}\``);
           if (p.files.length) lines.push(`Files: ${p.files.join(", ")}`);
+          let pak: ReturnType<typeof pakSummary> | undefined;
+          if (listPak !== false && p.files.includes("data.pak")) {
+            try {
+              pak = pakSummary(join(outDir, "data.pak"));
+              lines.push(`data.pak: ${pak.entries} entries, ${pak.bytes} bytes; by folder ${Object.entries(pak.byTopFolder).map(([k, v]) => `${k} ${v}`).join(", ")}; MCP handler entries: ${pak.handlerEntries}`);
+            } catch (e) {
+              lines.push(`data.pak could not be listed: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
           if (existsSync(join(addonDir, "Scripts", "WorkbenchGame", "EnfusionMCP"))) {
             lines.push("", "⚠ The EnfusionMCP Workbench handler scripts are inside this addon and were packed with it. Run `wb_cleanup` before publishing.");
           }
@@ -459,6 +511,14 @@ export function registerMod(
             for (const e of p.errors.slice(0, 20)) lines.push(`- ${e}`);
             if (p.run.logDir) lines.push(`Log: ${join(p.run.logDir, "console.log")}`);
           }
+          const result = {
+            action, ok: p.ok,
+            addon: { id: project.id, guid: project.guid, dir: addonDir },
+            outDir, seconds: p.run.seconds,
+            files: p.files.map((f) => ({ name: f, bytes: statSync(join(outDir, f)).size })),
+            pak, compile: compiled, packErrors: p.errors, logDir: p.run.logDir,
+          };
+          lines.push("", "```json", JSON.stringify(result), "```");
           return { content: [{ type: "text", text: lines.join("\n") }], ...(p.ok ? {} : { isError: true }) };
         } catch (e) {
           return { content: [{ type: "text", text: `Error running Workbench: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
