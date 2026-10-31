@@ -10,7 +10,7 @@ import { dirname } from "node:path";
 import type { Config } from "../config.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { validateProjectPath } from "../utils/safe-path.js";
-import { resolveGameDataPath, findLooseFile, resolveAddonDir } from "../utils/game-paths.js";
+import { resolveGameDataPath, findLooseFile, resolveWriteAddon } from "../utils/game-paths.js";
 import { generateGuid } from "../formats/guid.js";
 import { PakVirtualFS } from "../pak/vfs.js";
 import { findPids } from "../utils/process.js";
@@ -53,9 +53,13 @@ export function registerGameDuplicate(
           .string()
           .optional()
           .describe(
-            "Addon folder name under ENFUSION_PROJECT_PATH (e.g., 'MyMod'). " +
-            "If omitted, ENFUSION_DEFAULT_MOD is used."
+            "Addon folder name under ENFUSION_PROJECT_PATH or ENFUSION_ADDONS_DIR (e.g., 'MyMod'). " +
+            "modName or projectPath is required; writes never default to ENFUSION_DEFAULT_MOD."
           ),
+        projectPath: z
+          .string()
+          .optional()
+          .describe("Addon root path, for an addon outside the project path. Wins over modName."),
         flatten: z
           .boolean()
           .default(false)
@@ -74,7 +78,7 @@ export function registerGameDuplicate(
           ),
       },
     },
-    async ({ sourcePath, destPath, modName, flatten, register }) => {
+    async ({ sourcePath, destPath, modName, projectPath, flatten, register }) => {
       // Strip GUID prefix from sourcePath if present: {GUID}path → path
       const bareSourcePath = sourcePath.replace(/^\{[0-9A-Fa-f]{16}\}/, "");
 
@@ -125,22 +129,11 @@ export function registerGameDuplicate(
       }
 
       // Resolve destination addon directory
-      const addonDir = resolveAddonDir(config.projectPath, modName ?? config.defaultMod);
-      if (!addonDir) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Could not find addon directory. ` +
-                (modName
-                  ? `'${modName}' not found under ${config.projectPath}`
-                  : `No addons found under ${config.projectPath}`) +
-                `. Provide modName matching the addon folder name.`,
-            },
-          ],
-          isError: true,
-        };
+      const target = resolveWriteAddon(config, { projectPath, modName });
+      if ("error" in target) {
+        return { content: [{ type: "text", text: target.error }], isError: true };
       }
+      const addonDir = target.dir;
 
       // Validate and resolve the destination path
       let absDestPath: string;

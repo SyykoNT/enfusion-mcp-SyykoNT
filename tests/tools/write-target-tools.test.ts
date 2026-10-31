@@ -7,6 +7,8 @@ import type { Config } from "../../src/config.js";
 import { myGamesDir } from "../../src/utils/game-paths.js";
 import { registerConfigOverride } from "../../src/tools/config-override.js";
 import { registerEconomy } from "../../src/tools/economy.js";
+import { registerGameDuplicate } from "../../src/tools/game-duplicate.js";
+import type { WorkbenchClient } from "../../src/workbench/client.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-wtt-"));
 const projects = join(root, "projects");
@@ -16,6 +18,8 @@ const addon = (name: string, guid: string) => {
 };
 addon("Coalition-Reforger-Framework", "5EB3564A02CE294F");
 addon("COALITION-Lobby", "69EA43E490A50DBE");
+mkdirSync(join(root, "game", "addons", "data", "Prefabs"), { recursive: true });
+writeFileSync(join(root, "game", "addons", "data", "Prefabs", "Src.conf"), "SCR_Foo {\n}\n");
 const config = {
   projectPath: projects,
   gamePath: join(root, "game"),
@@ -29,6 +33,7 @@ const tools: Record<string, Handler> = {};
 const server = { registerTool: (name: string, _def: unknown, h: Handler) => { tools[name] = h; } } as unknown as McpServer;
 registerConfigOverride(server, config);
 registerEconomy(server, config);
+registerGameDuplicate(server, config, {} as WorkbenchClient);
 
 const listing = () => readdirSync(projects, { recursive: true }).map(String).sort();
 const before = listing();
@@ -37,9 +42,10 @@ const workshop = join(myGamesDir(), "ArmaReforgerWorkbench", "addons", "SomeMod"
 const calls: [string, Record<string, unknown>][] = [
   ["config_override", { action: "set", path: "Configs/Campaign/XPRewards.conf", edits: [{ property: "m_iRewardXP", value: "1" }] }],
   ["economy", { action: "set", category: "xp", multiplier: 2 }],
+  ["game_duplicate", { sourcePath: "Prefabs/Src.conf", destPath: "Configs/Copy.conf", register: false }],
 ];
 
-describe.each(calls)("%s set", (tool, args) => {
+describe.each(calls)("%s", (tool, args) => {
   it("refuses without a target even though ENFUSION_DEFAULT_MOD is set", async () => {
     const r = await tools[tool](args);
     expect(r.isError).toBe(true);
