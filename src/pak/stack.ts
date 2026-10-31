@@ -42,6 +42,32 @@ export interface Stack {
 interface Addon { kind: LayerKind; root: string; gproj: string; guid?: string }
 interface Info { id: string; guid: string; title: string; deps: string[]; warning?: string }
 
+/** One installed addon, as RL-N1, RL-I2 and RL-I3 read it. */
+export interface AddonInfo extends Info {
+  dir: string;
+  gproj: string;
+  source: LayerKind;
+  /** Workshop name from ServerData.json, else the TITLE */
+  name: string;
+  /** Installed Workshop version ("" for projects and the base game) */
+  version: string;
+  /** Game version the installed Workshop version was built for ("" when the mod left it empty) */
+  gameVersion: string;
+  /** Dependency names from the Workshop meta, so a missing dependency can still be named */
+  depNames: Record<string, string>;
+  /** Other folders with this GUID, which lose to this one */
+  shadowed: string[];
+}
+
+export interface Closure {
+  /** Dependencies before their dependents, the target last */
+  order: AddonInfo[];
+  missing: string[];
+  /** GUID paths that lead back to themselves, e.g. [A, B, A] */
+  cycles: string[][];
+  warnings: string[];
+}
+
 export const VANILLA_GUID = "58D0FB3206B6F859";
 
 const subdirs = (dir: string) => {
@@ -85,6 +111,40 @@ function readInfo(gproj: string): Info {
   }
 }
 
+// Both Workshop files start with a UTF-8 BOM
+const json = (f: string): any => {
+  try {
+    return JSON.parse(readFileSync(f, "utf-8").replace(/^﻿/, ""));
+  } catch {
+    return undefined;
+  }
+};
+
+const described = new Map<string, Omit<AddonInfo, "shadowed">>();
+function describe(a: Addon, cat: Addon[]): AddonInfo {
+  const key = `${a.gproj}|${statSync(a.gproj).mtimeMs}|${statSync(a.root).mtimeMs}`;
+  let d = described.get(key);
+  if (!d) {
+    const info = readInfo(a.gproj);
+    const sd = json(join(a.root, "ServerData.json"));
+    const version: string = sd?.revision?.version ?? "";
+    const versions: any[] = json(join(a.root, "meta"))?.meta?.versions ?? [];
+    const v = versions.find((x) => x.version === version) ?? versions[0];
+    const depNames = Object.fromEntries((v?.dependencies ?? []).map((x: any) => [String(x.assetId).toUpperCase(), String(x.assetName)]));
+    d = { ...info, dir: a.root, gproj: a.gproj, source: a.kind, name: sd?.name || info.title, version, gameVersion: v?.gameVersion ?? "", depNames };
+    described.set(key, d);
+  }
+  const guid = d.guid;
+  return { ...d, shadowed: cat.filter((o) => o.root !== a.root && o.guid === guid).map((o) => o.root) };
+}
+
+/** Every installed addon by GUID, the copy Workbench would load (loose before Workshop before base game). */
+export function installedAddons(config: Config): Map<string, AddonInfo> {
+  const cat = catalog(config), out = new Map<string, AddonInfo>();
+  for (const a of cat) if (a.guid && !out.has(a.guid)) out.set(a.guid, describe(a, cat));
+  return out;
+}
+
 const inside = (root: string | undefined, p: string) => {
   try {
     return !!root && isContained(realPathOf(root), realPathOf(p));
@@ -119,7 +179,7 @@ const byGuid = (cat: Addon[], guid: string) => cat.find((a) => a.guid === guid);
 const norm = (p: string) => stripGuid(p).replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
 
 const rdbs = new Map<string, Map<string, RdbEntry>>();
-function rdbOf(root: string): Map<string, RdbEntry> {
+export function rdbOf(root: string): Map<string, RdbEntry> {
   const f = join(root, "resourceDatabase.rdb");
   if (!existsSync(f)) return new Map();
   const key = `${f}|${statSync(f).mtimeMs}`;
@@ -130,7 +190,7 @@ function rdbOf(root: string): Map<string, RdbEntry> {
 
 // Pak indexes load on first use, so building a 140-layer stack reads no pak
 const paks = new Map<string, { sig: string; vfs: PakVirtualFS | null }>();
-function vfsOf(root: string): PakVirtualFS | null {
+export function vfsOf(root: string): PakVirtualFS | null {
   const files = readdirSync(root).filter((n) => /\.pak$/i.test(n)).sort().map((n) => join(root, n));
   const sig = files.map((f) => { const s = statSync(f); return `${f}|${s.size}|${s.mtimeMs}`; }).join(";");
   let e = paks.get(root);
@@ -144,19 +204,19 @@ export function pathOfGuid(layers: Layer[], guid: string): string | undefined {
   return undefined;
 }
 
-function makeLayer(a: Addon, info: Info, index: number): Layer {
-  const base = { index, id: info.id, guid: info.guid, title: info.title, kind: a.kind, root: a.root };
-  if (a.kind !== "loose") {
+function makeLayer(a: AddonInfo, index: number): Layer {
+  const base = { index, id: a.id, guid: a.guid, title: a.title, kind: a.source, root: a.dir };
+  if (a.source !== "loose") {
     return {
       ...base,
-      exists: (p) => vfsOf(a.root)?.exists(stripGuid(p)) ?? false,
-      read: (p) => { const v = vfsOf(a.root); return v && v.fileSize(stripGuid(p)) >= 0 ? v.readFile(stripGuid(p)) : null; },
-      guidOf: (p) => rdbOf(a.root).get(norm(p))?.guid,
+      exists: (p) => vfsOf(a.dir)?.exists(stripGuid(p)) ?? false,
+      read: (p) => { const v = vfsOf(a.dir); return v && v.fileSize(stripGuid(p)) >= 0 ? v.readFile(stripGuid(p)) : null; },
+      guidOf: (p) => rdbOf(a.dir).get(norm(p))?.guid,
     };
   }
   const file = (p: string) => {
     try {
-      return validateProjectPath(a.root, stripGuid(p));
+      return validateProjectPath(a.dir, stripGuid(p));
     } catch {
       return null;
     }
@@ -168,35 +228,47 @@ function makeLayer(a: Addon, info: Info, index: number): Layer {
     guidOf: (p) => {
       const f = file(p);
       const meta = f && existsSync(`${f}.meta`) ? readFileSync(`${f}.meta`, "utf-8").match(/Name\s+"\{([0-9A-Fa-f]{16})\}/)?.[1] : undefined;
-      return meta?.toUpperCase() ?? rdbOf(a.root).get(norm(p))?.guid;
+      return meta?.toUpperCase() ?? rdbOf(a.dir).get(norm(p))?.guid;
     },
   };
 }
 
 /**
- * The stack `target` loads (folder name, GUID, ID, .gproj path or "vanilla"). Each dependency
+ * The dependency closure of `target` (folder name, GUID, ID, .gproj path or "vanilla"). Each dependency
  * resolves to the first loose project, then Workshop folder, then base game addon with its GUID.
  */
-export function buildStack(config: Config, target: string): Stack {
+export function closure(config: Config, target: string): Closure {
   const cat = catalog(config);
-  const layers: Layer[] = [], missing: string[] = [], warnings: string[] = [];
-  const seen = new Set<string>();
+  const order: AddonInfo[] = [], missing: string[] = [], cycles: string[][] = [], warnings: string[] = [];
+  const seen = new Set<string>(), path: string[] = [];
   // Depth-first post-order: a dependency before its dependents, siblings in Dependencies order
   // (the engine's order among siblings is unverified)
   const visit = (a: Addon) => {
-    const info = readInfo(a.gproj);
+    const info = describe(a, cat);
     const key = info.guid || a.root;
     if (seen.has(key)) return;
     seen.add(key); // before the dependencies, so a cycle stops here
+    path.push(key);
     if (info.warning) warnings.push(info.warning);
     for (const d of info.deps) {
-      if (seen.has(d)) continue;
-      const dep = byGuid(cat, d);
-      if (dep) visit(dep);
-      else if (!missing.includes(d)) missing.push(d);
+      const at = path.indexOf(d);
+      if (at >= 0) cycles.push([...path.slice(at), d]);
+      else if (seen.has(d)) continue;
+      else {
+        const dep = byGuid(cat, d);
+        if (dep) visit(dep);
+        else if (!missing.includes(d)) missing.push(d);
+      }
     }
-    layers.push(makeLayer(a, info, layers.length));
+    path.pop();
+    order.push(info);
   };
   visit(findAddon(config, cat, target));
-  return { layers, missing, warnings };
+  return { order, missing, cycles, warnings };
+}
+
+/** The stack `target` loads: its closure, one layer per addon. */
+export function buildStack(config: Config, target: string): Stack {
+  const { order, missing, warnings } = closure(config, target);
+  return { layers: order.map(makeLayer), missing, warnings };
 }
