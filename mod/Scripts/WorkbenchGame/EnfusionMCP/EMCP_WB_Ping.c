@@ -48,7 +48,14 @@ class EMCP_WB_Ping : NetApiHandler
 		}
 
 		WorldEditorAPI api = worldEditor.GetApi();
-		if (api)
+		if (api && api.IsGameMode())
+		{
+			// WorldEditorAPI stays valid during Play in 1.8 (fixed the same way in GetState).
+			resp.status = "ok";
+			resp.mode = "game";
+			resp.message = "EnfusionMCP Workbench bridge active (game mode)";
+		}
+		else if (api)
 		{
 			resp.status = "ok";
 			resp.mode = "edit";
