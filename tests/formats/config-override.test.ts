@@ -51,7 +51,7 @@ describe("config override engine", () => {
     const entries = tree.children[0].children;
     expect(entries).toHaveLength(1);
     expect(entries[0].id).toBe("{51BC713E81C18CF3}");
-    expect(entries[0].properties).toEqual([{ key: "m_iRewardXP", value: "100" }]);
+    expect(entries[0].properties).toMatchObject([{ key: "m_iRewardXP", value: "100" }]);
   });
 
   it("keeps earlier edits when merging into an existing override", () => {

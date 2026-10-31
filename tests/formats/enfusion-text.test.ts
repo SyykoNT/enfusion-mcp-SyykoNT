@@ -247,39 +247,37 @@ describe("round-trip", () => {
 });
 
 describe("string escape handling", () => {
-  it("should parse \\n escape in string values", () => {
+  // Only \" is an escape; any other backslash is part of the text
+  it("keeps \\n in a string as a backslash and n", () => {
     const input = `MyNode {\n  key "line1\\nline2"\n}`;
     const node = parse(input);
-    expect(node.properties[0].value).toBe("line1\nline2");
+    expect(node.properties[0].value).toBe("line1\\nline2");
   });
 
-  it("should parse \\t escape in string values", () => {
+  it("keeps \\t in a string as a backslash and t", () => {
     const input = `MyNode {\n  key "col1\\tcol2"\n}`;
     const node = parse(input);
-    expect(node.properties[0].value).toBe("col1\tcol2");
+    expect(node.properties[0].value).toBe("col1\\tcol2");
   });
 
-  it("should parse \\\\ escape as literal backslash", () => {
+  it("keeps a doubled backslash as two backslashes", () => {
     const input = `MyNode {\n  key "c:\\\\path"\n}`;
     const node = parse(input);
-    expect(node.properties[0].value).toBe("c:\\path");
+    expect(node.properties[0].value).toBe("c:\\\\path");
   });
 
-  it("should round-trip strings with newlines", () => {
-    const input = `MyNode {\n  key "line1\\nline2"\n}`;
+  it("round-trips a multi-line string written as a continued string", () => {
+    const input = `MyNode {\n key "line1"\\\n "line2"\n}`;
     const node = parse(input);
-    const output = serialize(node);
-    const reparsed = parse(output);
-    expect(reparsed.properties[0].value).toBe("line1\nline2");
+    expect(node.properties[0].value).toBe("line1\nline2");
+    expect(serialize(node)).toBe(input);
   });
 
-  it("should serialize newlines as \\n in output", () => {
+  it("writes an edited newline as a continued string", () => {
     const input = `MyNode {\n  key "has newline"\n}`;
     const node = parse(input);
     node.properties[0].value = "line1\nline2";
-    const output = serialize(node);
-    expect(output).toContain('\\n');
-    expect(output).not.toContain('\n"');
+    expect(serialize(node)).toBe(`MyNode {\n key "line1"\\\n "line2"\n}`);
   });
 });
 
@@ -309,13 +307,13 @@ describe("createNode / setProperty / getProperty helpers", () => {
     expect(node.properties.length).toBe(1);
   });
 
-  it("serialize escapes quotes and backslashes in string values", () => {
+  it("serialize escapes quotes and keeps backslashes in string values", () => {
     const node = createNode("Test");
     setProperty(node, "m_sName", 'has "quotes" inside');
     setProperty(node, "m_sPath", "C:\\Users\\test");
     const text = serialize(node);
     expect(text).toContain('has \\"quotes\\" inside');
-    expect(text).toContain("C:\\\\Users\\\\test");
+    expect(text).toContain('"C:\\Users\\test"');
   });
 
   it("round-trips strings with quotes through parse/serialize", () => {
@@ -326,14 +324,14 @@ describe("createNode / setProperty / getProperty helpers", () => {
     expect(getProperty(parsed, "m_sDesc")).toBe('say "hello"');
   });
 
-  it("escapes special characters in node id and inheritance", () => {
+  it("escapes quotes in node id and inheritance", () => {
     const node = createNode("GenericEntity", {
       id: 'has "quotes"',
       inheritance: 'C:\\path\\to "base".et',
     });
     const text = serialize(node);
     expect(text).toContain('has \\"quotes\\"');
-    expect(text).toContain('C:\\\\path\\\\to \\"base\\".et');
+    expect(text).toContain('"C:\\path\\to \\"base\\".et"');
     // Round-trip
     const parsed = parse(text);
     expect(parsed.id).toBe('has "quotes"');
