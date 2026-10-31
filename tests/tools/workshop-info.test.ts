@@ -70,3 +70,30 @@ describe("workshop_info: dependencies", () => {
     expect(t).toContain("Closure: 3 addons found, 1 missing (FFFF000000000001)");
   });
 });
+
+describe("workshop_info: Workshop text lint", () => {
+  const dir = addon(projects, "Texts", "1234000000000001");
+  writeFileSync(join(dir, "README.md"), "Credits: model by someone.\n");
+  writeFileSync(join(root, "summary.txt"), `${"s".repeat(200)}\n`);
+
+  it("lints the gproj TITLE by default and the fields given", async () => {
+    const t = await text({ modName: "Texts", summary: "A boat — fast", changeNotes: "ok" });
+    expect(t).toContain("- name: ok (11/30)");
+    expect(t).toContain("- summary: en or em dash: — at 8 (measured dialog limit; BI documents 1024)");
+    expect(t).toContain("- changeNotes: ok (2/30000)");
+    expect(t).not.toContain("- description:");
+    expect(t).toContain("- licence: license.txt absent");
+    expect(t).toMatch(/- reminder: README\.md mention credits/);
+  });
+
+  it("reads text files (last newline dropped) and flags a planned name that differs from TITLE", async () => {
+    const t = await text({ modName: "Texts", name: "Texts (Boat)", textFiles: { summary: join(root, "summary.txt"), description: join(root, "nope.txt") } });
+    expect(t).toContain('- name: characters not allowed: ( ) (info: .gproj TITLE is "Texts Title")');
+    expect(t).toContain("- summary: ok (200/200)");
+    expect(t).toMatch(/- description: cannot read .*nope\.txt/);
+  });
+
+  it("201 summary characters fail", async () => {
+    expect(await text({ modName: "Texts", summary: "s".repeat(201) })).toContain("- summary: 201/200 characters");
+  });
+});
