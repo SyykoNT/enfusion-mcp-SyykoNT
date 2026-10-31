@@ -66,7 +66,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       inputSchema: {
         prefab: z
           .string()
-          .describe("Prefab resource path (e.g., '{GUID}Prefabs/Characters/SoldierUS.et')"),
+          .describe("Prefab resource path (e.g., '{GUID}Prefabs/Characters/SoldierUS.et'): a {GUID}path from asset_search or game_read; never typed from memory."),
         position: z
           .string()
           .optional()
@@ -255,7 +255,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
     "wb_entity_modify",
     {
       description:
-        "Modify an entity in the World Editor. Supports moving, rotating, renaming, reparenting, and setting or clearing component properties. Only works in edit mode.",
+        "Modify an entity in the World Editor. Supports moving, rotating, renaming, reparenting, and setting or clearing component properties. Only works in edit mode. Enum properties: verify a setProperty with getProperty (known silent failure).",
       inputSchema: {
         name: z.string().describe("Name of the entity to modify"),
         action: z
@@ -403,7 +403,8 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
     "wb_entity_select",
     {
       description:
-        "Manage entity selection in the World Editor. Select, deselect, clear selection, or get the current selection.",
+        "Manage entity selection in the World Editor. 'select' clears the current selection and only locates the entity; it does not select it. " +
+        "'deselect', 'clear' and 'getSelected' use the documented selection API.",
       inputSchema: {
         action: z
           .enum(["select", "deselect", "clear", "getSelected"])

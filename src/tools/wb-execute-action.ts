@@ -16,13 +16,13 @@ export function registerWbExecuteAction(server: McpServer, client: WorkbenchClie
     "wb_execute_action",
     {
       description:
-        "Execute any Workbench menu action by its menu path. Use comma-separated path segments to identify the action (e.g., 'Tools,Reload Scripts' or 'File,Save'). " +
+        "Execute any Workbench menu action by its menu path. Use comma-separated path segments to identify the action (e.g., 'Game,Exit game' in WorldEditor, or 'File,Save'). " +
         "Some destructive actions (File,Close; File,New; File,Exit) are blocked for safety.",
       inputSchema: {
         menuPath: z
           .string()
           .describe(
-            "Comma-separated menu path (e.g., 'Tools,Reload Scripts', 'File,Save', 'Edit,Undo')"
+            "Comma-separated menu path (e.g., 'Game,Exit game', 'File,Save', 'Edit,Undo')"
           ),
         module: z
           .enum(["WorldEditor", "ScriptEditor", "ResourceManager", "AnimEditor", "ParticleEditor", "BehaviorEditor", "AudioEditor", "LocalizationEditor"])

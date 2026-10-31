@@ -9,7 +9,8 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
     {
       description:
         "Manage Workbench resources. Register new resources, rebuild resource databases, get resource info, or open a resource in its editor. " +
-        "To SEARCH for resources by name, use asset_search (searches base game data and .pak archives offline) — this tool cannot list or browse.",
+        "To SEARCH for resources by name, use asset_search (searches base game data and .pak archives offline); this tool cannot list or browse. " +
+        "Register only new files that exist on disk: registering an already registered or missing file can open a dialog or hang Workbench.",
       inputSchema: {
         action: z
           .enum(["register", "rebuild", "getInfo", "open"])

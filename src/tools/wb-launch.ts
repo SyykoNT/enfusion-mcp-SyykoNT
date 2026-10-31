@@ -16,11 +16,11 @@ export function registerWbLaunch(
     "wb_launch",
     {
       description:
-        "Launch Arma Reforger Workbench (Arma Reforger Tools). Automatically copies handler scripts " +
-        "into the target mod's Scripts/WorkbenchGame/ directory (so NET API handlers compile as part " +
-        "of the mod), starts the Workbench executable, and waits for the NET API to become available. " +
-        "All other wb_* tools call this automatically if Workbench is not running, so you rarely need to " +
-        "call this directly. IMPORTANT: When done working with Workbench, call wb_cleanup to remove the " +
+        "Start Workbench on one project and install the MCP handler scripts into that addon " +
+        "(Scripts/WorkbenchGame/EnfusionMCP/), then wait for the NET API. Pass gprojPath; without it the server " +
+        "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path. If a Workbench already answers on " +
+        "the NET API it reports that and starts nothing; if one is running but not answering it refuses to start " +
+        "another. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
       inputSchema: {
         gprojPath: z
@@ -29,7 +29,7 @@ export function registerWbLaunch(
           .describe(
             "Path to a .gproj file to open directly. Skips the Workbench launcher screen and goes straight " +
             "into the World Editor. Handler scripts are copied into the mod so all wb_* tools work. " +
-            "If omitted, Workbench opens to its launcher."
+            "If omitted, the server falls back to ENFUSION_DEFAULT_MOD or the first .gproj it finds."
           ),
       },
     },
@@ -87,9 +87,9 @@ export function registerWbLaunch(
     "wb_close",
     {
       description:
-        "Close Arma Reforger Workbench. By default saves the open world first and exits cleanly through the " +
-        "NET API; if Workbench does not answer it is asked to close, and with force=true it is killed. " +
-        "Close Workbench before `mod compile/pack/build` on the same addon (two instances on one project can crash the GUI one).",
+        "Acts on every running Workbench process (not just one project) until per-instance close exists: it asks " +
+        "all of them to close and, with force=true, kills all of them. Never close a Workbench you did not start. " +
+        "By default saves the open world first and exits cleanly through the NET API.",
       inputSchema: {
         save: z.boolean().default(true).describe("Save the open world before exiting (default true)"),
         force: z.boolean().default(false).describe("Kill the process if it does not exit on its own (unsaved work is lost)"),
@@ -139,7 +139,7 @@ export function registerWbLaunch(
     {
       description:
         "Remove the temporary EnfusionMCP handler scripts from mod directories. " +
-        "Deletes Scripts/WorkbenchGame/EnfusionMCP/ from the mod. " +
+        "Removes the MCP's own EMCP_* handler files from addons; other scripts in that folder stay. " +
         "Call this after finishing Workbench work and before the user publishes their mod. " +
         "Handlers are injected into whichever mod is open at the time, so they accumulate across " +
         "unrelated addons over many sessions — call with NO arguments to list every addon that " +

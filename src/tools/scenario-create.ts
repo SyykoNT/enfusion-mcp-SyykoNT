@@ -53,18 +53,12 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
     "scenario_create_conflict",
     {
       description:
-        "Generate a complete Conflict multiplayer scenario as up to 7 files: a mission header (.conf), a SubScene world stub (.ent), " +
-        "and layer files (default.layer with game mode + managers, Bases.layer with all military bases, " +
-        "CAH.layer with capture zones for major bases, Defenders.layer with patrol defenders, " +
-        "AmbientVehicles.layer with civilian vehicle spawns when civVehicleCount > 0, " +
-        "AmbientPatrols_SEEDING.layer with low-pop keep-alive patrols when seedingEnabled). " +
-        "This matches the structure used by production Arma Reforger Workshop mods. " +
-        "Generates: GameMode_Seize entity, CampaignFactionManager, military bases with SCR_CampaignSeizingComponent + radio + patrol spawnpoints, " +
-        "optional pre-placed relay towers (base type='relay') to bridge radio coverage gaps between distant bases, " +
-        "and optional seeding mode (restricts players to MOB areas + fast-respawn AI patrols until enough players connect). " +
+        "Generate a Conflict multiplayer scenario: a mission header (.conf), a SubScene world stub (.ent) and 3 to 6 layer files " +
+        "(the result lists every file written). Generates GameMode_Seize, CampaignFactionManager, military bases with seizing, radio and patrol spawnpoints, " +
+        "optional relay towers (base type='relay') and optional seeding mode. " +
         "Known worlds: " + KNOWN_WORLDS.join(", ") + ". " +
         "For custom maps pass the full resource ref as worldName, e.g. '{GUID}worlds/MyMap.ent'. " +
-        "After generating, open the .ent file in Workbench to snap entities to terrain.",
+        "The generated SubScene stub can show a 'world data structure is obsolete' dialog on first open in Workbench; answer it before using live tools.",
       inputSchema: {
         scenarioName: z
           .string()

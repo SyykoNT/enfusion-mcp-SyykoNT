@@ -7,8 +7,8 @@ export function registerWikiSearch(server: McpServer, searchEngine: SearchEngine
     "wiki_search",
     {
       description:
-        "Search pre-downloaded Bohemia Interactive Wiki (BIKI) content, tutorials, and guides about Enfusion engine concepts, scripting patterns, and Arma Reforger modding topics. " +
-        "Always use this tool instead of trying to access the wiki via the web — all wiki content is already available here. " +
+        "Search an offline snapshot of about 270 Bohemia Interactive Wiki (BIKI) pages: tutorials and guides about Enfusion engine concepts, scripting patterns, and Arma Reforger modding topics. " +
+        "For API facts, api_search and the local Workbench API docs are more current. " +
         "Results are previews — use wiki_read with the page title to get the full content including code examples.",
       inputSchema: {
         query: z

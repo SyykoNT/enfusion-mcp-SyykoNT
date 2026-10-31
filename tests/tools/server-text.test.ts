@@ -33,6 +33,12 @@ describe("server text", () => {
       expect(text, p.name).not.toMatch(/fully autonomous|you are autonomous|MUST NEVER contain|close it first with|wb_close\*\* first/i);
     }
   });
+
+  it("tool descriptions drop the claims PX-I3 found wrong", async () => {
+    // Stringifying covers top-level and every inputSchema property description.
+    const text = JSON.stringify((await client.listTools()).tools);
+    expect(text).not.toMatch(/rarely need to call this directly|Tools,Reload Scripts|opens to its launcher|all wiki content is already available/);
+  });
 });
 
 const PROMPTS = [

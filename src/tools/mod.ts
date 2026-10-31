@@ -408,8 +408,8 @@ export function registerMod(
           return {
             content: [{
               type: "text",
-              text: "Workbench is open. A second (headless) Workbench on the same addon can crash the open one — " +
-                "close it with `wb_close` first, or pass force=true.",
+              text: "Workbench is open. A second (headless) Workbench on the same addon can crash the open one. " +
+                "Ask the user to close it (wb_close closes every Workbench on this PC), or pass force=true.",
             }],
             isError: true,
           };
