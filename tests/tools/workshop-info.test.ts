@@ -77,9 +77,9 @@ describe("workshop_info: Workshop text lint", () => {
   writeFileSync(join(root, "summary.txt"), `${"s".repeat(200)}\n`);
 
   it("lints the gproj TITLE by default and the fields given", async () => {
-    const t = await text({ modName: "Texts", summary: "A boat — fast", changeNotes: "ok" });
+    const t = await text({ modName: "Texts", summary: "A boat \u2014 fast", changeNotes: "ok" });
     expect(t).toContain("- name: ok (11/30)");
-    expect(t).toContain("- summary: en or em dash: — at 8 (measured dialog limit; BI documents 1024)");
+    expect(t).toContain("- summary: en or em dash: \u2014 at 8 (measured dialog limit; BI documents 1024)");
     expect(t).toContain("- changeNotes: ok (2/30000)");
     expect(t).not.toContain("- description:");
     expect(t).toContain("- licence: license.txt absent");
@@ -131,8 +131,8 @@ describe("workshop_info: published state", () => {
   it("reads the local Workshop cache folder for the GUID", async () => {
     const d = join(root, "workshop", "Boat_EEEE000000000001");
     mkdirSync(d, { recursive: true });
-    writeFileSync(join(d, "ServerData.json"), '﻿{"id":"EEEE000000000001","revision":{"version":"1.1.0"}}');
-    writeFileSync(join(d, "meta"), '﻿{"meta":{"name":"Boat","summary":"Fast boat","license":"APL","versions":[{"version":"1.1.0"}]}}');
+    writeFileSync(join(d, "ServerData.json"), '\uFEFF{"id":"EEEE000000000001","revision":{"version":"1.1.0"}}');
+    writeFileSync(join(d, "meta"), '\uFEFF{"meta":{"name":"Boat","summary":"Fast boat","license":"APL","versions":[{"version":"1.1.0"}]}}');
     expect(await text({ modName: "Boat" })).toContain('- Workshop cache Boat_EEEE000000000001: installed 1.1.0; name "Boat"; summary "Fast boat"; licence APL; versions 1.1.0');
     expect(await text({ modName: "Alpha" })).toMatch(/- Workshop cache: no folder for AAAA000000000001/);
   });

@@ -149,7 +149,7 @@ function lintLines(addonDir: string, title: string, name: string, text: Partial<
     let t = text[f];
     if (t === undefined && files[f]) {
       try {
-        t = readFileSync(files[f]!, "utf-8").replace(/^﻿/, "").replace(/\r?\n$/, ""); // the dialog gets the text, not the file's last newline
+        t = readFileSync(files[f]!, "utf-8").replace(/^\uFEFF/, "").replace(/\r?\n$/, ""); // the dialog gets the text, not the file's last newline
       } catch (e) {
         lines.push(`- ${f}: cannot read ${files[f]}: ${(e as Error).message}`);
         continue;
@@ -188,7 +188,7 @@ function previewLine(path: string): string {
   return `- ${img.format.toUpperCase()} ${img.width}x${img.height}, ${buf.length} bytes: ${issues.length ? issues.join("; ") : "ok"}`;
 }
 
-const readJson = (path: string) => JSON.parse(readFileSync(path, "utf-8").replace(/^﻿/, ""));
+const readJson = (path: string) => JSON.parse(readFileSync(path, "utf-8").replace(/^\uFEFF/, ""));
 
 /** What the local Workshop cache (a subscribed copy) says about this GUID. */
 function cacheLine(config: Config, guid: string): string {

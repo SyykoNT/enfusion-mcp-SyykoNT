@@ -11,10 +11,10 @@ describe("workshop rules", () => {
 
   it("text: dashes with positions, AI names, other non-ASCII, trailing spaces", () => {
     expect(workshopTextIssues("Plain text.\nSecond line.")).toEqual([]);
-    expect(workshopTextIssues("a — b")).toEqual(["en or em dash: — at 3"]);
+    expect(workshopTextIssues("a \u2014 b")).toEqual(["en or em dash: \u2014 at 3"]);
     expect(workshopTextIssues("Made with Claude")).toEqual(["mentions Claude"]);
-    expect(workshopTextIssues("café")).toEqual(["non-ASCII: é at 4"]);
-    expect(workshopTextIssues("one \nтwo")).toEqual(["non-ASCII: т at 6", "trailing spaces on line 1"]);
+    expect(workshopTextIssues("caf\u00E9")).toEqual(["non-ASCII: \u00E9 at 4"]);
+    expect(workshopTextIssues("one \n\u0442wo")).toEqual(["non-ASCII: \u0442 at 6", "trailing spaces on line 1"]);
     expect(workshopTextIssues("Claudette")).toEqual([]);
   });
 });

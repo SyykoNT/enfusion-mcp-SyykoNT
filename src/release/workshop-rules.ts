@@ -19,10 +19,10 @@ export function workshopTextIssues(text: string): string[] {
   const chars = [...text];
   const at = (re: RegExp) => chars.flatMap((c, i) => (re.test(c) ? [`${c} at ${i + 1}`] : [])).slice(0, 10);
   const issues: string[] = [];
-  const dashes = at(/[–—]/);
+  const dashes = at(/[\u2013\u2014]/);
   if (dashes.length) issues.push(`en or em dash: ${dashes.join(", ")}`);
   if (/\b(claude|anthropic)\b/i.test(text)) issues.push(`mentions ${text.match(/\b(claude|anthropic)\b/i)![0]}`);
-  const other = at(/[^\x00-\x7F–—]/);
+  const other = at(/[^\x00-\x7F\u2013\u2014]/);
   if (other.length) issues.push(`non-ASCII: ${other.join(", ")}`);
   const trailing = text.split(/\r?\n/).flatMap((l, i) => (/[ \t]$/.test(l) ? [i + 1] : []));
   if (trailing.length) issues.push(`trailing spaces on line ${trailing.join(", ")}`);
