@@ -39,7 +39,29 @@ describe("server text", () => {
     const text = JSON.stringify((await client.listTools()).tools);
     expect(text).not.toMatch(/rarely need to call this directly|Tools,Reload Scripts|opens to its launcher|all wiki content is already available/);
   });
+
+  it("server text holds no literal GUID outside the verified allowlist", async () => {
+    const parts = [client.getInstructions() ?? "", JSON.stringify((await client.listTools()).tools)];
+    for (const p of PROMPTS) parts.push(JSON.stringify(await client.getPrompt(p)));
+    expect(unknownGuids(parts.join("\n"))).toEqual([]);
+  });
+
+  it("the GUID guard catches a GUID that is not in 1.8 data", () => {
+    expect(unknownGuids("'{5F4C4181F065B447}Assets/Props/Military/Barrels/BarrelGreen_01.xob'")).toEqual(["{5F4C4181F065B447}"]);
+  });
 });
+
+// Each entry was found in 1.8 game data with asset_search or game_read (2026-10-31).
+const VERIFIED_GUIDS = new Set([
+  "{ECC61978EDCC2B5A}", // Missions/23_Campaign.conf
+  "{9DF143A76F5C6460}", // worlds/MP/CTI_Campaign_Eden.ent (World line of 23_Campaign.conf)
+  "{657590C1EC9E27D3}", // Prefabs/Groups/OPFOR/Group_USSR_LightFireTeam.et
+  "{51BC713E81C18CF3}", // config_override object ID example, an ID inside a config, not a resource
+]);
+
+function unknownGuids(text: string): string[] {
+  return [...new Set(text.match(/\{[0-9A-Fa-f]{16}\}/g) ?? [])].filter((g) => !VERIFIED_GUIDS.has(g));
+}
 
 const PROMPTS = [
   { name: "create-mod", arguments: { description: "test" } },
