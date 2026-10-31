@@ -1,6 +1,20 @@
 import { loadIndex } from "./loader.js";
 import type { ClassInfo, MethodInfo, EnumInfo, PropertyInfo, WikiPage, GroupInfo } from "./types.js";
-import { nameScore, fuzzyNameScore } from "../utils/fuzzy.js";
+import { nameScore, fuzzyNameScore, trigramSimilarity } from "../utils/fuzzy.js";
+
+/** Wiki title as a lookup key: lower case, "_" as space, without a leading "Arma Reforger:" namespace. */
+const normTitle = (t: string) => t.toLowerCase().replace(/_/g, " ").replace(/\s+/g, " ").trim().replace(/^arma reforger:\s*/, "");
+
+/** The page title in a community.bistudio.com wiki URL (`/wiki/<title>` or `index.php?title=<title>`). */
+function urlTitle(url: string): string {
+  const u = url.replace(/#.*$/, "").replace(/\/+$/, "");
+  const raw = u.match(/[?&]title=([^&]+)/)?.[1] ?? u.split("/wiki/").pop() ?? u;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
 
 export interface MethodSearchResult {
   className: string;
@@ -47,6 +61,7 @@ export class SearchEngine {
   private propertyIndex: Map<string, PropertySearchResult[]> = new Map();
   private wikiPages: WikiPage[] = [];
   private wikiPageByTitle: Map<string, WikiPage> = new Map();
+  private wikiPageByNormTitle: Map<string, WikiPage> = new Map();
   private groups: GroupInfo[] = [];
   private componentIndex: ClassInfo[] = [];
   private loaded = false;
@@ -67,6 +82,7 @@ export class SearchEngine {
     this.wikiPages = data.wikiPages;
     for (const page of this.wikiPages) {
       this.wikiPageByTitle.set(page.title.toLowerCase(), page);
+      this.wikiPageByNormTitle.set(normTitle(page.title), page);
     }
     this.groups = data.groups;
 
@@ -522,10 +538,33 @@ export class SearchEngine {
     return results.slice(0, limit).map((r) => r.page);
   }
 
-  /** Look up a wiki page by exact title (case-insensitive). */
+  /** Look up a wiki page by title (case-insensitive; "_" and an "Arma Reforger:" prefix tolerated). */
   getWikiPage(title: string): WikiPage | undefined {
+    return this.findWikiPage({ title });
+  }
+
+  /** A wiki page by exact title, normalized title, or wiki URL. */
+  findWikiPage({ title, url }: { title?: string; url?: string }): WikiPage | undefined {
     this.ensureLoaded();
-    return this.wikiPageByTitle.get(title.toLowerCase());
+    if (title) return this.wikiPageByTitle.get(title.toLowerCase()) ?? this.wikiPageByNormTitle.get(normTitle(title));
+    return url ? this.wikiPageByNormTitle.get(normTitle(urlTitle(url))) : undefined;
+  }
+
+  /** Up to n titles for a failed lookup: containing the query, sharing a word, spelled alike, then full-text hits. */
+  suggestWiki(query: string, n = 5): string[] {
+    this.ensureLoaded();
+    const q = normTitle(query);
+    const words = new Set(q.split(" "));
+    const ranked = this.wikiPages
+      .map((p) => {
+        const t = normTitle(p.title), sim = trigramSimilarity(q, t);
+        const tier = t.includes(q) ? 3 : t.split(" ").some((w) => words.has(w)) ? 2 : sim > 0.3 ? 1 : 0;
+        return { title: p.title, tier, sim };
+      })
+      .filter((r) => r.tier > 0)
+      .sort((a, b) => b.tier - a.tier || b.sim - a.sim)
+      .map((r) => r.title);
+    return [...new Set([...ranked, ...this.searchWiki(query, n).map((p) => p.title)])].slice(0, n);
   }
 
   getGroups(): GroupInfo[] {

@@ -272,6 +272,25 @@ describe("SearchEngine", () => {
     });
   });
 
+  describe("findWikiPage and suggestWiki", () => {
+    it("resolves prefixed titles, underscores and both URL forms", () => {
+      for (const q of [
+        { title: "Arma Reforger:Prefabs Basics" },
+        { title: "arma_reforger:prefabs_basics" },
+        { url: "https://community.bistudio.com/wiki/Arma_Reforger:Prefabs_Basics" },
+        { url: "https://community.bistudio.com/wiki/Arma_Reforger:Prefabs_Basics#Inheritance/" },
+        { url: "https://community.bistudio.com/wiki/index.php?title=Arma_Reforger:Prefabs_Basics" },
+      ]) expect(engine.findWikiPage(q)?.title).toBe("Prefabs Basics");
+      expect(engine.getWikiPage("Vehicle: Wheeled Simulation")?.title).toBe("Vehicle: Wheeled Simulation");
+      expect(engine.findWikiPage({ url: "https://community.bistudio.com/wiki/Arma_Reforger:Vehicle:_Wheeled_Simulation" })?.title).toBe("Vehicle: Wheeled Simulation");
+    });
+
+    it("suggests a misspelled title", () => {
+      expect(engine.suggestWiki("Scenaro Framwork")).toContain("Scenario Framework");
+      expect(engine.suggestWiki("Scenaro Framwork").length).toBeLessThanOrEqual(5);
+    });
+  });
+
   describe("searchWiki", () => {
     it("finds pages by keyword", () => {
       const results = engine.searchWiki("replication");

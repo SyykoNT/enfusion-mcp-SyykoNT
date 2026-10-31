@@ -90,6 +90,14 @@ export function searchKb(
   return { files, usedIndex: false };
 }
 
+/** One KB file by its exact index title (case-insensitive), or null. */
+export function getKbEntry(kbDir: string, title: string): { title: string; content: string } | null {
+  const entry = loadIndex(kbDir).find((e) => e.title.toLowerCase() === title.trim().toLowerCase());
+  if (!entry) return null;
+  const filePath = resolve(kbDir, "patterns", entry.path);
+  return existsSync(filePath) ? { title: entry.title, content: readFileSync(filePath, "utf-8") } : null;
+}
+
 export function getIndexSummary(kbDir: string): string {
   const index = loadIndex(kbDir);
   if (index.length === 0) return "No KB entries found.";

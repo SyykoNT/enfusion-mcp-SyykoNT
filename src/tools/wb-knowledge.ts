@@ -2,13 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { searchKb, getIndexSummary } from "./kb-loader.js";
+import { searchKb, getIndexSummary, getKbEntry } from "./kb-loader.js";
+import { takePart } from "../utils/paging.js";
 
-/**
- * Per-file ceiling on returned KB content. Sized so the worst case (max_files: 4)
- * stays around 120 K chars rather than the ~180 K an uncapped answer could reach.
- */
-const MAX_FILE_CHARS = 30_000;
+/** Characters of KB text per answer, across all files: under Claude Code's 50,000-char inline limit. */
+const BUDGET = 30_000;
 
 const KB_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -26,10 +24,12 @@ export function registerWbKnowledge(server: McpServer): void {
         "Search the Arma Reforger modding knowledge base — distilled pattern files covering scripting, " +
         "audio, weapons, vehicles, AI, UI, game modes, animation, and all other modding domains. " +
         "Use this before writing EnforceScript code or setting up any Enfusion modding system. " +
-        "Call with query='index' to see all available topics.",
+        "Call with query='index' to see all available topics. One answer holds up to 30,000 chars; a file cut short " +
+        "ends with the call (title and offset) that reads on.",
       inputSchema: {
         query: z
           .string()
+          .optional()
           .describe(
             "Topic to look up (e.g. 'replication', 'weapon suppressor', 'scenario framework', 'audio signals'). Use 'index' to list all topics."
           ),
@@ -39,9 +39,23 @@ export function registerWbKnowledge(server: McpServer): void {
           .max(4)
           .default(2)
           .describe("Maximum number of pattern files to return (default 2)"),
+        title: z.string().optional().describe("Exact topic title from the index: returns that one file"),
+        offset: z.number().int().min(0).optional().describe("With title: character position to start from"),
       },
     },
-    async ({ query, max_files }) => {
+    async ({ query, max_files, title, offset }) => {
+      const more = (t: string, at: number) => `Continue: wb_knowledge title="${t}" offset=${at}`;
+      if (title) {
+        const f = getKbEntry(KB_DIR, title);
+        if (!f) return { content: [{ type: "text", text: `No KB topic "${title}". wb_knowledge query="index" lists the titles.` }], isError: true };
+        if (offset && offset >= f.content.length) {
+          return { content: [{ type: "text", text: `offset ${offset} is past the end of "${f.title}" (${f.content.length.toLocaleString("en-US")} chars).` }], isError: true };
+        }
+        const part = takePart(f.content, offset ?? 0, BUDGET);
+        const tail = part.end < part.total ? `\n\n${more(f.title, part.end)}` : offset ? "\n\n(end of file)" : "";
+        return { content: [{ type: "text", text: `## ${f.title}\n\n${part.body}${tail}` }] };
+      }
+      if (!query) return { content: [{ type: "text", text: 'Pass query (a topic, or "index") or title.' }], isError: true };
       const result = searchKb(KB_DIR, query, max_files);
 
       if (result.usedIndex || result.files.length === 0) {
@@ -55,17 +69,12 @@ export function registerWbKnowledge(server: McpServer): void {
         };
       }
 
-      // Cap each file. The KB's largest entries are ~57 KB and max_files allows 4,
-      // so an uncapped answer could return ~180 KB in a single call — and this is
-      // the most-called KB tool, since its own description tells the model to reach
-      // for it before writing EnforceScript. wiki_read already truncates at 100 K
-      // and wiki_search at 2–8 K; this was the one KB path with no ceiling.
+      // Files in score order, each gets what is left of the budget
+      let left = BUDGET;
       const parts = result.files.map((f) => {
-        const body =
-          f.content.length <= MAX_FILE_CHARS
-            ? f.content
-            : `${f.content.slice(0, MAX_FILE_CHARS)}\n\n... (truncated at ${MAX_FILE_CHARS.toLocaleString()} of ${f.content.length.toLocaleString()} chars — narrow the query to see the rest)`;
-        return `## ${f.title}\n\n${body}`;
+        const part = takePart(f.content, 0, Math.max(0, left));
+        left -= part.body.length;
+        return `## ${f.title}\n\n${part.body}${part.end < part.total ? `\n\n${more(f.title, part.end)}` : ""}`;
       });
 
       return {

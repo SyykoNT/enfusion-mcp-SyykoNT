@@ -18,3 +18,20 @@ export function pageLines(text: string, offset = 0, limit = 400, maxChars = MAX_
   const range = `lines ${fmt(Math.min(offset + 1, total))}-${fmt(end)} of ${fmt(total)}`;
   return { body: lines.slice(offset, end).join(""), footer: end < total ? `${range}; continue with offset=${end}` : `${range} (end)`, total };
 }
+
+/**
+ * Up to maxChars of text from offset, ending at a paragraph break in the last quarter of the window,
+ * else the last line break, else the last space, else mid-word. Throws when offset is past the end.
+ */
+export function takePart(text: string, offset = 0, maxChars = 30_000): { body: string; end: number; total: number; partNo: number; partCount: number } {
+  const total = text.length;
+  if (offset > 0 && offset >= total) throw new Error(`offset ${fmt(offset)} is past the end (${fmt(total)} chars)`);
+  let end = Math.min(offset + maxChars, total);
+  if (end < total) {
+    const win = text.slice(offset, end);
+    let blank = -1;
+    for (const m of win.matchAll(/\n\r?\n/g)) if (m.index + m[0].length > win.length * 0.75) blank = m.index + m[0].length;
+    end = offset + ([blank, win.lastIndexOf("\n") + 1, win.lastIndexOf(" ") + 1].find((i) => i > 0) ?? win.length);
+  }
+  return { body: text.slice(offset, end), end, total, partNo: Math.floor(offset / maxChars) + 1, partCount: Math.max(1, Math.ceil(total / maxChars)) };
+}

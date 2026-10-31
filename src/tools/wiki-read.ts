@@ -1,75 +1,62 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { SearchEngine } from "../index/search-engine.js";
+import { takePart } from "../utils/paging.js";
 
 export function registerWikiRead(server: McpServer, searchEngine: SearchEngine): void {
   server.registerTool(
     "wiki_read",
     {
       description:
-        "Read the full content of a specific wiki page by title. Use wiki_search first to find page titles, " +
-        "then use this tool to retrieve the complete text including code examples and tutorials. " +
-        "Returns the full page without truncation (up to 100,000 characters).",
+        "Read a wiki page by title or URL. Use wiki_search first to find pages, then this tool for the complete text " +
+        "including code examples and tutorials. Long pages come in parts (default 30,000 chars); each part ends with the " +
+        "call that reads the next one.",
       inputSchema: {
-        title: z
-          .string()
-          .describe(
-            "Exact title of the wiki page to read (from wiki_search results)"
-          ),
+        title: z.string().optional().describe("Page title as listed by wiki_search ('Arma Reforger:' prefix and underscores accepted)"),
+        url: z.string().optional().describe("A community.bistudio.com/wiki/... URL as printed by wiki_search"),
+        offset: z.number().int().min(0).optional().describe("Character position to start from (from the previous part's Continue line)"),
+        maxChars: z.number().int().min(2000).max(45000).optional().describe("Size of this part (default 30,000)"),
       },
     },
-    async ({ title }) => {
-      const page = searchEngine.getWikiPage(title);
+    async ({ title, url, offset, maxChars }) => {
+      if (!title && !url) return { content: [{ type: "text", text: "Pass title or url." }], isError: true };
+      const page = searchEngine.findWikiPage({ title, url });
+      const asked = title ?? url!;
 
       if (!page) {
-        // Fuzzy fallback: search for similar titles
-        const suggestions = searchEngine.searchWiki(title, 3);
-        if (suggestions.length > 0) {
-          const titles = suggestions.map((p) => `"${p.title}"`).join(", ");
-          return {
-            content: [
-              {
-                type: "text",
-                text: `No wiki page found with title "${title}". Did you mean: ${titles}?`,
-              },
-            ],
-          };
-        }
+        const suggestions = searchEngine.suggestWiki(title ?? url!.split("/").pop()!, 5);
         return {
-          content: [
-            {
-              type: "text",
-              text: `No wiki page found with title "${title}". Use wiki_search to find available pages.`,
-            },
-          ],
+          content: [{
+            type: "text",
+            text: suggestions.length
+              ? `No wiki page "${asked}". Did you mean: ${suggestions.map((t) => `"${t}"`).join(", ")}? Use wiki_read title="<one of these>".`
+              : `No wiki page "${asked}". Use wiki_search to find available pages.`,
+          }],
+          isError: true,
         };
       }
 
-      const MAX_FULL_LENGTH = 100_000;
       const sourceLabel =
         page.source === "bistudio-wiki"
           ? "BI Community Wiki"
           : page.source === "enfusion"
             ? "Enfusion Engine docs"
             : "Arma Reforger docs";
-
-      const lines: string[] = [];
-      lines.push(`## ${page.title}`);
-      lines.push(`Source: ${sourceLabel}${page.url ? ` — ${page.url}` : ""}`);
-      lines.push("");
-
-      if (page.content.length <= MAX_FULL_LENGTH) {
-        lines.push(page.content);
-      } else {
-        lines.push(page.content.slice(0, MAX_FULL_LENGTH));
-        lines.push(
-          `\n... (truncated at ${MAX_FULL_LENGTH.toLocaleString()} chars, ${page.content.length.toLocaleString()} chars total)`
-        );
+      const size = maxChars ?? 30_000;
+      if (offset && offset >= page.content.length) {
+        return { content: [{ type: "text", text: `offset ${offset} is past the end of "${page.title}" (${page.content.length.toLocaleString("en-US")} chars).` }], isError: true };
       }
-
-      return {
-        content: [{ type: "text", text: lines.join("\n") }],
-      };
+      // maxChars bounds the whole result: leave room for the title, source, part and Continue lines
+      const part = takePart(page.content, offset ?? 0, size - 2 * page.title.length - (page.url?.length ?? 0) - 200);
+      const whole = part.end === part.total && !offset;
+      const lines = [`## ${page.title}`, `Source: ${sourceLabel}${page.url ? `, ${page.url}` : ""}`];
+      if (!whole) {
+        const n = (v: number) => v.toLocaleString("en-US");
+        lines.push(`Part ${part.partNo} of about ${part.partCount} (chars ${n(offset ?? 0)} to ${n(part.end)} of ${n(part.total)})`);
+      }
+      lines.push("", part.body);
+      if (!whole) lines.push("", part.end < part.total ? `Continue: wiki_read title="${page.title}" offset=${part.end}` : "(end of page)");
+      return { content: [{ type: "text", text: lines.join("\n") }] };
     }
   );
 }
