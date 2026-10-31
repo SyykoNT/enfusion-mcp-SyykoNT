@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Config } from "../config.js";
-import { resolveAddonDir } from "../utils/game-paths.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 import { lookup, scaleNumber, stripGuid, type Edit, type FlatObject } from "../formats/config-override.js";
 import { writeOverride, inspectBase, formatChanges } from "./config-override.js";
 
@@ -75,7 +75,8 @@ export function registerEconomy(server: McpServer, config: Config): void {
       inputSchema: {
         action: z.enum(["inspect", "set"]),
         category: z.enum(["xp", "ranks", "arsenal", "loadouts"]),
-        modName: z.string().optional().describe("(set) Addon folder under the project path"),
+        modName: z.string().optional().describe("(set) Addon folder under the project path or ENFUSION_ADDONS_DIR. set needs modName or projectPath"),
+        projectPath: z.string().optional().describe("(set) Addon root path, for an addon outside the project path. Wins over modName"),
         multiplier: z.number().positive().optional().describe("(set) Scale the category, e.g. 2 = double XP gains / costs. For xp and ranks only positive values are scaled (penalties untouched)."),
         values: z.record(z.number()).optional().describe("(set) Exact values per key, e.g. {\"ENEMY_KILL\": 50} or {\"Sniper\": 150}"),
         requiredRank: z.record(z.string()).optional().describe("(set, arsenal/loadouts) Prefab regex → rank enum, e.g. {\"M249|PKM\": \"SERGEANT\"}"),
@@ -83,7 +84,7 @@ export function registerEconomy(server: McpServer, config: Config): void {
         filter: z.string().optional().describe("(inspect) Regex on the key"),
       },
     },
-    async ({ action, category, modName, multiplier, values, requiredRank, factions, filter }) => {
+    async ({ action, category, modName, projectPath, multiplier, values, requiredRank, factions, filter }) => {
       const cat = CATEGORIES[category];
       const files = cat.files(factions?.length ? factions : FACTIONS);
       try {
@@ -109,8 +110,9 @@ export function registerEconomy(server: McpServer, config: Config): void {
         if (multiplier === undefined && !values && !requiredRank) {
           return { content: [{ type: "text", text: "Give multiplier, values and/or requiredRank." }], isError: true };
         }
-        const addonDir = resolveAddonDir(config.projectPath, modName ?? config.defaultMod);
-        if (!addonDir) return { content: [{ type: "text", text: "Addon not found — pass modName (create one with `mod` action create)." }], isError: true };
+        const target = resolveWriteAddon(config, { projectPath, modName });
+        if ("error" in target) return { content: [{ type: "text", text: target.error }], isError: true };
+        const addonDir = target.dir;
 
         const edits: Edit[] = [];
         if (multiplier !== undefined) {

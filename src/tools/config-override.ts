@@ -5,7 +5,7 @@ import { dirname, join, relative } from "node:path";
 import type { Config } from "../config.js";
 import { PakVirtualFS } from "../pak/vfs.js";
 import { gameGuidMap } from "../pak/rdb.js";
-import { resolveAddonDir } from "../utils/game-paths.js";
+import { resolveAddonDir, resolveWriteAddon } from "../utils/game-paths.js";
 import {
   resolveEffective, buildDelta, mergeOverride, overrideMeta, flatten, describe, lookup, scaleNumber, stripGuid,
   type Edit, type Change, type FlatObject,
@@ -109,10 +109,11 @@ export function registerConfigOverride(server: McpServer, config: Config): void 
         filter: z.string().optional().describe("(inspect) Regex on object label / class / property names+values"),
         maxResults: z.number().int().min(1).max(2000).default(150).describe("(inspect) Max objects listed"),
         edits: z.array(editSchema).optional().describe("(set) Property edits"),
-        modName: z.string().optional().describe("(set/list) Addon folder under the project path (default: addon opened with wb_launch)"),
+        modName: z.string().optional().describe("(set/list) Addon folder under the project path or ENFUSION_ADDONS_DIR. set needs modName or projectPath; list defaults to the addon opened with wb_launch"),
+        projectPath: z.string().optional().describe("(set) Addon root path, for an addon outside the project path. Wins over modName"),
       },
     },
-    async ({ action, path, filter, maxResults, edits, modName }) => {
+    async ({ action, path, filter, maxResults, edits, modName, projectPath }) => {
       try {
         if (action === "list") {
           const addonDir = resolveAddonDir(config.projectPath, modName ?? config.defaultMod);
@@ -158,8 +159,9 @@ export function registerConfigOverride(server: McpServer, config: Config): void 
 
         // set
         if (!edits?.length) return { content: [{ type: "text", text: "edits are required for set" }], isError: true };
-        const addonDir = resolveAddonDir(config.projectPath, modName ?? config.defaultMod);
-        if (!addonDir) return { content: [{ type: "text", text: "Addon not found — pass modName (create one with `mod` action create)." }], isError: true };
+        const target = resolveWriteAddon(config, { projectPath, modName });
+        if ("error" in target) return { content: [{ type: "text", text: target.error }], isError: true };
+        const addonDir = target.dir;
         const r = writeOverride(config, addonDir, path, edits.map(toEdit));
         return {
           content: [{
