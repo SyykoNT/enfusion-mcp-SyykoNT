@@ -36,7 +36,7 @@ const clean = addon("Clean");
 const withHandlers = addon("WithHandlers");
 mkdirSync(join(withHandlers, "Scripts", "WorkbenchGame", "EnfusionMCP"), { recursive: true });
 writeFileSync(join(withHandlers, "Scripts", "WorkbenchGame", "EnfusionMCP", "EMCP_WB_Ping.c"), "");
-const config = { projectPath: projects, packedPath: join(root, "packed"), gamePath: join(root, "game"), workbenchPath: join(root, "tools") } as Config;
+const config = { projectPath: projects, defaultMod: "Clean", packedPath: join(root, "packed"), gamePath: join(root, "game"), workbenchPath: join(root, "tools") } as Config;
 
 let mod!: (args: Record<string, unknown>) => Promise<Result>;
 registerMod({ registerTool: (_n: string, _d: unknown, h: typeof mod) => { mod = h; } } as unknown as McpServer, config, {} as SearchEngine, {} as PatternLibrary);
@@ -46,6 +46,16 @@ beforeEach(() => {
 });
 
 describe("mod pack refusals", () => {
+  it("build and pack need a named addon, even with a default mod set", async () => {
+    for (const action of ["build", "pack"]) {
+      const r = await mod({ action });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/^Addon not found/);
+    }
+    expect(cli.compileAddon).not.toHaveBeenCalled();
+    expect(cli.packAddon).not.toHaveBeenCalled();
+  });
+
   it("refuses handler files before any Workbench run", async () => {
     const r = await mod({ action: "build", addonName: "WithHandlers" });
     expect(r.isError).toBe(true);

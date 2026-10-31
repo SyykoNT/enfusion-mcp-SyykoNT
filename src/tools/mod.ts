@@ -357,7 +357,7 @@ export function registerMod(
           .string()
           .min(1)
           .optional()
-          .describe("(build/compile/pack) Addon folder name under the project path. Defaults to the addon opened with wb_launch."),
+          .describe("(build/compile/pack) Addon folder name under the project path. build and pack need addonName or gprojPath; compile defaults to the addon opened with wb_launch."),
         outputPath: z
           .string()
           .optional()
@@ -420,7 +420,8 @@ export function registerMod(
 
       // ── build / compile / pack ─────────────────────────────────────────────
       if (action === "build" || action === "compile" || action === "pack") {
-        const gproj = resolveGproj(config, addonName ?? config.defaultMod, gprojPath);
+        // build and pack run a headless Workbench on the addon, so they never default to ENFUSION_DEFAULT_MOD
+        const gproj = resolveGproj(config, addonName ?? (action === "compile" ? config.defaultMod : undefined), gprojPath);
         if (!gproj) {
           return {
             content: [{ type: "text", text: `Addon not found. Pass addonName (a folder under ${config.projectPath}) or gprojPath.` }],
