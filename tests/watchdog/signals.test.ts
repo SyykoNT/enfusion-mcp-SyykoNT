@@ -147,6 +147,7 @@ describe("replay of 2026-10-31", () => {
     const crash = { at: at("09:32:55.800"), ...parseCrashLog(CRASH) };
     expect(decide({ ...replay([`${L2381}\n`]), crash, now: at("09:33:00.000"), alive: false }, ctx()).state).toBe("crashed");
     expect(decide({ ...replay([`${L2381}\n`]), shutdownSeen: true, crash, now: at("09:33:00.000"), alive: false }, ctx()).state).toBe("exited");
+    expect(decide({ now: at("09:33:00.000"), alive: false }, ctx()).state).toBe("exited");
   });
 });
 

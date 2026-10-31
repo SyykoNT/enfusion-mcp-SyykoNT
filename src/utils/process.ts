@@ -83,6 +83,7 @@ function cimQuery(filter: string): ProcInfo[] {
 export const processInfo = (pid: number): ProcInfo | undefined => cimQuery(`ProcessId=${Math.trunc(pid)}`)[0];
 export const serverProcesses = () => cimQuery("Name='ArmaReforgerServerDiag.exe' OR Name='ArmaReforgerServer.exe'");
 export const clientProcesses = () => cimQuery("Name='ArmaReforgerSteamDiag.exe' OR Name='ArmaReforgerSteam.exe'");
+export const crashReporters = () => cimQuery("Name='CrashReporter.exe'");
 /** Running Workbench processes with the -gproj of each, for refusal messages. */
 export const workbenchCommandLines = () =>
   cimQuery("Name='ArmaReforgerWorkbenchSteamDiag.exe'").map((p) => ({ pid: p.pid, gproj: argValue(p.cmd, "-gproj") ?? "" }));

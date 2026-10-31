@@ -170,7 +170,8 @@ export type Action = { type: "click"; hwnd: number; button: number } | { type: "
 /** State and actions per PX-N5 sections 3.3 and 3.4. Only one click (Ignore on the leak assert) and one recovery exist. */
 export function decide(s: Signals, ctx: Ctx): { state: WatchStateName; kind?: string; actions: Action[] } {
   if (!s.alive) {
-    const died = !s.shutdownSeen && ((s.crash && s.crash.at >= (s.lastLogAt ?? 0) - 2000) || (s.dumpAt ?? 0) >= (s.lastLogAt ?? 0) - 2000);
+    const fresh = (t?: number) => t !== undefined && t >= (s.lastLogAt ?? 0) - 2000;
+    const died = !s.shutdownSeen && (fresh(s.crash?.at) || fresh(s.dumpAt));
     return { state: died ? "crashed" : "exited", kind: died ? s.crash?.reason : undefined, actions: [] };
   }
   const actions: Action[] = [];
