@@ -48,6 +48,7 @@ import { registerAssetSearch } from "./tools/asset-search.js";
 import { registerGameDuplicate } from "./tools/game-duplicate.js";
 import { registerWbEntityDuplicate } from "./tools/wb-entity-duplicate.js";
 import { registerWorkshopInfo } from "./tools/workshop-info.js";
+import { registerAddonGitGuard } from "./tools/addon-git-guard.js";
 import { registerScenarioTools } from "./tools/wb-scenario.js";
 import { registerScenarioCreate } from "./tools/scenario-create.js";
 import { registerAnimationGraph } from "./tools/animation-graph.js";
@@ -120,6 +121,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerGameDuplicate(server, config, wbClient);
   registerWbEntityDuplicate(server, config, wbClient);
   registerWorkshopInfo(server, config);
+  registerAddonGitGuard(server, config);
   registerAnimationGraph(server, config);
   registerWbKnowledge(server);
   registerBuildingSetup(server, config);
