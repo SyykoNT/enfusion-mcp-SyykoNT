@@ -16,8 +16,6 @@ export interface ScrapeOptions {
   source: "local" | "remote";
   workbenchPath: string;
   dataDir: string;
-  /** Remote only: where downloaded pages are kept (default: <repo>/.scraper-cache). */
-  cacheDir?: string;
   /** Remote only: reuse pages already in the cache instead of re-downloading. */
   resume?: boolean;
 }
@@ -176,7 +174,7 @@ function scrapeDocs(
 export async function scrape(options: ScrapeOptions): Promise<void> {
   logger.info(`Starting scrape (source: ${options.source})`);
 
-  const cacheDir = options.cacheDir ?? resolve(options.dataDir, "..", ".scraper-cache");
+  const cacheDir = resolve(options.dataDir, "..", ".scraper-cache");
   const openDocs = async (source: "enfusion" | "arma"): Promise<DocSource> => {
     if (options.source === "remote") {
       const fallback = localDocSource(options.workbenchPath, source);

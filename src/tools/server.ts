@@ -3,11 +3,13 @@ import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type { Config } from "../config.js";
+import { MCP_HOME, type Config } from "../config.js";
 import { generateServerConfig, validateAgainstSchema } from "../templates/server-config.js";
 import { gameGuidMap } from "../pak/rdb.js";
 import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
+import { forbiddenRoot } from "../utils/safe-path.js";
+import { protectedAddonOf } from "../utils/game-paths.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, type Entry } from "../utils/instances.js";
 
@@ -22,6 +24,13 @@ const STEAMCMD_URL = IS_WIN
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
 
+/** Extract a .zip or .tar.gz with tar; paths go as arguments, never through a shell. */
+export function unpack(archive: string, dir: string): void {
+  // Windows 10+ ships bsdtar, which reads zip; a Git or MSYS tar earlier on PATH would not.
+  const tar = IS_WIN ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+  execFileSync(tar, ["-xf", archive, "-C", dir], { windowsHide: true });
+}
+
 async function ensureSteamcmd(config: Config): Promise<string> {
   const exe = join(config.steamcmdPath, STEAMCMD_EXE);
   if (existsSync(exe)) return exe;
@@ -30,11 +39,7 @@ async function ensureSteamcmd(config: Config): Promise<string> {
   if (!res.ok) throw new Error(`Downloading SteamCMD failed: HTTP ${res.status}`);
   const archive = join(config.steamcmdPath, IS_WIN ? "steamcmd.zip" : "steamcmd.tar.gz");
   writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
-  if (IS_WIN) {
-    execFileSync("powershell", ["-NoProfile", "-Command", `Expand-Archive -Force -LiteralPath '${archive}' -DestinationPath '${config.steamcmdPath}'`], { windowsHide: true });
-  } else {
-    execFileSync("tar", ["-xzf", archive, "-C", config.steamcmdPath]);
-  }
+  unpack(archive, config.steamcmdPath);
   if (!existsSync(exe)) throw new Error(`SteamCMD archive did not contain ${STEAMCMD_EXE}`);
   return exe;
 }
@@ -112,7 +117,7 @@ export function registerServer(server: McpServer, config: Config): void {
         "'logs' (tail / errors only), 'scenarios' (all scenario IDs of the game).",
       inputSchema: {
         action: z.enum(["install", "update", "config", "validate", "start", "stop", "status", "logs", "scenarios"]),
-        configPath: z.string().optional().describe("(start/validate/config) server.json path. Default <serverProfilePath>/server.json"),
+        configPath: z.string().optional().describe("(start/validate/config) server.json path. Default <serverProfilePath>/server.json. config/start replace only that default; any other path must not exist yet"),
         // config options
         name: z.string().optional().describe("(config/start) Server name"),
         scenarioId: z.string().optional().describe("(config/start) e.g. {ECC61978EDCC2B5A}Missions/23_Campaign.conf (see action scenarios)"),
@@ -146,9 +151,14 @@ export function registerServer(server: McpServer, config: Config): void {
     async (a) => {
       try {
         const exe = join(config.serverPath, SERVER_EXE);
-        const cfgPath = a.configPath ?? join(config.serverProfilePath, "server.json");
+        const defaultCfg = join(config.serverProfilePath, "server.json");
+        const cfgPath = a.configPath ?? defaultCfg;
 
         if (a.action === "install" || a.action === "update") {
+          // The Steam client owns installs under steamapps\common; SteamCMD validate would rewrite them behind its back.
+          if (/[\\/]steamapps[\\/]common[\\/]/i.test(resolve(config.serverPath) + "/")) {
+            return text(`Refused: ${config.serverPath} is a Steam client install. Update it from Steam, or set ENFUSION_SERVER_PATH to a folder of its own for SteamCMD, for example ${join(MCP_HOME, "server")}.`, true);
+          }
           const steamcmd = await ensureSteamcmd(config);
           mkdirSync(config.serverPath, { recursive: true });
           const log = join(config.steamcmdPath, "install-server.log");
@@ -187,6 +197,16 @@ export function registerServer(server: McpServer, config: Config): void {
           const schema = loadSchema(config);
           const errs = schema ? validateAgainstSchema(JSON.parse(json), schema) : [];
           if (errs.length) return text(`Generated config is invalid:\n${errs.map((e) => `- ${e}`).join("\n")}`, true);
+          // Only the MCP's own server.json is replaced; any other path must be new and outside installs and caches.
+          const own = sameDir(cfgPath, defaultCfg);
+          const root = own ? null : forbiddenRoot(config, cfgPath);
+          const prot = own ? null : protectedAddonOf(config, cfgPath);
+          const refuse = own ? ""
+            : existsSync(cfgPath) ? `${cfgPath} already exists and is not this MCP's server.json`
+            : root ? `${cfgPath} is inside ${root}`
+            : prot ? `${cfgPath} is inside the protected addon ${prot} (ENFUSION_PROTECTED_ADDONS)`
+            : "";
+          if (refuse) return text(`**server.json not written**: ${refuse}. Omit configPath or pass a new file path.\n\n\`\`\`json\n${json}\n\`\`\``, true);
           mkdirSync(join(cfgPath, ".."), { recursive: true });
           writeFileSync(cfgPath, json, "utf-8");
           if (a.action === "config") return text(`**server.json written** → \`${cfgPath}\`${schema ? " (schema-valid)" : ""}\n\n\`\`\`json\n${json}\n\`\`\``);
@@ -208,15 +228,16 @@ export function registerServer(server: McpServer, config: Config): void {
             guids.push(readGproj(join(packed, g!)).guid);
           }
           let note = "";
-          let port: number | undefined;
+          const cfg = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, "utf-8")) : {};
+          let port: number = cfg.bindPort ?? 2001;
           if (guids.length) {
             // The server refuses -addons together with -config, and mods listed in server.json must be on the
             // Workshop, so local builds start in -server mode (server.json settings other than scenario/port are not used).
-            const cfg = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, "utf-8")) : {};
             const scenario = a.scenarioId ?? cfg.game?.scenarioId;
             if (!scenario) return text("Local addons need a scenario: pass scenarioId (see `server scenarios`) or write one with `server config`.", true);
-            port = a.port ?? cfg.bindPort ?? 2001;
-            args.unshift("-server", scenario, "-bindPort", String(port));
+            port = a.port ?? port;
+            // -bindPort is ignored without a config file; -addr sets the port, on loopback only.
+            args.unshift("-server", scenario, "-addr", `127.0.0.1:${port}`);
             args.push("-addonsDir", config.packedPath, "-addons", guids.join(","));
             note = "\n\nStarted in -server mode because local addons cannot be loaded through -config. Only the scenario and port from server.json apply.";
           } else {
@@ -239,7 +260,7 @@ export function registerServer(server: McpServer, config: Config): void {
           return text(
             `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
             (logDir ? `Logs: ${logDir}\n\n\`\`\`\n${tail(join(logDir, "console.log"), 25)}\n\`\`\`` : "") +
-            `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${a.port ?? 2001} (and the same local addons).${note}`,
+            `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${port} (and the same local addons).${note}`,
             !alive
           );
         }

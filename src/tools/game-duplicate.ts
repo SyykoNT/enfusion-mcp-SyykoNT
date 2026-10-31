@@ -6,13 +6,14 @@ import {
   mkdirSync,
   existsSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, relative } from "node:path";
 import type { Config } from "../config.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { validateProjectPath } from "../utils/safe-path.js";
 import { resolveGameDataPath, findLooseFile, resolveWriteAddon } from "../utils/game-paths.js";
 import { generateGuid } from "../formats/guid.js";
 import { PakVirtualFS } from "../pak/vfs.js";
+import { gameGuidMap } from "../pak/rdb.js";
 import { findPids } from "../utils/process.js";
 import {
   walkChain,
@@ -142,6 +143,15 @@ export function registerGameDuplicate(
       } catch {
         return {
           content: [{ type: "text", text: `Invalid destination path: ${destPath}` }],
+          isError: true,
+        };
+      }
+
+      // A copy at a base-game path with a fresh GUID is neither an override nor a separate resource.
+      const rel = relative(addonDir, absDestPath).replace(/\\/g, "/");
+      if (gameGuidMap(config.gamePath).has(rel.toLowerCase())) {
+        return {
+          content: [{ type: "text", text: `Refused: ${rel} is a base-game path. Pick another destPath, or use config_override to override the base resource.` }],
           isError: true,
         };
       }
@@ -326,9 +336,8 @@ export function registerGameDuplicate(
         }
       }
 
-      const relDest = destPath.replace(/\\/g, "/").replace(/^\/+/, "");
       const resourceGuid = generateGuid();
-      writeFileSync(absDestPath + ".meta", `MetaFileClass {\n Name "{${resourceGuid}}${relDest}"\n}\n`, "utf-8");
+      writeFileSync(absDestPath + ".meta", `MetaFileClass {\n Name "{${resourceGuid}}${rel}"\n}\n`, "utf-8");
       return {
         content: [
           {
@@ -337,7 +346,7 @@ export function registerGameDuplicate(
               `**Copied with a new GUID**`,
               `- Source: ${sourcePath} ${sourceLabel}`,
               `- Saved to: ${absDestPath} (+ .meta)`,
-              `- Reference it as: \`{${resourceGuid}}${relDest}\``,
+              `- Reference it as: \`{${resourceGuid}}${rel}\``,
             ].join("\n") + ancestryNote,
           },
         ],

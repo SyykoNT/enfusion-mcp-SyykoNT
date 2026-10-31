@@ -19,7 +19,8 @@ export function registerWbLaunch(
       description:
         "Start Workbench on one project and install the MCP handler scripts into that addon " +
         "(Scripts/WorkbenchGame/EnfusionMCP/), then wait for the NET API. Pass gprojPath; without it the server " +
-        "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path. If a Workbench already answers on " +
+        "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path, never one in ENFUSION_PROTECTED_ADDONS " +
+        "(a protected gprojPath is refused). If a Workbench already answers on " +
         "the NET API it reports that and starts nothing; if one is running but not answering it refuses to start " +
         "another. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
@@ -30,18 +31,20 @@ export function registerWbLaunch(
           .describe(
             "Path to a .gproj file to open directly. Skips the Workbench launcher screen and goes straight " +
             "into the World Editor. Handler scripts are copied into the mod so all wb_* tools work. " +
-            "If omitted, the server falls back to ENFUSION_DEFAULT_MOD or the first .gproj it finds."
+            "If omitted, the server falls back to ENFUSION_DEFAULT_MOD or the first .gproj it finds that is not protected."
           ),
       },
     },
     async ({ gprojPath }) => {
       try {
-        // Remember which addon was requested so other tools default to it
+        const alreadyRunning = await client.ping();
+        if (!alreadyRunning) await client.ensureRunning(gprojPath);
+
+        // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
           config.defaultMod = basename(dirname(resolve(gprojPath)));
         }
 
-        const alreadyRunning = await client.ping();
         if (alreadyRunning) {
           return {
             content: [
@@ -52,8 +55,6 @@ export function registerWbLaunch(
             ],
           };
         }
-
-        await client.ensureRunning(gprojPath);
 
         const modDir = gprojPath ? dirname(resolve(gprojPath)) : null;
         const note = modDir

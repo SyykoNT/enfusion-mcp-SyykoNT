@@ -2,6 +2,14 @@ import { describe, it, expect } from "vitest";
 import { generateServerConfig, validateAgainstSchema } from "../../src/templates/server-config.js";
 
 describe("generateServerConfig", () => {
+  it("writes the fixed defaults the removed options used to override", () => {
+    const c = JSON.parse(generateServerConfig({ name: "T", rconPassword: "x", autoSaveInterval: 5 }));
+    expect(c.publicAddress).toBe("");
+    expect(c.rcon.port).toBe(19999);
+    expect(c.game.gameProperties).toMatchObject({ serverMaxViewDistance: 1600, networkViewDistance: 1500, serverMinGrassDistance: 50, disableThirdPerson: false, persistence: { autoSaveInterval: 5, loadSessionSave: false } });
+    expect(c.operating).toEqual({ lobbyPlayerSynchronise: true });
+  });
+
   it("returns valid JSON", () => {
     const result = generateServerConfig({ name: "Test Server" });
     const parsed = JSON.parse(result);

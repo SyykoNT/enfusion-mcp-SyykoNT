@@ -1,6 +1,6 @@
 import { readdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve, join, sep, basename } from "node:path";
+import { resolve, join, sep, basename, dirname } from "node:path";
 import type { Config } from "../config.js";
 import { readGproj } from "../workbench/cli.js";
 import { forbiddenRoot, realPathOf } from "./safe-path.js";
@@ -72,6 +72,22 @@ export function resolveAddonDir(projectPath: string, modName?: string): string |
   return null;
 }
 
+/** True when the addon's .gproj GUID or ID, or its folder name, is listed in ENFUSION_PROTECTED_ADDONS. */
+export function isProtectedAddon(config: Config, gproj: string): boolean {
+  const { id, guid } = readGproj(gproj);
+  const name = basename(dirname(gproj));
+  return (config.protectedAddons ?? []).some((p) => [guid, id, name].some((v) => v && v.toLowerCase() === p.toLowerCase()));
+}
+
+/** The protected addon folder that holds path (its nearest parent with a .gproj), or null. */
+export function protectedAddonOf(config: Config, path: string): string | null {
+  for (let d = dirname(resolve(path)); ; d = dirname(d)) {
+    const g = findGproj(d);
+    if (g) return isProtectedAddon(config, g) ? d : null;
+    if (dirname(d) === d) return null;
+  }
+}
+
 /**
  * The addon a file-writing tool may write into. Needs an explicit projectPath (wins) or modName
  * (under the project path or an ENFUSION_ADDONS_DIR entry): writes never fall back to
@@ -110,13 +126,8 @@ export function resolveWriteAddon(
   const gproj = findGproj(dir);
   if (!gproj) return { error: `Not an addon: ${dir} has no .gproj.` };
 
-  const { id, guid } = readGproj(gproj);
-  const name = basename(dir);
-  const isProtected = (config.protectedAddons ?? []).some((p) =>
-    [guid, id, name].some((v) => v && v.toLowerCase() === p.toLowerCase())
-  );
-  if (isProtected) {
-    return { error: `Refused: ${name} (GUID ${guid || "unknown"}) is protected (ENFUSION_PROTECTED_ADDONS). Use a test addon.` };
+  if (isProtectedAddon(config, gproj)) {
+    return { error: `Refused: ${basename(dir)} (GUID ${readGproj(gproj).guid || "unknown"}) is protected (ENFUSION_PROTECTED_ADDONS). Use a test addon.` };
   }
   return { dir, gproj };
 }

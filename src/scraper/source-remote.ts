@@ -104,5 +104,7 @@ export async function downloadDocs(
       `${source}: ${failed.length} pages failed to download, ${failed.length - missing.length} taken from local Workbench docs, ${missing.length} missing`
     );
   }
+  // A partial index would overwrite the full one in data/.
+  if (missing.length) throw new Error(`${source}: ${missing.length} pages missing (e.g. ${missing[0]}); data/ left untouched. Re-run with --resume.`);
   return cacheDir;
 }

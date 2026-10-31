@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 import { registerScriptCreate } from "../../src/tools/script-create.js";
+import type { SearchEngine } from "../../src/index/search-engine.js";
 
 type Result = { content: { text: string }[]; isError?: boolean };
 const root = mkdtempSync(join(tmpdir(), "emcp-sc-"));
@@ -46,5 +47,36 @@ describe("script_create", () => {
     const r = await create({ className: "SDI2_A", scriptType: "component", projectPath: addonDir, attributes: [{ type: "float; int", name: "m_f" }] });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toMatch(/Invalid attribute type/);
+  });
+});
+
+describe("script_create parent-method lookup", () => {
+  // Stub index: a void hook, a bool hook, a getter and a proto method.
+  const engine = {
+    getClass: () => ({
+      methods: [
+        { name: "OnGameEnd", signature: "void OnGameEnd ()" },
+        { name: "CanBePerformedScript", signature: "bool CanBePerformedScript (IEntity user)" },
+        { name: "GetName", signature: "string GetName ()" },
+        { name: "OnProto", signature: "proto external void OnProto ()" },
+      ],
+    }),
+  } as unknown as SearchEngine;
+  let gen!: (args: Record<string, unknown>) => Promise<Result>;
+  registerScriptCreate({ registerTool: (_n: string, _d: unknown, h: typeof gen) => { gen = h; } } as unknown as McpServer, config, engine);
+  const code = async (scriptType: string) => (await gen({ className: "SDI2_L", scriptType, parentClass: "P" })).content[0].text;
+
+  it("stubs hooks from the index for modded and gamemode only", async () => {
+    for (const t of ["modded", "gamemode"]) {
+      const c = await code(t);
+      expect(c, t).toContain("OnGameEnd");
+      expect(c, t).toContain("return super.CanBePerformedScript(user);");
+      expect(c, t).not.toMatch(/GetName|OnProto/);
+    }
+  });
+
+  it("keeps the template stubs for action, component and entity", async () => {
+    expect(await code("action")).toContain("PerformAction");
+    for (const t of ["action", "component", "entity"]) expect(await code(t), t).not.toContain("OnGameEnd");
   });
 });

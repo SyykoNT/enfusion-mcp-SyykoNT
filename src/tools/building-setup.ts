@@ -4,6 +4,8 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import type { Config } from "../config.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
+import { isContained, realPathOf } from "../utils/safe-path.js";
 
 // ── Manifest schema ──────────────────────────────────────────────────────────
 
@@ -160,14 +162,22 @@ export function registerBuildingSetup(server: McpServer, config: Config): void {
           "Mod resource prefix path (e.g., 'MyMod/Assets/Buildings/'). Prepended to FBX-derived .xob paths."
         ),
         outputDir: z.string().optional().describe(
-          "Output directory for generated .et prefab files. Defaults to mod prefabs directory from config."
+          "Output directory for generated .et prefab files, inside the target addon. Default <addon>/Prefabs/Structures/<building_name>."
         ),
+        projectPath: z.string().optional().describe("Addon root path. Wins over modName. modName or projectPath is required."),
+        modName: z.string().optional().describe("Addon folder under the project path or ENFUSION_ADDONS_DIR."),
         dryRun: z.boolean().default(false).describe(
           "If true, return what would be created without writing files"
         ),
       },
     },
-    async ({ manifestPath, modPrefix, outputDir, dryRun }) => {
+    async ({ manifestPath, modPrefix, outputDir, dryRun, projectPath, modName }) => {
+      const target = resolveWriteAddon(config, { projectPath, modName });
+      if ("error" in target) return { content: [{ type: "text" as const, text: target.error }], isError: true };
+      if (outputDir && !isContained(realPathOf(target.dir), realPathOf(outputDir))) {
+        return { content: [{ type: "text" as const, text: `Refused: outputDir ${outputDir} is outside the target addon ${target.dir}.` }], isError: true };
+      }
+
       // Read and parse manifest
       let rawManifest: string;
       try {
@@ -185,7 +195,7 @@ export function registerBuildingSetup(server: McpServer, config: Config): void {
 
       const outDir = outputDir
         ? resolve(outputDir)
-        : resolve(config.projectPath, "Prefabs", "Structures", manifest.building_name);
+        : resolve(target.dir, "Prefabs", "Structures", manifest.building_name);
 
       const lines: string[] = [];
       lines.push(`=== Building Setup: ${manifest.building_name} ===`);

@@ -5,12 +5,7 @@
   "entityType": "SCR_AIGroup",
   "subdirectory": "Prefabs/Groups",
   "defaultParent": "Prefabs/Groups/PlayableGroup.et",
-  "overrideComponents": [
-    {
-      "type": "SCR_CallsignGroupComponent",
-      "comment": "Callsign assignment (inherited from PlayableGroup)"
-    }
-  ],
+  "overrideComponents": [],
   "postCreateNotes": [
     "Set the faction key (US, USSR, FIA or custom) in m_faction on the SCR_AIGroup entity itself",
     "Configure group callsign and unit type",

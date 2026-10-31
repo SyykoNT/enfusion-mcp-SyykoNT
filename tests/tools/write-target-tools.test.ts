@@ -15,8 +15,13 @@ import { registerLayoutRecipe } from "../../src/tools/layout-recipe.js";
 import { registerMenuCreate } from "../../src/tools/menu-create.js";
 import { registerPrefab } from "../../src/tools/prefab.js";
 import { registerScriptCreate } from "../../src/tools/script-create.js";
+import { registerGamemodeScaffold } from "../../src/tools/gamemode-scaffold.js";
+import { registerBuildingSetup } from "../../src/tools/building-setup.js";
+import { registerServerConfig } from "../../src/tools/server-config.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-wtt-"));
+// A fake home, so the "Workshop cache" case below is a temp folder: an unguarded (older) build must not reach the real cache.
+process.env.USERPROFILE = process.env.HOME = join(root, "home");
 const projects = join(root, "projects");
 const addon = (name: string, guid: string) => {
   mkdirSync(join(projects, name), { recursive: true });
@@ -46,10 +51,20 @@ registerLayoutRecipe(server, config);
 registerMenuCreate(server, config);
 registerPrefab(server, config);
 registerScriptCreate(server, config);
+registerGamemodeScaffold(server, config);
+registerBuildingSetup(server, config);
+registerServerConfig(server, config);
 
 const listing = () => readdirSync(projects, { recursive: true }).map(String).sort();
 const before = listing();
 const workshop = join(myGamesDir(), "ArmaReforgerWorkbench", "addons", "SomeMod");
+
+it("the Workshop cache case is inside the temp home", () => {
+  expect(workshop.startsWith(join(root, "home"))).toBe(true);
+});
+
+const manifest = join(root, "building_manifest.json");
+writeFileSync(manifest, JSON.stringify({ building_name: "WTT_House", export_root: "", structure: { fbx: "h.fbx", sockets: [] }, parts: [] }));
 
 const calls: [string, Record<string, unknown>][] = [
   ["config_override", { action: "set", path: "Configs/Campaign/XPRewards.conf", edits: [{ property: "m_iRewardXP", value: "1" }] }],
@@ -61,6 +76,8 @@ const calls: [string, Record<string, unknown>][] = [
   ["menu_create", { action: "create", className: "WTT_Menu" }],
   ["prefab", { action: "create", name: "WTT_Prefab", prefabType: "generic", includeAncestry: true }],
   ["script_create", { className: "WTT_Script", scriptType: "component" }],
+  ["gamemode_scaffold", { action: "create", features: ["battle_prep"] }],
+  ["building_setup", { manifestPath: manifest }],
 ];
 
 describe.each(calls)("%s", (tool, args) => {
@@ -102,5 +119,35 @@ describe("create tools", () => {
     const r = await tools.config_create({ configType: "faction", name: "WTT_Faction", projectPath: dir });
     expect(r.isError).toBeUndefined();
     expect(readdirSync(dir, { recursive: true }).map(String)).toContain(join("Configs", "Factions", "WTT_Faction.conf"));
+  });
+});
+
+describe("server_config (modName there is the addon ID to load, so only projectPath picks the target)", () => {
+  it("refuses without projectPath, and for a protected or Workshop folder", async () => {
+    expect((await tools.server_config({ name: "T" })).content[0].text).toMatch(/^No target addon/);
+    expect((await tools.server_config({ name: "T", projectPath: join(projects, "Coalition-Reforger-Framework") })).content[0].text).toMatch(/is protected/);
+    expect((await tools.server_config({ name: "T", projectPath: workshop })).content[0].text).toMatch(/^Refused: .* is inside/);
+    expect(listing()).toEqual(before);
+  });
+});
+
+describe("guarded writers write into an explicit addon", () => {
+  const dir = join(root, "elsewhere", "Writers");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "addon.gproj"), "GameProject {\n ID \"Writers\"\n}\n");
+
+  it("gamemode_scaffold, building_setup and server_config", async () => {
+    expect((await tools.gamemode_scaffold({ action: "create", features: ["battle_prep"], projectPath: dir })).isError).toBeUndefined();
+    expect((await tools.building_setup({ manifestPath: manifest, projectPath: dir })).isError).toBeUndefined();
+    expect((await tools.server_config({ name: "T", projectPath: dir })).isError).toBeUndefined();
+    const files = readdirSync(dir, { recursive: true }).map(String);
+    expect(files).toContain(join("scripts", "Game", "GameMode", "SCR_GameModeCampaign_modded.c"));
+    expect(files).toContain(join("Prefabs", "Structures", "WTT_House", "WTT_House.et"));
+    expect(files).toContain("server.json");
+  });
+
+  it("building_setup refuses an outputDir outside the addon", async () => {
+    const r = await tools.building_setup({ manifestPath: manifest, projectPath: dir, outputDir: join(root, "outside") });
+    expect(r.content[0].text).toMatch(/outside the target addon/);
   });
 });

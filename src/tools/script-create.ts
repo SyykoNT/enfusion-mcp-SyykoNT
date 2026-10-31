@@ -86,9 +86,10 @@ export function registerScriptCreate(server: McpServer, config: Config, searchEn
           if (!ATTRIBUTE_TYPE.test(a.type)) throw new Error(`Invalid attribute type: ${a.type}`);
         }
 
-        // Resolve parent methods from API index if available and no explicit methods given
+        // Resolve parent methods from API index if available and no explicit methods given.
+        // Only modded and gamemode: action, component and entity templates carry their own working stubs.
         let dynamicMethods: string[] | undefined;
-        if (!methods && searchEngine && parentClass) {
+        if (!methods && searchEngine && parentClass && (scriptType === "modded" || scriptType === "gamemode")) {
           const cls = searchEngine.getClass(parentClass);
           if (cls) {
             const allMethods = [

@@ -114,6 +114,8 @@ export function spawnDetached(exe: string, args: string[], cwd: string, logFile?
     windowsHide: false,
     stdio: ["ignore", fd, fd],
   });
+  // Without a listener a failed start (missing or blocked exe) is an uncaught 'error' that ends the MCP; the pid check reports it.
+  child.on("error", () => {});
   child.unref();
   if (typeof fd === "number") closeSync(fd);
   if (!child.pid) throw new Error(`Failed to start ${exe}`);

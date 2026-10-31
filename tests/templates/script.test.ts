@@ -37,6 +37,18 @@ describe("generateScript", () => {
     expect(code).not.toContain("return super.OnGameStart();");
   });
 
+  it("reads the return type of 1.8 index signatures with a space before (", () => {
+    const code = generateScript({
+      className: "SCR_BaseGameMode",
+      scriptType: "modded",
+      parentClass: "SCR_BaseGameMode",
+      dynamicMethods: ["void OnGameEnd ()", "bool CanPlayerSpawn_S (int playerId)"],
+    });
+    expect(code).toContain(" super.OnGameEnd();");
+    expect(code).not.toContain("return super.OnGameEnd();");
+    expect(code).toContain("return super.CanPlayerSpawn_S(playerId);");
+  });
+
   it("forwards parameters in super calls for modded scripts", () => {
     const code = generateScript({
       className: "SCR_CharacterControllerComponent",

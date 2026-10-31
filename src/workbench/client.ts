@@ -14,7 +14,8 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
-import { findWorkbenchExe } from "../utils/game-paths.js";
+import { findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
+import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import type { Config } from "../config.js";
@@ -481,6 +482,16 @@ export class WorkbenchClient {
     //    only compiles the active project and its declared dependencies, NOT every
     //    addon folder in the project directory.  A standalone sibling addon will
     //    never be compiled unless the user's project explicitly depends on it.
+    if (gprojPath && !existsSync(gprojPath)) {
+      throw new WorkbenchError(`Not found: ${gprojPath}. Pass the path of an addon's .gproj file.`, "LAUNCH_FAILED");
+    }
+    if (gprojPath && isProtectedAddon(this.config!, gprojPath)) {
+      throw new WorkbenchError(
+        `Refused: ${gprojPath} is a protected addon (ENFUSION_PROTECTED_ADDONS) and wb_launch would copy handler scripts into it. ` +
+          `Pass a test addon's .gproj, or open the protected addon in Workbench yourself.`,
+        "LAUNCH_FAILED"
+      );
+    }
     let resolvedGproj = gprojPath || this.findFallbackGproj();
     if (resolvedGproj) {
       this.installHandlerScripts(dirname(resolvedGproj));
@@ -589,7 +600,7 @@ export class WorkbenchClient {
 
   /**
    * Find a .gproj to pass via -gproj so Workbench skips the launcher.
-   * Prefers config.defaultMod if set; otherwise picks first addon found.
+   * Prefers config.defaultMod if set; otherwise picks first addon found. Protected addons are skipped.
    * Scans for any .gproj in each addon folder (name need not match folder).
    */
   private findFallbackGproj(): string | null {
@@ -597,7 +608,9 @@ export class WorkbenchClient {
       try {
         for (const f of readdirSync(dir, { withFileTypes: true })) {
           if (!f.isDirectory() && f.name.endsWith(".gproj")) {
-            return join(dir, f.name);
+            // Never a protected addon or one in an install or Workshop cache: the handler scripts would be copied into it.
+            const g = join(dir, f.name);
+            return isProtectedAddon(this.config!, g) || forbiddenRoot(this.config!, dir) ? null : g;
           }
         }
       } catch { /* ignore */ }
@@ -683,6 +696,14 @@ export class WorkbenchClient {
     const isFallback = !modDir;
     const targetBase = modDir || join(fallbackBase!, HANDLER_FOLDER);
     const targetScriptsDir = join(targetBase, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
+    const root = this.config && forbiddenRoot(this.config, targetBase);
+    if (root) {
+      throw new WorkbenchError(
+        `Refused: ${targetBase} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS); ` +
+          `wb_launch would copy handler scripts into it. Pass the .gproj of an addon of your own.`,
+        "LAUNCH_FAILED"
+      );
+    }
 
     // Already installed? Skip (stale handlers stay until they are cleaned up)
     if (existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {

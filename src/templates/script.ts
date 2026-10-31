@@ -408,7 +408,8 @@ function stripOverride(sig: string): string {
 
 /** "super.X(args);", with "return" when the method returns a value: "bool CanX()" → "return super.CanX();" */
 function superCall(sig: string, name: string, params: string): string {
-  const returnType = sig.slice(0, sig.indexOf(`${name}(`)).trim().split(/\s+/).pop();
+  // The 1.8 API index writes a space before "(" ("void OnGameEnd ()").
+  const returnType = sig.match(new RegExp(`(\\S+)\\s+${name}\\s*\\(`))?.[1];
   return `${returnType && returnType !== "void" ? "return " : ""}super.${name}(${params});`;
 }
 

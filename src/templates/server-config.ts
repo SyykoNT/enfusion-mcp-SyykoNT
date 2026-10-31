@@ -27,8 +27,6 @@ export interface ServerConfigOptions {
   maxPlayers?: number;
   /** UDP game port (default 2001) */
   port?: number;
-  /** Public IP registered in the backend (needed for internet servers behind NAT) */
-  publicAddress?: string;
   /** A2S query port (default 17777) */
   a2sPort?: number;
   visible?: boolean;
@@ -38,22 +36,11 @@ export interface ServerConfigOptions {
   admins?: string[];
   crossPlatform?: boolean;
   battlEye?: boolean;
-  disableThirdPerson?: boolean;
-  serverMaxViewDistance?: number;
-  networkViewDistance?: number;
-  serverMinGrassDistance?: number;
   /** RCON (disabled when no password) */
   rconPassword?: string;
-  rconPort?: number;
   /** Persistence: autosave every N minutes (0 = off) */
   autoSaveInterval?: number;
-  loadSessionSave?: boolean;
   aiLimit?: number;
-  disableAI?: boolean;
-  playerSaveTime?: number;
-  joinQueueSize?: number;
-  /** Mission header overrides, e.g. { m_iPlayerCount: 64 } */
-  missionHeader?: Record<string, unknown>;
 }
 
 export function generateServerConfig(opts: ServerConfigOptions): string {
@@ -62,29 +49,25 @@ export function generateServerConfig(opts: ServerConfigOptions): string {
   if (opts.modId) mods.push({ modId: opts.modId, name: opts.modName ?? "" });
 
   const gameProperties: Record<string, unknown> = {
-    serverMaxViewDistance: opts.serverMaxViewDistance ?? 1600,
-    networkViewDistance: opts.networkViewDistance ?? 1500,
-    serverMinGrassDistance: opts.serverMinGrassDistance ?? 50,
-    disableThirdPerson: opts.disableThirdPerson ?? false,
+    serverMaxViewDistance: 1600,
+    networkViewDistance: 1500,
+    serverMinGrassDistance: 50,
+    disableThirdPerson: false,
     fastValidation: true,
     battlEye: opts.battlEye ?? false,
   };
-  if (opts.missionHeader) gameProperties.missionHeader = opts.missionHeader;
-  if (opts.autoSaveInterval !== undefined || opts.loadSessionSave !== undefined) {
-    gameProperties.persistence = {
-      autoSaveInterval: opts.autoSaveInterval ?? 10,
-      loadSessionSave: opts.loadSessionSave ?? false,
-    };
+  if (opts.autoSaveInterval !== undefined) {
+    gameProperties.persistence = { autoSaveInterval: opts.autoSaveInterval, loadSessionSave: false };
   }
 
   const config: Record<string, unknown> = {
     bindAddress: "0.0.0.0",
     bindPort: port,
-    publicAddress: opts.publicAddress ?? "",
+    publicAddress: "",
     publicPort: port,
     a2s: { address: "0.0.0.0", port: opts.a2sPort ?? 17777 },
     ...(opts.rconPassword
-      ? { rcon: { address: "0.0.0.0", port: opts.rconPort ?? 19999, password: opts.rconPassword, permission: "admin", maxClients: 4 } }
+      ? { rcon: { address: "0.0.0.0", port: 19999, password: opts.rconPassword, permission: "admin", maxClients: 4 } }
       : {}),
     game: {
       name: opts.name,
@@ -101,9 +84,6 @@ export function generateServerConfig(opts: ServerConfigOptions): string {
     operating: {
       lobbyPlayerSynchronise: true,
       ...(opts.aiLimit !== undefined ? { aiLimit: opts.aiLimit } : {}),
-      ...(opts.disableAI !== undefined ? { disableAI: opts.disableAI } : {}),
-      ...(opts.playerSaveTime !== undefined ? { playerSaveTime: opts.playerSaveTime } : {}),
-      ...(opts.joinQueueSize !== undefined ? { joinQueue: { maxSize: opts.joinQueueSize } } : {}),
     },
   };
 
