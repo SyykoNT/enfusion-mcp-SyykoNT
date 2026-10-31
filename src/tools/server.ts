@@ -1,21 +1,20 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type { Config } from "../config.js";
 import { generateServerConfig, validateAgainstSchema } from "../templates/server-config.js";
 import { gameGuidMap } from "../pak/rdb.js";
 import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep } from "../utils/process.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue } from "../utils/process.js";
+import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, type Entry } from "../utils/instances.js";
 
 const IS_WIN = process.platform === "win32";
 const SERVER_APP_ID = "1874900"; // Arma Reforger Dedicated Server (anonymous login)
 const SERVER_EXE = IS_WIN ? "ArmaReforgerServer.exe" : "ArmaReforgerServer";
 const SERVER_DIAG_EXE = IS_WIN ? "ArmaReforgerServerDiag.exe" : "ArmaReforgerServerDiag";
-/** Running dedicated servers, retail or Diag build. */
-const serverPids = () => [...findPids(SERVER_EXE), ...findPids(SERVER_DIAG_EXE)];
 const STEAMCMD_EXE = IS_WIN ? "steamcmd.exe" : "steamcmd.sh";
 const STEAMCMD_URL = IS_WIN
   ? "https://steamcdn-media.akamaihd.net/client/installer/steamcmd.zip"
@@ -68,6 +67,37 @@ export function listScenarios(config: Config): Array<{ id: string; name: string 
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+const sameDir = (a: string | undefined, b: string) => !!a && relative(resolve(a), resolve(b)) === "";
+
+/**
+ * Ask the server to close, wait graceSec, then kill that PID tree. The console server ignores the
+ * close request (B-011), so in practice it ends forced after the grace time.
+ */
+async function stopServer(e: Entry, force: boolean, graceSec: number): Promise<{ method: string; seconds: number }> {
+  const pid = e.proc.pid;
+  const t0 = Date.now();
+  const waitGone = async (ms: number) => {
+    for (const end = Date.now() + ms; isAlive(pid) && Date.now() < end; ) await sleep(500);
+    return !isAlive(pid);
+  };
+  let method: string;
+  if (force) {
+    killPids([pid], true);
+    method = (await waitGone(10_000)) ? "forced (force=true)" : "still running";
+  } else {
+    killPids([pid]);
+    if (await waitGone(graceSec * 1000)) method = "closed on request";
+    // Re-check identity before the kill: the PID may have been reused while we waited.
+    else if (processInfo(pid)?.created !== e.proc.created) method = "exited (PID reused)";
+    else {
+      killPids([pid], true);
+      method = (await waitGone(10_000)) ? `forced after ${graceSec} s grace` : "still running";
+    }
+  }
+  if (method !== "still running" && e.file) rmSync(e.file, { force: true });
+  return { method, seconds: (Date.now() - t0) / 1000 };
+}
+
 export function registerServer(server: McpServer, config: Config): void {
   server.registerTool(
     "server",
@@ -101,7 +131,10 @@ export function registerServer(server: McpServer, config: Config): void {
           .describe("(start) Local addon folder names to load from their packed build (run `mod` build first)"),
         extraArgs: z.array(z.string()).optional().describe("(start) Extra server CLI args, e.g. ['-maxFPS','60']"),
         // stop/logs
-        force: z.boolean().optional().describe("(stop) Kill instead of asking to close"),
+        force: z.boolean().optional().describe("(stop) Kill at once instead of asking first. Still only servers this MCP started"),
+        instance: z.string().optional().describe("(stop) Instance name; default all servers this MCP started (the single instance is 'default')"),
+        graceSec: z.number().min(0).max(120).default(10).describe("(stop) Seconds to wait after the close request before killing"),
+        adoptOrphans: z.boolean().optional().describe("(stop) Also stop servers left by an ended MCP session under this MCP's server profile"),
         lines: z.number().int().min(1).max(2000).default(80).describe("(logs) Lines to show"),
         errorsOnly: z.boolean().optional().describe("(logs) Only (E)/(W)/(F) lines"),
         filter: z.string().optional().describe("(scenarios/logs) Regex filter"),
@@ -158,7 +191,9 @@ export function registerServer(server: McpServer, config: Config): void {
 
         if (a.action === "start") {
           if (!existsSync(exe)) return text(`Dedicated server not installed at ${config.serverPath}. Run \`server install\` first (or set ENFUSION_SERVER_PATH).`, true);
-          if (serverPids().length) return text("A dedicated server is already running. Run `server stop` first.", true);
+          // Every MCP session defaults to the same profile folder, so a server there from any session would be clobbered.
+          const busy = scan(serverProcesses()).filter((e) => e.cls === "own" || sameDir(argValue(e.proc.cmd, "-profile"), config.serverProfilePath));
+          if (busy.length) return text(`A dedicated server using ${config.serverProfilePath} is already running (pid ${busy.map((e) => e.proc.pid).join(", ")}). Run \`server stop\` first.`, true);
           const args = ["-profile", config.serverProfilePath, "-maxFPS", "60", "-logStats", "60000", "-noThrow"];
           const guids: string[] = [];
           for (const name of a.addons ?? []) {
@@ -170,13 +205,15 @@ export function registerServer(server: McpServer, config: Config): void {
             guids.push(readGproj(join(packed, g!)).guid);
           }
           let note = "";
+          let port: number | undefined;
           if (guids.length) {
             // The server refuses -addons together with -config, and mods listed in server.json must be on the
             // Workshop, so local builds start in -server mode (server.json settings other than scenario/port are not used).
             const cfg = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, "utf-8")) : {};
             const scenario = a.scenarioId ?? cfg.game?.scenarioId;
             if (!scenario) return text("Local addons need a scenario: pass scenarioId (see `server scenarios`) or write one with `server config`.", true);
-            args.unshift("-server", scenario, "-bindPort", String(a.port ?? cfg.bindPort ?? 2001));
+            port = a.port ?? cfg.bindPort ?? 2001;
+            args.unshift("-server", scenario, "-bindPort", String(port));
             args.push("-addonsDir", config.packedPath, "-addons", guids.join(","));
             note = "\n\nStarted in -server mode because local addons cannot be loaded through -config. Only the scenario and port from server.json apply.";
           } else {
@@ -189,9 +226,13 @@ export function registerServer(server: McpServer, config: Config): void {
           const diagExe = join(config.serverPath, SERVER_DIAG_EXE);
           const runExe = existsSync(diagExe) ? diagExe : exe;
           const pid = spawnDetached(runExe, args, config.serverPath);
+          writeInstance(join(config.serverProfilePath, INSTANCE_FILE), {
+            kind: "server", name: "default", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt,
+            startedAt: started, exe: runExe, port, profileDir: config.serverProfilePath,
+          });
           await sleep(8000);
           const logDir = newestDir(serverLogsDir(config), started - 5000);
-          const alive = serverPids().length > 0;
+          const alive = isAlive(pid);
           return text(
             `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
             (logDir ? `Logs: ${logDir}\n\n\`\`\`\n${tail(join(logDir, "console.log"), 25)}\n\`\`\`` : "") +
@@ -201,16 +242,29 @@ export function registerServer(server: McpServer, config: Config): void {
         }
 
         if (a.action === "stop") {
-          const pids = serverPids();
-          if (!pids.length) return text("No dedicated server running.");
-          killPids(pids, a.force);
-          for (let i = 0; i < 20 && serverPids().length; i++) await sleep(500);
-          if (serverPids().length && !a.force) return text("Server is still shutting down (or ignored the request). Retry with force=true.", true);
-          return text(`**Server stopped** (pid ${pids.join(", ")}).`);
+          const entries = scan(serverProcesses());
+          const plan = planStop(entries, { instance: a.instance, adoptOrphans: a.adoptOrphans, roots: [config.serverProfilePath] });
+          const others = entries.filter((e) => !plan.stop.includes(e));
+          const untouched = others.length
+            ? `\nNot touched: ${others.length} server(s) not started by this MCP session (pid ${others.map((e) => e.proc.pid).join(", ")}).`
+            : "";
+          if (plan.error) return text(plan.error + untouched, true);
+          if (!plan.stop.length) return text("No server started by this MCP is running." + untouched);
+          const rows: string[] = [];
+          let failed = 0;
+          for (const e of plan.stop) {
+            const r = await stopServer(e, a.force ?? false, a.graceSec);
+            if (r.method === "still running") failed++;
+            rows.push(`| ${e.inst!.name} | ${e.proc.pid} | ${e.cls} | ${r.method} | ${r.seconds.toFixed(1)} | ${newestDir(join(dirname(e.file!), "logs")) ?? ""} |`);
+          }
+          return text(
+            `**Stopped ${rows.length - failed} of ${rows.length} server(s)**\n\n| instance | pid | class | method | seconds | log |\n|---|---|---|---|---|---|\n${rows.join("\n")}${untouched}`,
+            failed > 0
+          );
         }
 
         if (a.action === "status") {
-          const pids = serverPids();
+          const entries = scan(serverProcesses());
           const logDir = newestDir(serverLogsDir(config));
           const installLog = join(config.steamcmdPath, "install-server.log");
           const installing = findPids(STEAMCMD_EXE).length > 0;
@@ -218,11 +272,12 @@ export function registerServer(server: McpServer, config: Config): void {
             `**Dedicated server**`,
             `- Installed: ${existsSync(exe) ? `yes (${config.serverPath})` : "no: `server install`"}`,
             `- SteamCMD: ${installing ? "running (install/update in progress)" : existsSync(join(config.steamcmdPath, STEAMCMD_EXE)) ? "present" : "not downloaded"}`,
-            `- Running: ${pids.length ? `yes (pid ${pids.join(", ")})` : "no"}`,
+            `- Running: ${entries.length ? `${entries.length} server(s) on this PC, ${entries.filter((e) => e.cls === "own").length} started by this MCP` : "no"}`,
             `- Config: ${existsSync(cfgPath) ? cfgPath : "none yet (`server config`)"}`,
             `- Profile: ${config.serverProfilePath}`,
             logDir ? `- Latest log: ${logDir}` : "",
             existsSync(installLog) ? `\nInstall log (last lines):\n\`\`\`\n${tail(installLog, 8)}\n\`\`\`` : "",
+            entries.length ? `\n${instanceTable(entries)}` : "",
           ].filter(Boolean).join("\n"));
         }
 
