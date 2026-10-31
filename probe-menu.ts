@@ -13,7 +13,7 @@ import { WorkbenchClient } from "./src/workbench/client.js";
 
 const config = loadConfig();
 const client = new WorkbenchClient(config.workbenchHost, config.workbenchPort, config);
-const OPTS = { skipAutoLaunch: true, timeout: 8000 } as const;
+const OPTS = { timeout: 8000 } as const;
 
 // Compilation-ish only. Nothing here saves, closes or deletes, so a stray hit
 // cannot damage the session.

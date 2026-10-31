@@ -21,7 +21,7 @@ export function registerWbValidate(server: McpServer, client: WorkbenchClient): 
     async ({ action, path }) => {
       try {
         const handlerName = action === "material" ? "MaterialValidator" : "TextureValidator";
-        const result = await client.call<Record<string, unknown>>(handlerName, { path }, { skipAutoLaunch: true });
+        const result = await client.call<Record<string, unknown>>(handlerName, { path });
 
         const valid = result.valid ?? result.success ?? true;
         const errors = Array.isArray(result.errors) ? result.errors : [];

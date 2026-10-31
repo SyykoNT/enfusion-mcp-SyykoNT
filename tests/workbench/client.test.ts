@@ -130,10 +130,10 @@ describe("WorkbenchClient", () => {
   it("throws CONNECTION_REFUSED on bad port", async () => {
     const badClient = new WorkbenchClient("127.0.0.1", 1);
     await expect(
-      badClient.call("ReloadScripts", {}, { skipAutoLaunch: true })
+      badClient.call("ReloadScripts", {})
     ).rejects.toThrow(WorkbenchError);
     try {
-      await badClient.call("ReloadScripts", {}, { skipAutoLaunch: true });
+      await badClient.call("ReloadScripts", {});
     } catch (e) {
       expect(e).toBeInstanceOf(WorkbenchError);
       expect((e as WorkbenchError).code).toBe("CONNECTION_REFUSED");
@@ -154,7 +154,7 @@ describe("WorkbenchClient", () => {
     const slowClient = new WorkbenchClient("127.0.0.1", port);
 
     await expect(
-      slowClient.call("ReloadScripts", {}, { timeout: 200, skipAutoLaunch: true })
+      slowClient.call("ReloadScripts", {}, { timeout: 200 })
     ).rejects.toThrow("timed out");
 
     // Destroy all held sockets so server.close() doesn't hang
@@ -205,7 +205,7 @@ describe("WorkbenchClient", () => {
     // Now try a dead client
     const badClient = new WorkbenchClient("127.0.0.1", 1);
     try {
-      await badClient.call("ReloadScripts", {}, { skipAutoLaunch: true });
+      await badClient.call("ReloadScripts", {});
     } catch { /* expected */ }
     expect(badClient.state.connected).toBe(false);
     expect(badClient.state.mode).toBe("unknown");
@@ -279,7 +279,7 @@ describe("WorkbenchClient in-band error status", () => {
     const client = new WorkbenchClient("127.0.0.1", mock.port);
 
     await expect(
-      client.call("EMCP_WB_ModifyEntity", { name: "Foo" }, { skipAutoLaunch: true })
+      client.call("EMCP_WB_ModifyEntity", { name: "Foo" })
     ).rejects.toThrow("Entity not found: Foo");
   });
 
@@ -288,7 +288,7 @@ describe("WorkbenchClient in-band error status", () => {
     const client = new WorkbenchClient("127.0.0.1", mock.port);
 
     await expect(
-      client.call("EMCP_WB_Anything", {}, { skipAutoLaunch: true })
+      client.call("EMCP_WB_Anything", {})
     ).rejects.toBeInstanceOf(WorkbenchError);
   });
 
@@ -297,7 +297,7 @@ describe("WorkbenchClient in-band error status", () => {
     const client = new WorkbenchClient("127.0.0.1", mock.port);
 
     await expect(
-      client.call("EMCP_WB_Anything", {}, { skipAutoLaunch: true })
+      client.call("EMCP_WB_Anything", {})
     ).rejects.toThrow(/without a message/);
   });
 
@@ -308,7 +308,7 @@ describe("WorkbenchClient in-band error status", () => {
     const result = await client.call<{ status: string; message: string }>(
       "EMCP_WB_Resources",
       { action: "register" },
-      { skipAutoLaunch: true, tolerateErrorStatus: true }
+      { tolerateErrorStatus: true }
     );
     expect(result.status).toBe("error");
     expect(result.message).toBe("registration failed");
@@ -320,8 +320,7 @@ describe("WorkbenchClient in-band error status", () => {
 
     const result = await client.call<{ status: string; value: number }>(
       "EMCP_WB_GetState",
-      {},
-      { skipAutoLaunch: true }
+      {}
     );
     expect(result.status).toBe("ok");
     expect(result.value).toBe(42);
@@ -334,8 +333,7 @@ describe("WorkbenchClient in-band error status", () => {
 
     const result = await client.call<{ entityCount: number }>(
       "EMCP_WB_ListEntities",
-      {},
-      { skipAutoLaunch: true }
+      {}
     );
     expect(result.entityCount).toBe(0);
   });

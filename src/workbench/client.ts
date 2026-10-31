@@ -4,9 +4,7 @@
  * Each rawCall() opens a fresh TCP connection, sends one request, reads the
  * response, and closes the socket (protocol requirement).
  *
- * call() wraps rawCall() with auto-launch: if Workbench isn't running,
- * it installs handler scripts, launches the exe, waits for the NET API,
- * and retries the original call.
+ * call() never starts Workbench: only wb_launch does, through ensureRunning().
  */
 
 import { Socket } from "node:net";
@@ -57,8 +55,6 @@ export interface WorkbenchState {
 export interface WorkbenchCallOptions {
   /** Timeout in milliseconds (default 10 000). */
   timeout?: number;
-  /** Skip auto-launch on connection failure (used internally by ping). */
-  skipAutoLaunch?: boolean;
   /**
    * Return a `status: "error"` response instead of throwing.
    *
@@ -112,7 +108,7 @@ export class WorkbenchClient {
 
   /**
    * Call a Workbench NET API function.
-   * Auto-launches Workbench if not running.
+   * Never starts Workbench; a refused connection says to run wb_launch.
    */
   async call<T = Record<string, unknown>>(
     apiFunc: string,
@@ -136,18 +132,13 @@ export class WorkbenchClient {
             "API_ERROR"
           );
         }
-        if (options.skipAutoLaunch && err.code === "CONNECTION_REFUSED") {
+        // Only wb_launch starts Workbench (D-025): a shared PC may have someone else's session waiting on it.
+        if (err.code === "CONNECTION_REFUSED") {
           throw new WorkbenchError(
-            `Workbench is not running on ${this.endpoint}. This call does not start Workbench; start it with ` +
+            `Workbench is not running on ${this.endpoint}. Tools do not start Workbench; start it with ` +
               `wb_launch after checking that nobody else is using Workbench.`,
             "CONNECTION_REFUSED"
           );
-        }
-        if (!options.skipAutoLaunch && this.config && err.code === "CONNECTION_REFUSED") {
-          // Workbench not running: install handlers, launch, retry
-          logger.info(`Workbench not running, auto-launching...`);
-          await this.ensureRunning();
-          return this.finishCall(await this.rawCall<T>(apiFunc, params, options), options);
         }
       }
       throw err;
@@ -205,7 +196,7 @@ export class WorkbenchClient {
    */
   async probeMode(): Promise<WorkbenchMode | "not_running" | "no_handlers" | "timeout"> {
     try {
-      const result = await this.rawCall<Record<string, unknown>>("EMCP_WB_GetState", {}, { timeout: 3000, skipAutoLaunch: true });
+      const result = await this.rawCall<Record<string, unknown>>("EMCP_WB_GetState", {}, { timeout: 3000 });
       // Reset first: extractMode keeps the old value on a reply it does not recognise.
       this._state = { connected: true, mode: "unknown", lastUpdated: Date.now() };
       this.extractMode(result?.mode === "no_world_editor" ? { mode: "no_world" } : result);
@@ -262,7 +253,7 @@ export class WorkbenchClient {
    */
   async ping(): Promise<boolean> {
     try {
-      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000, skipAutoLaunch: true });
+      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
       return true;
     } catch {
       return false;
@@ -387,7 +378,7 @@ export class WorkbenchClient {
     let netApi: DiagnosticReport["netApi"] = "refused";
     let netApiError: string | undefined;
     try {
-      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000, skipAutoLaunch: true });
+      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
       netApi = "up_with_handlers";
     } catch (err) {
       if (err instanceof WorkbenchError) {
@@ -559,7 +550,7 @@ export class WorkbenchClient {
     let lastErrorCode: WorkbenchError["code"] | undefined;
     while (Date.now() < deadline) {
       try {
-        await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000, skipAutoLaunch: true });
+        await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
         this._state.connected = true;
         this._state.lastUpdated = Date.now();
         logger.info("Workbench NET API is responding.");

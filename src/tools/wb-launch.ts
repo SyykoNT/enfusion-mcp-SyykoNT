@@ -116,7 +116,7 @@ export function registerWbLaunch(
         notes.push("NET API exit skipped (another Workbench may be the one answering on the NET API port).");
       } else {
         try {
-          const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { skipAutoLaunch: true, timeout: 20_000 });
+          const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { timeout: 20_000 });
           notes.push(save ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : "Closed without saving.");
         } catch (e) {
           // In edit mode the handler exits at once, so the connection drops before it answers.

@@ -179,7 +179,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
         const params: Record<string, unknown> = { offset, limit };
         if (nameFilter) params.nameFilter = nameFilter;
 
-        const result = await client.call<Record<string, unknown>>("EMCP_WB_ListEntities", params, { skipAutoLaunch: true });
+        const result = await client.call<Record<string, unknown>>("EMCP_WB_ListEntities", params);
 
         return {
           content: [{ type: "text" as const, text: formatEntityList(result) + formatConnectionStatus(client) }],
@@ -229,7 +229,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
           };
         }
 
-        const result = await client.call<Record<string, unknown>>("EMCP_WB_GetEntity", params, { skipAutoLaunch: true });
+        const result = await client.call<Record<string, unknown>>("EMCP_WB_GetEntity", params);
 
         const label = name || `index ${index}`;
         return {
