@@ -37,12 +37,14 @@ export function registerWbLaunch(
     },
     async ({ gprojPath }) => {
       try {
-        // Remember which addon was requested so other tools default to it
+        const alreadyRunning = await client.ping();
+        if (!alreadyRunning) await client.ensureRunning(gprojPath);
+
+        // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
           config.defaultMod = basename(dirname(resolve(gprojPath)));
         }
 
-        const alreadyRunning = await client.ping();
         if (alreadyRunning) {
           return {
             content: [
@@ -53,8 +55,6 @@ export function registerWbLaunch(
             ],
           };
         }
-
-        await client.ensureRunning(gprojPath);
 
         const modDir = gprojPath ? dirname(resolve(gprojPath)) : null;
         const note = modDir
