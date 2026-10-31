@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,15 @@ import { execFileSync } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 import { registerServer, unpack } from "../../src/tools/server.js";
+
+// No real process is started or queried: start "spawns" a fake PID that is already gone.
+vi.mock("../../src/utils/process.js", async (importActual) => ({
+  ...(await importActual<typeof import("../../src/utils/process.js")>()),
+  spawnDetached: vi.fn(() => 424242),
+  serverProcesses: vi.fn(() => []),
+  isAlive: vi.fn(() => false),
+  sleep: vi.fn(async () => {}),
+}));
 
 const root = mkdtempSync(join(tmpdir(), "emcp-srv-"));
 const config = {
@@ -81,5 +90,30 @@ describe("unpack", () => {
     mkdirSync(dest, { recursive: true });
     unpack(archive, dest);
     expect(readFileSync(join(dest, "steamcmd.exe"), "utf-8")).toBe("x");
+  });
+});
+
+describe("server start ports", () => {
+  const cfg = { ...config, serverPath: join(root, "srv2"), serverProfilePath: join(root, "prof2"), packedPath: join(root, "packed2") } as Config;
+  mkdirSync(cfg.serverPath, { recursive: true });
+  writeFileSync(join(cfg.serverPath, "ArmaReforgerServer.exe"), "");
+  mkdirSync(join(cfg.packedPath, "TestAddon"), { recursive: true });
+  writeFileSync(join(cfg.packedPath, "TestAddon", "data.pak"), "");
+  writeFileSync(join(cfg.packedPath, "TestAddon", "addon.gproj"), "GameProject {\n ID \"TestAddon\"\n GUID \"1111111111111111\"\n}\n");
+  let h!: Handler;
+  registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, cfg);
+
+  it("-server mode binds 127.0.0.1 with -addr and prints that port", async () => {
+    const t = (await h({ action: "start", addons: ["TestAddon"], scenarioId: "{ECC61978EDCC2B5A}Missions/23_Campaign.conf", port: 2302 })).content[0].text;
+    expect(t).toContain("-addr 127.0.0.1:2302");
+    expect(t).not.toContain("-bindPort");
+    expect(t).toContain("connect=127.0.0.1:2302");
+  });
+
+  it("-config mode prints server.json's bindPort", async () => {
+    mkdirSync(cfg.serverProfilePath, { recursive: true });
+    writeFileSync(join(cfg.serverProfilePath, "server.json"), JSON.stringify({ bindPort: 2402, game: {} }));
+    const t = (await h({ action: "start" })).content[0].text;
+    expect(t).toContain("connect=127.0.0.1:2402");
   });
 });

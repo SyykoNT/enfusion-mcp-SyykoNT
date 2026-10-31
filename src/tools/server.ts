@@ -225,15 +225,16 @@ export function registerServer(server: McpServer, config: Config): void {
             guids.push(readGproj(join(packed, g!)).guid);
           }
           let note = "";
-          let port: number | undefined;
+          const cfg = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, "utf-8")) : {};
+          let port: number = cfg.bindPort ?? 2001;
           if (guids.length) {
             // The server refuses -addons together with -config, and mods listed in server.json must be on the
             // Workshop, so local builds start in -server mode (server.json settings other than scenario/port are not used).
-            const cfg = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, "utf-8")) : {};
             const scenario = a.scenarioId ?? cfg.game?.scenarioId;
             if (!scenario) return text("Local addons need a scenario: pass scenarioId (see `server scenarios`) or write one with `server config`.", true);
-            port = a.port ?? cfg.bindPort ?? 2001;
-            args.unshift("-server", scenario, "-bindPort", String(port));
+            port = a.port ?? port;
+            // -bindPort is ignored without a config file; -addr sets the port, on loopback only.
+            args.unshift("-server", scenario, "-addr", `127.0.0.1:${port}`);
             args.push("-addonsDir", config.packedPath, "-addons", guids.join(","));
             note = "\n\nStarted in -server mode because local addons cannot be loaded through -config. Only the scenario and port from server.json apply.";
           } else {
@@ -256,7 +257,7 @@ export function registerServer(server: McpServer, config: Config): void {
           return text(
             `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
             (logDir ? `Logs: ${logDir}\n\n\`\`\`\n${tail(join(logDir, "console.log"), 25)}\n\`\`\`` : "") +
-            `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${a.port ?? 2001} (and the same local addons).${note}`,
+            `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${port} (and the same local addons).${note}`,
             !alive
           );
         }
