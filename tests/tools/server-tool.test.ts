@@ -53,3 +53,17 @@ describe("server config", () => {
     expect(existsSync(p)).toBe(false);
   });
 });
+
+describe("server install/update", () => {
+  it("refuses a server path inside Steam's own steamapps/common", async () => {
+    const steam = { ...config, serverPath: join(root, "steamapps", "common", "Arma Reforger Server"), steamcmdPath: join(root, "steamcmd-x") } as Config;
+    let h!: Handler;
+    registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, steam);
+    for (const action of ["install", "update"]) {
+      const r = await h({ action });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/Steam client install/);
+    }
+    expect(existsSync(steam.steamcmdPath)).toBe(false);
+  });
+});

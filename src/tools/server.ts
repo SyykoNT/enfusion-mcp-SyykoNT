@@ -151,6 +151,10 @@ export function registerServer(server: McpServer, config: Config): void {
         const cfgPath = a.configPath ?? defaultCfg;
 
         if (a.action === "install" || a.action === "update") {
+          // The Steam client owns installs under steamapps\common; SteamCMD validate would rewrite them behind its back.
+          if (/[\\/]steamapps[\\/]common[\\/]/i.test(resolve(config.serverPath) + "/")) {
+            return text(`Refused: ${config.serverPath} is a Steam client install. Update it from Steam, or set ENFUSION_SERVER_PATH to a folder of its own for SteamCMD.`, true);
+          }
           const steamcmd = await ensureSteamcmd(config);
           mkdirSync(config.serverPath, { recursive: true });
           const log = join(config.steamcmdPath, "install-server.log");
