@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { downloadDocs } from "../../src/scraper/source-remote.js";
+import { downloadDocs, extractPageLinks } from "../../src/scraper/source-remote.js";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -16,5 +16,12 @@ describe("downloadDocs", () => {
       return new Response("", { status: 404 });
     });
     await expect(downloadDocs("arma", join(mkdtempSync(join(tmpdir(), "emcp-dl-")), "arma"))).rejects.toThrow(/1 pages missing \(e\.g\. interfaceB\.html\)/);
+  });
+});
+
+describe("extractPageLinks", () => {
+  it("keeps only plain page names, so remote HTML cannot pick a path outside the cache", () => {
+    const html = '<a href="../interfaceA.html">a</a><a href="interfaceB.html#x">b</a><a href="interfaceC-members.html">c</a>';
+    expect(extractPageLinks(html)).toEqual(["interfaceB.html"]);
   });
 });
