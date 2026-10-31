@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { registerTools } from "./server.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./utils/logger.js";
+import { SERVER_INSTRUCTIONS } from "./server-instructions.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
@@ -15,7 +16,7 @@ const config = loadConfig();
 const server = new McpServer({
   name: "enfusion-mcp",
   version,
-});
+}, { instructions: SERVER_INSTRUCTIONS });
 
 registerTools(server, config);
 
