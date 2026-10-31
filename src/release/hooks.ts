@@ -22,18 +22,18 @@ while IFS= read -r f; do
 done <<LIST
 $staged
 LIST
-[ $fail -eq 0 ] || { echo "Fix: wb_cleanup (MCP), or git restore --staged <path>. Bypass (--no-verify) only with Don's OK." >&2; exit 1; }
+[ $fail -eq 0 ] || { echo "Fix: wb_cleanup (MCP), or git restore --staged <path>. Bypass (--no-verify) only with the user's OK." >&2; exit 1; }
 `;
 
-/** The attribution stripper Don's repos already carry (without our marker line). */
-export const DON_COMMIT_MSG = String.raw`#!/bin/sh
+/** The attribution stripper the user's repos may already carry (without our marker line). */
+export const STRIPPER_COMMIT_MSG = String.raw`#!/bin/sh
 # Local hook (not tracked): strip Claude/Anthropic attribution so commits read as SyykoNT only.
 sed -i -E "/^[Cc]o-[Aa]uthored-[Bb]y:.*([Cc]laude|[Aa]nthropic)/d; /[Gg]enerated with \[?[Cc]laude [Cc]ode/d; /^[Cc]laude-[Ss]ession:/d" "$1"
 # drop trailing blank lines left behind
 sed -i -e :a -e "/^\n*\$/{\$d;N;ba" -e "}" "$1"
 `;
 
-export const COMMIT_MSG = DON_COMMIT_MSG.replace("\n", `\n${MARKER}\n`);
+export const COMMIT_MSG = STRIPPER_COMMIT_MSG.replace("\n", `\n${MARKER}\n`);
 
 /** Version from our marker line, or null for a hook we did not write. */
 export function ourVersion(text: string): number | null {

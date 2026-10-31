@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { COMMIT_MSG, DON_COMMIT_MSG, GUARDED_PATH, HOOK_VERSION, PRE_COMMIT, ourVersion } from "../../src/release/hooks.js";
+import { COMMIT_MSG, STRIPPER_COMMIT_MSG, GUARDED_PATH, HOOK_VERSION, PRE_COMMIT, ourVersion } from "../../src/release/hooks.js";
 
 describe("hook templates", () => {
   it("carry our marker and version", () => {
     expect(ourVersion(PRE_COMMIT)).toBe(HOOK_VERSION);
     expect(ourVersion(COMMIT_MSG)).toBe(HOOK_VERSION);
-    expect(ourVersion(DON_COMMIT_MSG)).toBeNull();
+    expect(ourVersion(STRIPPER_COMMIT_MSG)).toBeNull();
     expect(ourVersion("#!/bin/sh\n# enfusion-mcp-syykont commit guard v0 (old)\n")).toBe(0);
   });
 
@@ -17,6 +17,7 @@ describe("hook templates", () => {
       expect(t).not.toMatch(/\bod\b|mktemp|TMPDIR/);
     }
     expect(PRE_COMMIT).toContain(`grep -iE '${GUARDED_PATH}'`);
+    expect(PRE_COMMIT).toContain("only with the user's OK");
   });
 
   it("guards handler files, the folder .meta and the rdb, not look-alikes", () => {
