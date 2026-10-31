@@ -65,7 +65,7 @@ describe("launchWorkbench records and watches what it starts", () => {
     expect(sys.listeners).toContain("error");
     const args = sys.watcher[0];
     const flag = (f: string) => args[args.indexOf(f) + 1];
-    expect([flag("--pid"), flag("--start-time"), flag("--port"), flag("--dismiss")]).toEqual(["4242", String(inst.startedAt), "5775", "owned"]);
+    expect([flag("--pid"), flag("--start-time"), flag("--port"), flag("--dismiss")]).toEqual(["4242", String(inst.startedAt), "5775", "watched"]);
     expect(args).toContain("--owned");
     expect(flag("--logs-root")).toBe(join(home, "logs"));
     expect(sys.spawnArgs[0]).not.toContain("-noThrow");

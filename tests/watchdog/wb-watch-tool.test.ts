@@ -31,12 +31,12 @@ function deps(over: Partial<WatchToolDeps> = {}) {
 }
 
 describe("wb_watch start", () => {
-  it("attaches a report-only watcher to a Workbench this MCP did not start", () => {
+  it("attaches a watcher to a Workbench this MCP did not start: Ignore on the leak assert by default, no recovery", () => {
     const d = deps();
     const r = watchAction({ action: "start", pid: 19524, autoRecover: true }, d);
     expect(r.isError).toBeUndefined();
-    expect(r.text).toContain("not owned, report only");
-    expect(d.start).toHaveBeenCalledWith(expect.objectContaining({ pid: 19524, owned: false, autoRecover: false, dismiss: "owned", startTime: at("06:12:43.000") }));
+    expect(r.text).toContain("not owned: never closed or killed");
+    expect(d.start).toHaveBeenCalledWith(expect.objectContaining({ pid: 19524, owned: false, autoRecover: false, dismiss: "watched", startTime: at("06:12:43.000") }));
   });
 
   it("refuses a PID that is not Workbench, and a second watcher", () => {
@@ -59,10 +59,10 @@ describe("wb_watch start", () => {
     expect(d.start).toHaveBeenCalledWith(expect.objectContaining({ owned: true, autoRecover: true, owner: "broker (AM test)" }));
   });
 
-  it("does not offer the Ignore click on a Workbench this MCP did not start", () => {
+  it("passes dismissLeakAssert never through", () => {
     const d = deps();
-    expect(watchAction({ action: "start", pid: 19524, dismissLeakAssert: "watched" }, d).isError).toBe(true);
-    expect(d.start).not.toHaveBeenCalled();
+    expect(watchAction({ action: "start", pid: 19524, dismissLeakAssert: "never" }, d).text).toContain("dismissLeakAssert = never");
+    expect(d.start).toHaveBeenCalledWith(expect.objectContaining({ dismiss: "never" }));
   });
 });
 

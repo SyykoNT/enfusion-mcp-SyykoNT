@@ -2,7 +2,7 @@
  * Watchdog for one Workbench PID (PX-N5). Runs detached as `node wb-watch.js --pid N ...`, checks every 5 s,
  * writes `<stateDir>/<pid>.json` and `<stateDir>/events.jsonl`, and exits when that Workbench is gone.
  * `node wb-watch.js alerts --session <id>` prints alerts a session has not seen yet, for a Claude Code hook.
- * Reports on any Workbench; clicks or recovers only per decide() in signals.ts.
+ * Reports on any Workbench; clicks (Ignore on the leak assert, D-031) or recovers (owned only) per decide() in signals.ts.
  */
 
 import { execFileSync } from "node:child_process";
@@ -137,6 +137,11 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
   let startTime = o.startTime;
   const sig: Omit<Signals, "now" | "alive"> = {};
   const mem: { t: number; ws: number; cpu: number }[] = [];
+  /** Every action goes into the report and into events.jsonl. */
+  const note = (t: number, action: string) => {
+    st.actions.push(action);
+    appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action }) + "\n");
+  };
   const st: WatchState = {
     pid: o.pid, watcherPid: process.pid, owned: o.owned, owner: o.owner, state: "ok", since: deps.now(),
     lastLines: [], actions: [], dismiss: o.dismiss, autoRecover: o.autoRecover, updated: deps.now(),
@@ -165,7 +170,7 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
         if (e.kind === "reloadEnd") {
           sig.reloadOpenSince = undefined;
           if (clickAt !== undefined) {
-            st.actions.push(`reload finished ${hms(e.at)}`);
+            note(e.at, `reload finished ${hms(e.at)}`);
             clickAt = undefined;
           }
         }
@@ -246,15 +251,15 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
         if (a.type === "click") {
           sig.clicked = a.hwnd;
           const r = await deps.dismiss(o.pid, a.hwnd);
-          st.actions.push(r === "clicked" ? `Ignore clicked ${hms(now)}` : `Ignore not clicked: ${r}`);
+          note(now, r === "clicked" ? `Ignore clicked ${hms(now)}` : `Ignore not clicked: ${r}`);
           if (r === "clicked") clickAt = now;
         } else {
           recovered = true;
-          st.actions.push(`autoRecover ${hms(now)}: ${await deps.recover(o, startTime)}`);
+          note(now, `autoRecover ${hms(now)}: ${await deps.recover(o, startTime)}`);
         }
       }
       if (clickAt !== undefined && now - clickAt > 120_000) {
-        st.actions.push(`no "Reloading game scripts took" within 120 s of the click`);
+        note(now, `no "Reloading game scripts took" within 120 s of the click`);
         clickAt = undefined;
       }
 
@@ -388,7 +393,7 @@ export interface StartWatcher {
 export function startWatcher(w: StartWatcher): number {
   const stateDir = w.stateDir ?? WATCH_DIR;
   mkdirSync(stateDir, { recursive: true });
-  const args = [SELF, "--pid", String(w.pid), "--state-dir", stateDir, "--host", w.host, "--port", String(w.port), "--dismiss", w.dismiss ?? "owned"];
+  const args = [SELF, "--pid", String(w.pid), "--state-dir", stateDir, "--host", w.host, "--port", String(w.port), "--dismiss", w.dismiss ?? "watched"];
   if (w.startTime) args.push("--start-time", String(w.startTime));
   if (w.owned) args.push("--owned");
   if (w.owner) args.push("--owner", w.owner);
@@ -465,7 +470,7 @@ export function formatReport(s: WatchState, now = Date.now()): string {
   if (s.portOwner !== undefined) lines.push(`  NET API port owner: ${s.portOwner ? `PID ${s.portOwner}` : "none"}`);
   if (s.crashReporters?.length) lines.push(`  CrashReporter: ${s.crashReporters.map((c) => `PID ${c.pid} (parent ${c.ppid})`).join(", ")}`);
   if (s.lastLines.length) lines.push("  last log lines:", ...s.lastLines.map((l) => `    ${l}`));
-  lines.push(`  actions: ${s.actions.length ? s.actions.join("; ") : `none (dismissLeakAssert = ${s.dismiss}${s.owned ? "" : "; this PID is not owned"})`}`);
+  lines.push(`  actions: ${s.actions.length ? s.actions.join("; ") : `none (dismissLeakAssert = ${s.dismiss}${s.dismiss === "owned" && !s.owned ? "; this PID is not owned" : ""})`}`);
   if (s.state === "blocked_dialog") {
     lines.push("  advice: answer the dialog in Workbench (for the leak assert click Ignore, never Abort or Retry), or ask whoever uses it. Do not save .c files in its loaded projects.");
   }
@@ -505,10 +510,9 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const pid = Number(values.pid);
-  const dismiss = (values.dismiss ?? "owned") as Dismiss;
+  const dismiss = (values.dismiss ?? "watched") as Dismiss;
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("--pid <workbench pid> is required");
-  // "watched" (clicking in a Workbench this MCP did not start) waits for the owner's decision.
-  if (!["owned", "never"].includes(dismiss)) throw new Error("--dismiss must be owned or never");
+  if (!["owned", "watched", "never"].includes(dismiss)) throw new Error("--dismiss must be owned, watched or never");
   return runWatcher({
     pid, stateDir, dismiss,
     startTime: values["start-time"] ? Number(values["start-time"]) : undefined,

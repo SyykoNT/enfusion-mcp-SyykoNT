@@ -43,7 +43,7 @@ function setup() {
   const sample: ProbeSample = { t: 0, alive: true, start: START, ws: 4e9, cpu: 100, wins: [], crs: [], port: null };
   const dismiss = vi.fn(async () => "clicked");
   const opts = (over: Partial<WatchOpts> = {}): WatchOpts => ({
-    pid: 19524, owned: false, stateDir, logsRoot: join(root, "logs"), dismiss: "owned", autoRecover: false, recoverAfterMin: 5,
+    pid: 19524, owned: false, stateDir, logsRoot: join(root, "logs"), dismiss: "watched", autoRecover: false, recoverAfterMin: 5,
     host: "127.0.0.1", port: 5775, ...over,
   });
   const watcher = (over: Partial<WatchOpts> = {}) =>
@@ -55,9 +55,9 @@ const leakBox = { hwnd: 7001, cls: "#32770", text: "Assertion Failed", visible: 
 ] };
 
 describe("watcher main loop", () => {
-  it("replays 2026-10-31: busy, blocked by the leak assert with the trigger named, then back to ok; never clicks a Workbench it does not own", async () => {
+  it("replays 2026-10-31: busy, blocked by the leak assert with the trigger named, then back to ok; with dismiss owned it never clicks a Workbench it does not own", async () => {
     const t = setup();
-    const w = t.watcher();
+    const w = t.watcher({ dismiss: "owned" });
     expect((await w.tick()).state).toBe("ok");
 
     t.log("09:32:52.901  SCRIPT       : SCRIPT       : Reloading game scripts");
@@ -95,9 +95,9 @@ describe("watcher main loop", () => {
     expect(events).toEqual(["busy", "blocked_dialog", "busy", "ok"]);
   });
 
-  it("clicks Ignore on its own Workbench after 5 s and reports the reload that follows", async () => {
+  it("clicks Ignore after 5 s in a Workbench it did not start (D-031), logs it and reports the reload that follows", async () => {
     const t = setup();
-    const w = t.watcher({ owned: true });
+    const w = t.watcher();
     t.log("02:14:08.000  SCRIPT       : SCRIPT       : Reloading game scripts");
     t.sample.wins = [leakBox];
     t.clock.now = at("02:14:09.000");
@@ -115,6 +115,8 @@ describe("watcher main loop", () => {
     s = await w.tick();
     expect(s.actions).toEqual(["Ignore clicked 02:14:14", "reload finished 02:14:20"]);
     expect(s.state).toBe("ok");
+    const logged = readFileSync(join(t.stateDir, "events.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l).action).filter(Boolean);
+    expect(logged).toEqual(["Ignore clicked 02:14:14", "reload finished 02:14:20"]);
   });
 
   it("a second watcher on the same PID exits with already watched", async () => {

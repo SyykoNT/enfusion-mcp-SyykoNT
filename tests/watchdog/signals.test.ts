@@ -51,7 +51,7 @@ function replay(chunks: string[]) {
   }
   return s;
 }
-const ctx = (over: Partial<Ctx> = {}): Ctx => ({ owned: false, dismiss: "owned", autoRecover: false, lockHeld: false, recoverAfterMs: 300_000, ...over });
+const ctx = (over: Partial<Ctx> = {}): Ctx => ({ owned: false, dismiss: "watched", autoRecover: false, lockHeld: false, recoverAfterMs: 300_000, ...over });
 
 describe("parseLogChunk", () => {
   it("keeps a half-written line for the next chunk and stamps lines with the log day", () => {
@@ -162,14 +162,24 @@ describe("decide: who may be clicked or killed", () => {
     expect(decide({ now, alive: true, dialog: leak, clicked: 11 }, ctx({ owned: true })).actions).toEqual([]);
   });
 
-  it("never clicks in a Workbench it did not start unless dismiss is watched", () => {
-    expect(clicks(ctx({ owned: false }))).toEqual([]);
-    expect(clicks(ctx({ owned: false, dismiss: "watched" }))).toHaveLength(1);
+  it("clicks the leak assert in a Workbench it did not start (D-031, the default); owned and never do not", () => {
+    expect(clicks(ctx({ owned: false }))).toEqual([{ type: "click", hwnd: 11, button: 12 }]);
+    expect(clicks(ctx({ owned: false, dismiss: "owned" }))).toEqual([]);
+    expect(clicks(ctx({ owned: false, dismiss: "never" }))).toEqual([]);
     expect(clicks(ctx({ owned: true, dismiss: "never" }))).toEqual([]);
   });
 
-  it("never clicks a dialog that is not the leak assert", () => {
-    expect(clicks(ctx({ owned: true, dismiss: "watched" }), { hwnd: 11, kind: "other", since: now - 60_000 })).toEqual([]);
+  it("never clicks a dialog that is not the leak assert, owned or not", () => {
+    const other = { hwnd: 11, kind: "other" as const, since: now - 60_000 };
+    expect(clicks(ctx({ owned: false }), other)).toEqual([]);
+    expect(clicks(ctx({ owned: true }), other)).toEqual([]);
+    // A leak assert seen without its &Ignore button is not clicked either.
+    expect(clicks(ctx({ owned: false }), { ...leak, button: undefined })).toEqual([]);
+  });
+
+  it("never kills or recovers a Workbench it did not start, even with the Ignore click allowed", () => {
+    const hungNow = { now, alive: true, hungSince: now - 400_000, dialog: leak };
+    expect(decide(hungNow, ctx({ owned: false, autoRecover: true, lockHeld: true, badSince: now - 400_000 })).actions.map((a) => a.type)).toEqual(["click"]);
   });
 
   const hung = { now, alive: true, hungSince: now - 400_000 };

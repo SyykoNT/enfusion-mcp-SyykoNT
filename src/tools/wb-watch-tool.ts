@@ -65,8 +65,6 @@ export function watchAction(a: WatchArgs, d: WatchToolDeps): { text: string; isE
   const proc = d.proc(pid);
   if (!proc || !/ArmaReforgerWorkbenchSteamDiag\.exe/i.test(proc.cmd)) return fail(`PID ${pid} is not a Workbench process.`);
   if (watcher) return fail(`already watched by watcher PID ${watcher}`);
-  // Clicking in a Workbench this MCP did not start waits for Don's decision (a-watchignore).
-  if (a.dismissLeakAssert === "watched") return fail(`dismissLeakAssert "watched" is not available yet: clicking in a Workbench this MCP did not start needs the owner's decision.`);
   let owned = d.owned(pid);
   if (a.adopt) {
     const lockText = d.lockPath ? readText(d.lockPath) : undefined;
@@ -77,11 +75,11 @@ export function watchAction(a: WatchArgs, d: WatchToolDeps): { text: string; isE
     owned = true;
   }
   const w = d.start({
-    ...d.base, pid, owned, startTime: proc.created, owner: a.owner, dismiss: a.dismissLeakAssert ?? "owned", autoRecover: !!a.autoRecover && owned,
+    ...d.base, pid, owned, startTime: proc.created, owner: a.owner, dismiss: a.dismissLeakAssert ?? "watched", autoRecover: !!a.autoRecover && owned,
   });
   return {
-    text: `Watching Workbench PID ${pid} (${owned ? "owned" : "not owned, report only"}) with watcher PID ${w}. ` +
-      `dismissLeakAssert = ${a.dismissLeakAssert ?? "owned"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.`,
+    text: `Watching Workbench PID ${pid} (${owned ? "owned" : "not owned: never closed or killed"}) with watcher PID ${w}. ` +
+      `dismissLeakAssert = ${a.dismissLeakAssert ?? "watched"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.`,
   };
 }
 
@@ -93,14 +91,14 @@ export function registerWbWatch(server: McpServer, config: Config): void {
         "Watch a Workbench between calls: notices a blocking dialog (such as the diag build's \"Resources are leaking!\" assert), " +
         "a hang, a script reload that never finishes, or a crash, names the likely trigger, and reports it here, in every live tool's footer " +
         "and in wb_diagnose. wb_launch already watches each Workbench it starts. status lists watched Workbench copies; start attaches a " +
-        "watcher to another Workbench (report only: it never clicks, closes or kills a Workbench this MCP did not start); stop ends one. " +
-        "The only automatic click is Ignore on the leak assert in a Workbench this MCP started.",
+        "watcher to another Workbench (it never closes, kills or focuses a Workbench this MCP did not start); stop ends one. " +
+        "The only automatic click is Ignore on the \"Resources are leaking!\" assert, in any Workbench it watches; every click is reported.",
       inputSchema: {
         action: z.enum(["status", "start", "stop"]).describe("status: list watched Workbench copies; start: attach a watcher; stop: end one"),
         pid: z.number().int().positive().optional().describe("Workbench PID (start and stop)"),
         adopt: z.boolean().optional().describe("Treat as owned. Only when the lock file's pid line equals pid and owner equals its owner line"),
         owner: z.string().optional().describe("The lock file's owner line (with adopt), or the name autoRecover checks the lock against"),
-        dismissLeakAssert: z.enum(["owned", "watched", "never"]).optional().describe("Who gets the automatic Ignore on the leak assert (default owned; watched is not available yet)"),
+        dismissLeakAssert: z.enum(["owned", "watched", "never"]).optional().describe("Who gets the automatic Ignore on the leak assert: watched (default, any watched Workbench), owned, or never"),
         autoRecover: z.boolean().optional().describe("Owned only: after 5 min not responding or stalled, and only while the lock names this owner, exit and then kill that one Workbench"),
       },
     },
