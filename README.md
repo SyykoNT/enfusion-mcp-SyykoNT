@@ -253,14 +253,17 @@ defaults.
 - `wb_launch` copies the server's handler scripts into the addon it opens, under
   `Scripts/WorkbenchGame/EnfusionMCP/`. `mod pack` warns when they are present. Run `wb_cleanup` before you
   publish, and keep that folder out of version control.
-- Only `wb_launch` starts Workbench. Every other `wb_*` tool returns an error when Workbench is not running.
+- Only `wb_launch` starts Workbench. `wb_cleanup`, `wb_diagnose` and `wb_knowledge` work without it, and
+  `wb_close` reports that it is not running. Every other `wb_*` tool returns an error when Workbench is not
+  running.
 - `wb_close` closes only a Workbench this server started. `server stop` and `game stop` act only on servers and
   game clients this server started.
-- The file-writing tools (`script_create`, `prefab`, `config_create`, `layout_create`, `layout_recipe`,
-  `menu_create`, `game_duplicate`, `config_override`, `economy`) write only into an addon named with `modName`
-  or `projectPath`, never into `ENFUSION_DEFAULT_MOD` by default. They refuse the game and Tools installs, the
-  Workshop caches, `ENFUSION_FORBIDDEN_DIRS`, the projects folder itself, folders without a `.gproj` and the
-  addons in `ENFUSION_PROTECTED_ADDONS`.
+- These file-writing tools write only into an addon named with `modName` or `projectPath`, never into
+  `ENFUSION_DEFAULT_MOD` by default: `script_create`, `prefab`, `config_create`, `layout_create`,
+  `layout_recipe`, `menu_create`, `game_duplicate`, `config_override` and `economy`. They refuse the game and
+  Tools installs, the Workshop caches, `ENFUSION_FORBIDDEN_DIRS`, the projects folder itself, folders without a
+  `.gproj` and the addons in `ENFUSION_PROTECTED_ADDONS`.
+- `gamemode_scaffold`, `building_setup` and `server_config` still write without this guard. A fix is planned.
 - `wb_entity_duplicate`, and `wb_launch` without `gprojPath`, still fall back to `ENFUSION_DEFAULT_MOD` or the
   first addon in the project path. Name the target addon.
 - Workbench's NET API listens on all network interfaces (`0.0.0.0:5775`). Block inbound TCP 5775 in the
