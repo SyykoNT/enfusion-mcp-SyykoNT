@@ -98,7 +98,10 @@ export function flat(root: EnfusionNode, origins: Map<string, string>): FlatProp
     }
     // shortcut: value lists carry no origin (merge events cover properties only)
     if (n.values.length) out.push({ key: `${key}\t[]`, label: label || "(values)", value: `[${n.values.map((v) => JSON.stringify(v)).join(", ")}]` });
-    for (const c of n.children) walk(c, (key ? `${key}/` : "") + (c.id ?? c.type), (label ? `${label}/` : "") + c.type + (c.id ?? ""));
+    for (const c of n.children) {
+      const name = c.id === undefined ? "" : c.id.startsWith("{") ? c.id : `(${c.id})`; // a bare name is not a GUID
+      walk(c, (key ? `${key}/` : "") + (c.id ?? c.type), (label ? `${label}/` : "") + c.type + name);
+    }
   };
   walk(root, "", "");
   return out;
