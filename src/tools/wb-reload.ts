@@ -25,9 +25,11 @@ export function registerWbReload(server: McpServer, client: WorkbenchClient): vo
           return {
             content: [{
               type: "text" as const,
-              text: `**Reload not confirmed**: ${msg}\n\nWorkbench exposed no matching menu action. To check that scripts compile, ` +
-                `use \`mod\` with action "compile" (headless, reports errors with file:line); in the open Workbench, ` +
-                `recompile from the Script Editor.${formatConnectionStatus(client)}`,
+              // mod compile is no help here: it refuses while Workbench is open.
+              text: `**Reload not confirmed**: ${msg}\n\nWorkbench exposed no matching menu action. Workbench's built-in NET API ` +
+                `call ReloadScripts does reload (no MCP tool sends it yet); confirm it by a new "Reloading game scripts took" ` +
+                `line in Workbench's console.log. Saving a .c file of the loaded project also makes Workbench reload game scripts.` +
+                `${formatConnectionStatus(client)}`,
             }],
             isError: true,
           };
