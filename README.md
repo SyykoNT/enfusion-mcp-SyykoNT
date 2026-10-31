@@ -86,7 +86,8 @@ Added since that test pass:
   servers and game clients alone (see [Safety notes](#safety-notes)).
 - A rewritten Enfusion text parser and writer that keep the original text. `config_override set` and
   `economy set` keep `+` appends, quoting, line endings and the final newline of an existing file. A read-only
-  run over 29,863 base-game and addon text files found no token changes.
+  run over 29,863 base-game and addon text files found no token changes; 3 malformed files are refused with a
+  line number.
 - Paged results for long files: `game_read` by lines, `wiki_read`, `wb_knowledge` and `resource_resolve` in
   parts. `game_read` also reads one addon's own files, and answers `X.meta` from the resource database, since
   packed addons ship no `.meta` files.
@@ -157,6 +158,9 @@ All settings are optional. Order of precedence: environment variables, then `~/.
 then `enfusion-mcp.config.json` in the repository root (see `enfusion-mcp.config.example.json`), then the
 defaults.
 
+With `ENFUSION_PROJECT_PATH` unset, tools write into addons under `My Games\ArmaReforgerWorkbench\addons`, but
+never into Workshop downloads there (folders with `ServerData.json`) or into the game's Workshop cache.
+
 | Environment variable | Config key | Default |
 |---|---|---|
 | `ENFUSION_WORKBENCH_PATH` | `workbenchPath` | `C:\Program Files (x86)\Steam\steamapps\common\Arma Reforger Tools` |
@@ -225,7 +229,7 @@ defaults.
 | `addon_git_guard` | Local git commit guard for addon repos: `status`, `check` (both read-only) and `install` |
 
 ### COALITION CRF missions (offline, read-only)
-Both tools read a CRF clone, and `gearscript_inspect` also a COALITION-Lobby clone, inside the project path.
+Both tools read a CRF clone and its COALITION-Lobby clone, inside the project path.
 
 | Tool | Purpose |
 |---|---|
@@ -288,7 +292,8 @@ Both tools read a CRF clone, and `gearscript_inspect` also a COALITION-Lobby clo
 - `wb_launch` copies the server's handler scripts into the addon it opens, under
   `Scripts/WorkbenchGame/EnfusionMCP/`. `mod pack` and `mod build` refuse while they are present
   (`allowHandlers=true` for a local test pack). Run `wb_cleanup` before you publish, and keep that folder out of
-  version control. `addon_git_guard install` adds a local pre-commit hook that refuses commits of those files,
+  version control. `addon_git_guard install` adds local pre-commit and commit-msg hooks (`hooks` picks which);
+  the pre-commit hook refuses commits of those files,
   their folder `.meta`, `resourceDatabase.rdb`, and `.c` files that start with a UTF-8 BOM.
 - `wb_launch` refuses a `gprojPath` in `ENFUSION_PROTECTED_ADDONS`, in the game or Tools install or in a
   Workshop cache. Without `gprojPath` it falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project
