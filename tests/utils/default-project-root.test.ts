@@ -47,6 +47,20 @@ describe("default project path (Workbench addons folder)", () => {
     }
   });
 
+  it("ENFUSION_WORKBENCH_PROFILE spelled another way (a link) does not re-forbid it", () => {
+    const saved = process.env.ENFUSION_WORKBENCH_PROFILE;
+    const link = join(root, "profile-link");
+    symlinkSync(join(myGamesDir(), "ArmaReforgerWorkbench"), link, "junction");
+    try {
+      process.env.ENFUSION_WORKBENCH_PROFILE = link;
+      expect(forbiddenRoot(cfg(wbAddons), join(wbAddons, "NewMod"))).toBeNull();
+      expect(forbiddenRoot(cfg(wbAddons), join(link, "addons", "Cached_3333333333333333"))).not.toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env.ENFUSION_WORKBENCH_PROFILE;
+      else process.env.ENFUSION_WORKBENCH_PROFILE = saved;
+    }
+  });
+
   it("stays forbidden when the project root is elsewhere", () => {
     expect(forbiddenRoot(cfg(join(root, "projects")), join(wbAddons, "MyMod"))).toBe(wbAddons);
   });
