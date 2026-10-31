@@ -9,6 +9,7 @@ import { gameGuidMap } from "../pak/rdb.js";
 import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
+import { protectedAddonOf } from "../utils/game-paths.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, type Entry } from "../utils/instances.js";
 
@@ -199,9 +200,11 @@ export function registerServer(server: McpServer, config: Config): void {
           // Only the MCP's own server.json is replaced; any other path must be new and outside installs and caches.
           const own = sameDir(cfgPath, defaultCfg);
           const root = own ? null : forbiddenRoot(config, cfgPath);
+          const prot = own ? null : protectedAddonOf(config, cfgPath);
           const refuse = own ? ""
             : existsSync(cfgPath) ? `${cfgPath} already exists and is not this MCP's server.json`
             : root ? `${cfgPath} is inside ${root}`
+            : prot ? `${cfgPath} is inside the protected addon ${prot} (ENFUSION_PROTECTED_ADDONS)`
             : "";
           if (refuse) return text(`**server.json not written**: ${refuse}. Omit configPath or pass a new file path.\n\n\`\`\`json\n${json}\n\`\`\``, true);
           mkdirSync(join(cfgPath, ".."), { recursive: true });

@@ -79,6 +79,15 @@ export function isProtectedAddon(config: Config, gproj: string): boolean {
   return (config.protectedAddons ?? []).some((p) => [guid, id, name].some((v) => v && v.toLowerCase() === p.toLowerCase()));
 }
 
+/** The protected addon folder that holds path (its nearest parent with a .gproj), or null. */
+export function protectedAddonOf(config: Config, path: string): string | null {
+  for (let d = dirname(resolve(path)); ; d = dirname(d)) {
+    const g = findGproj(d);
+    if (g) return isProtectedAddon(config, g) ? d : null;
+    if (dirname(d) === d) return null;
+  }
+}
+
 /**
  * The addon a file-writing tool may write into. Needs an explicit projectPath (wins) or modName
  * (under the project path or an ENFUSION_ADDONS_DIR entry): writes never fall back to

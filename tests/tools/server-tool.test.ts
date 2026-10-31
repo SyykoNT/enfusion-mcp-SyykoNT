@@ -56,6 +56,18 @@ describe("server config", () => {
     expect(readFileSync(p, "utf-8")).toBe("{\"mine\":true}");
   });
 
+  it("refuses a new file inside a protected addon", async () => {
+    const crf = join(root, "projects", "Coalition-Reforger-Framework");
+    mkdirSync(crf, { recursive: true });
+    writeFileSync(join(crf, "addon.gproj"), 'GameProject {\n ID "CRF"\n GUID "5EB3564A02CE294F"\n}\n');
+    const p = join(crf, "Configs", "server.json");
+    let h!: Handler;
+    registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, { ...config, protectedAddons: ["5EB3564A02CE294F"] } as Config);
+    const r = await h({ action: "config", configPath: p });
+    expect(r.content[0].text).toMatch(/not written.*protected addon/);
+    expect(existsSync(p)).toBe(false);
+  });
+
   it("refuses a new file inside the game install", async () => {
     const p = join(config.gamePath, "server.json");
     const r = await tool({ action: "config", configPath: p });
