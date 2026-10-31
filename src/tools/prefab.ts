@@ -1,8 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import type { Config } from "../config.js";
+import { entityTemplateMeta } from "../formats/config-override.js";
+import { generateGuid } from "../formats/guid.js";
+import { resourceName } from "../pak/rdb.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 import {
   generatePrefab,
   getPrefabSubdirectory,
@@ -14,8 +18,10 @@ import { recipeLoader } from "../templates/recipe-loader.js";
 import {
   walkChain,
   mergeAncestryComponents,
+  mergeTopLevelComponents,
   parseTopLevelComponents,
   type AncestorLevel,
+  type ParsedComponent,
 } from "../utils/prefab-ancestry.js";
 import { checkComponentDependencies } from "../utils/component-dependencies.js";
 import { validateFilename } from "../utils/safe-path.js";
@@ -88,7 +94,8 @@ export function registerPrefab(server: McpServer, config: Config): void {
       description:
         "Create or inspect Arma Reforger prefab (.et) files.\n\n" +
         "action=create: Create a new Entity Template (.et) prefab file for an Arma Reforger mod. Generates a properly structured prefab with components in valid Enfusion text serialization format. " +
-        "When parentPrefab is provided, automatically resolves the full ancestor chain and pre-populates inherited components (set includeAncestry=false to skip). " +
+        "Writes a child prefab of parentPrefab (or the recipe's parent) as {GUID}path, with the parent's root class, only the components that set a value " +
+        "(each reusing the parent's component ID), and a .meta. Needs modName or projectPath (an addon root with a .gproj). " +
         "IMPORTANT: For 'interactive' and other visible prefabs, the MeshObject component MUST have its 'Object' property set to a base game .xob model path (e.g., '{5F4C4181F065B447}Assets/Props/Military/Barrels/BarrelGreen_01.xob') or the entity will be invisible in-game. Use api_search to find model paths. " +
         "Both actions flag known hard component-dependency violations (e.g. a DamageManager component with no RplComponent or no HitZone, a WeaponComponent with no RigidBody) as warnings — see arma-knowledge component-anatomy-and-dependencies.md for the full rule set and for implicit (non-checkable) coupling like signal names, collider names, and bone PivotIDs that require manual review.\n\n" +
         "action=inspect: Inspect an Arma Reforger prefab (.et file) and its full inheritance chain. " +
@@ -143,6 +150,11 @@ export function registerPrefab(server: McpServer, config: Config): void {
           .array(
             z.object({
               type: z.string().describe("Component class name (e.g., 'RigidBody', 'MeshObject')"),
+              guid: z
+                .string()
+                .regex(/^[0-9A-Fa-f]{16}$/)
+                .optional()
+                .describe("16-hex ID of the parent component to override, needed when the parent has this type more than once"),
               properties: z
                 .record(z.string())
                 .optional()
@@ -161,8 +173,8 @@ export function registerPrefab(server: McpServer, config: Config): void {
           .boolean()
           .default(true)
           .describe(
-            "(create) When parentPrefab is provided, resolve the full ancestor chain and pre-populate inherited components. " +
-            "Defaults to true. Set false to skip ancestry resolution (uses hardcoded template defaults instead)."
+            "(create) Resolve the parent chain so the root class is the parent's and each component reuses the parent's ID " +
+            "for its type (an override, not a second component). Defaults to true. Set false to skip it (IDs may then duplicate)."
           ),
         // inspect params
         path: z.string().optional().describe(
@@ -176,15 +188,18 @@ export function registerPrefab(server: McpServer, config: Config): void {
         projectPath: z
           .string()
           .optional()
-          .describe("Addon root path / mod project root. Uses configured default if omitted."),
+          .describe("Addon root path / mod project root. (create) Wins over modName; modName or projectPath is required to write."),
+        modName: z
+          .string()
+          .optional()
+          .describe("(create) Addon folder under the project path or ENFUSION_ADDONS_DIR."),
       },
     },
     async (params) => {
       const { action } = params;
 
       if (action === "create") {
-        const { name, prefabType, variant, parentPrefab, components, description, includeAncestry, projectPath } = params;
-        const basePath = projectPath || config.projectPath;
+        const { name, prefabType, variant, parentPrefab, components, description, includeAncestry, projectPath, modName } = params;
 
         try {
           if (!name) {
@@ -214,41 +229,54 @@ export function registerPrefab(server: McpServer, config: Config): void {
             };
           }
 
-          // Resolve ancestry if parentPrefab is given and includeAncestry is not disabled
-          let ancestorComponents: ComponentDef[] | undefined;
+          const target = resolveWriteAddon(config, { projectPath, modName });
+          const addonDir = "error" in target ? undefined : target.dir;
+
+          // Parent from the call or the recipe (variant-aware); its chain gives the root class and component IDs
+          const parent = parentPrefab || recipe.defaultParent;
+          let rootClass: string | undefined;
+          let parentComponents: { type: string; guid: string }[] | undefined;
+          let parentTop: ParsedComponent[] = [];
           let ancestryNote = "";
 
-          if (parentPrefab && includeAncestry) {
-            const { levels, warnings } = walkChain(parentPrefab, config, projectPath);
-            if (levels.length > 0) {
-              const merged = mergeAncestryComponents(levels);
-              ancestorComponents = Array.from(merged.values()).map(({ comp }) => ({
-                type: comp.typeName,
-                guid: comp.guid,
-                // Properties intentionally empty: components are listed as GUID-matched
-                // override slots, not property copies. Fill values manually as needed.
-                properties: {},
-              }));
-              ancestryNote = `\n\nAncestry resolved: ${levels.length} ancestor level(s), ${ancestorComponents.length} inherited component(s) pre-populated.`;
-              if (warnings.length > 0) {
-                ancestryNote += `\nWarnings: ${warnings.join("; ")}`;
-              }
-            } else {
-              ancestryNote = `\n\nAncestry resolution unavailable (game files not found). Using recipe defaults.`;
-              if (warnings.length > 0) {
-                ancestryNote += ` Warnings: ${warnings.join("; ")}`;
-              }
+          if (parent && includeAncestry) {
+            const { levels, warnings } = walkChain(parent, config, addonDir);
+            if (levels.length === 0) {
+              return {
+                content: [{
+                  type: "text",
+                  text: `Parent not found: ${parent} (checked the addon and the game data). Use asset_search to get the exact path, or pass includeAncestry=false.` +
+                    (warnings.length > 0 ? `\nWarnings: ${warnings.join("; ")}` : ""),
+                }],
+                isError: true,
+              };
             }
+            rootClass = levels[levels.length - 1].entityClass;
+            parentTop = [...mergeTopLevelComponents(levels).values()].map(({ comp }) => comp);
+            parentComponents = parentTop.map((c) => ({ type: c.typeName, guid: c.guid }));
+            ancestryNote = `\n\nParent chain: ${levels.length} level(s), ${parentComponents.length} top-level component(s); components of those types override them by ID.`;
+            if (warnings.length > 0) ancestryNote += `\nWarnings: ${warnings.join("; ")}`;
+          } else if (parent) {
+            ancestryNote = `\n\nincludeAncestry=false: component IDs were not matched to the parent, so a type the parent already has is added a second time.`;
+          }
+
+          let parentName = parent;
+          if (parent && !/^\{[0-9A-Fa-f]{16}\}/.test(parent)) {
+            const metaPath = addonDir ? join(addonDir, `${parent}.meta`) : "";
+            const addonName = metaPath && existsSync(metaPath) ? /Name\s+"([^"]+)"/.exec(readFileSync(metaPath, "utf-8"))?.[1] : undefined;
+            parentName = resourceName(config.gamePath, parent) ?? addonName ?? parent;
+            if (parentName === parent) ancestryNote += `\nWarning: parent written without GUID (not found in the game resource database or the addon).`;
           }
 
           const content = generatePrefab({
             name,
             prefabType: prefabType as PrefabType,
             variant: variant as string | undefined,
-            parentPrefab,
+            parentPrefab: parentName,
             components: components as ComponentDef[] | undefined,
             description,
-            ancestorComponents,
+            rootClass,
+            parentComponents,
           });
 
           // Format post-creation checklist from recipe
@@ -256,18 +284,18 @@ export function registerPrefab(server: McpServer, config: Config): void {
             ? "\n\nRequired follow-up:\n" + recipe.postCreateNotes.map((note) => `[ ] ${note}`).join("\n")
             : "";
 
-          // Check flattened component set against known hard dependency rules
-          const depWarnings = checkComponentDependencies(
-            Array.from(parseTopLevelComponents(content).values())
-          );
+          // Check the parent's components plus this file's against known hard dependency rules
+          const depWarnings = checkComponentDependencies([
+            ...new Map([...parentTop, ...parseTopLevelComponents(content).values()].map((c) => [c.guid, c])).values(),
+          ]);
           const depWarningsNote = depWarnings.length > 0
             ? "\n\nComponent dependency warnings:\n" + depWarnings.map((w) => `  WARNING: ${w}`).join("\n")
             : "";
 
-          if (basePath) {
+          if (!("error" in target)) {
             const subdir = getPrefabSubdirectory(prefabType as PrefabType, variant as string | undefined);
             const filename = getPrefabFilename(name);
-            const targetDir = resolve(basePath, subdir);
+            const targetDir = resolve(target.dir, subdir);
             const targetPath = join(targetDir, filename);
 
             mkdirSync(targetDir, { recursive: true });
@@ -283,14 +311,19 @@ export function registerPrefab(server: McpServer, config: Config): void {
               };
             }
 
+            const resourcePath = `${subdir}/${filename}`;
+            const resourceGuid = generateGuid();
             writeFileSync(targetPath, content, "utf-8");
+            writeFileSync(`${targetPath}.meta`, entityTemplateMeta(resourceGuid, resourcePath), "utf-8");
 
             const variantTag = variant ? ` (variant: ${variant})` : "";
+            const parentLine = parentName ? `\nParent: ${parentName}${rootClass ? `  [${rootClass}]` : ""}` : "";
             return {
               content: [
                 {
                   type: "text",
-                  text: `Prefab created: ${subdir}/${filename}\nType: ${prefabType}${variantTag}\n\n\`\`\`\n${content}\n\`\`\`${checklist}${depWarningsNote}${ancestryNote}`,
+                  text: `Prefab created: ${resourcePath} (+ .meta)\nReference it as: {${resourceGuid}}${resourcePath}${parentLine}\nType: ${prefabType}${variantTag}\n\n\`\`\`\n${content}\n\`\`\`${checklist}${depWarningsNote}${ancestryNote}` +
+                    `\n\nNot registered yet: open the addon in Workbench or run one headless Workbench scan before a server test.`,
                 },
               ],
             };
@@ -300,9 +333,10 @@ export function registerPrefab(server: McpServer, config: Config): void {
             content: [
               {
                 type: "text",
-                text: `Generated prefab (no project path configured — not written to disk):\n\n\`\`\`\n${content}\n\`\`\`${checklist}${depWarningsNote}\n\nSet ENFUSION_PROJECT_PATH to write files automatically.${ancestryNote}`,
+                text: `${target.error}\n\nGenerated prefab (not written):\n\n\`\`\`\n${content}\n\`\`\`${checklist}${depWarningsNote}${ancestryNote}`,
               },
             ],
+            isError: true,
           };
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);

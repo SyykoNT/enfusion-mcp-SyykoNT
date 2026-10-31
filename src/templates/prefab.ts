@@ -36,90 +36,70 @@ export interface PrefabOptions {
   components?: ComponentDef[];
   /** Description (used for m_sDisplayName if applicable) */
   description?: string;
+  /** Root entity class (the parent's, when resolved). Default: the recipe's entityType. */
+  rootClass?: string;
   /**
-   * Pre-resolved ancestor components (from prefab-ancestry walkChain).
-   * When provided, ancestry components take precedence over recipe overrides.
-   * GUIDs are preserved so they act as override slots in the Enfusion delta model.
+   * The parent chain's top-level components. A component of a type listed here once reuses
+   * its ID (an override, not a second component); one with no value left is dropped.
    */
-  ancestorComponents?: ComponentDef[];
+  parentComponents?: { type: string; guid: string }[];
 }
 
 
 /**
  * Generate an Enfusion .et prefab file.
- * Loads recipe from JSON, merges with ancestry and user components.
+ * Recipe components, user components and the description's editable component, matched to the
+ * parent's component IDs when parentComponents is given. Empty ("") values are never written.
  */
 export function generatePrefab(opts: PrefabOptions): string {
   const recipe = recipeLoader.getRecipe(opts.prefabType, opts.variant);
   const parentPrefab = opts.parentPrefab || recipe.defaultParent;
   const entityGuid = generateGuid();
 
-  const root = createNode(recipe.entityType, {
+  const root = createNode(opts.rootClass ?? recipe.entityType, {
     inheritance: parentPrefab || undefined,
     properties: [{ key: "ID", value: entityGuid }],
   });
 
-  // Build components block
-  // Ancestry components (if provided) take precedence, then recipe overrides, then user components
-  const baseComponents: ComponentDef[] = opts.ancestorComponents ?? [];
-
-  // Convert recipe override components to ComponentDef format
   const recipeComponents: ComponentDef[] = recipe.overrideComponents.map((override) => ({
     type: override.type,
-    properties: override.properties ?? {},
+    properties: { ...override.properties },
   }));
 
-  // Merge: ancestry (with preserved GUIDs) + recipe overrides + user components
-  const allComponents: ComponentDef[] = [
-    ...baseComponents,
-    // Only add recipe components not already in ancestry
-    ...recipeComponents.filter(
-      (rc) => !baseComponents.some((ac) => ac.type === rc.type)
-    ),
-    ...(opts.components ?? []),
-  ];
+  // A user component of a recipe type merges into it, so one type never gets two blocks with one ID
+  const allComponents = [...recipeComponents];
+  for (const comp of opts.components ?? []) {
+    const same = comp.guid ? undefined : recipeComponents.find((rc) => rc.type === comp.type);
+    if (same) same.properties = { ...same.properties, ...comp.properties };
+    else allComponents.push({ ...comp, properties: { ...comp.properties } });
+  }
+  if (opts.description) {
+    const editable = allComponents.find((c) => c.type === "SCR_EditableEntityComponent");
+    if (editable) editable.properties = { ...editable.properties, m_sDisplayName: opts.description };
+    else allComponents.push({ type: "SCR_EditableEntityComponent", properties: { m_sDisplayName: opts.description } });
+  }
 
-  if (allComponents.length > 0 || opts.description) {
-    const componentNodes: EnfusionNode[] = [];
-
-    for (const comp of allComponents) {
-      // Preserve GUID if provided (ancestor components carry their original GUID)
-      const compGuid = comp.guid ?? generateGuid();
-      const compNode = createNode(comp.type, {
-        id: `{${compGuid}}`,
-      });
-
-      if (comp.properties) {
-        for (const [key, value] of Object.entries(comp.properties)) {
-          compNode.properties.push({ key, value });
-        }
-      }
-
-      componentNodes.push(compNode);
-    }
-
-    // If there's a description and an editable component, set the display name
-    if (opts.description) {
-      const editableComp = componentNodes.find(
-        (c) => c.type === "SCR_EditableEntityComponent"
+  const parent = opts.parentComponents;
+  const componentNodes: EnfusionNode[] = [];
+  for (const comp of allComponents) {
+    const properties = Object.entries(comp.properties ?? {}).filter(([, value]) => value !== "");
+    const matches = parent?.filter((p) => p.type === comp.type) ?? [];
+    // An override block with no values changes nothing
+    if (matches.length > 0 && !comp.guid && properties.length === 0) continue;
+    if (matches.length > 1 && !comp.guid) {
+      throw new Error(
+        `Parent has ${matches.length} top-level components of type ${comp.type} (${matches.map((m) => `{${m.guid}}`).join(",")}); pass "guid" for the one to override.`
       );
-      if (editableComp) {
-        editableComp.properties.push({
-          key: "m_sDisplayName",
-          value: opts.description,
-        });
-      } else {
-        // Add an editable entity component with the display name
-        const compGuid = generateGuid();
-        componentNodes.push(
-          createNode("SCR_EditableEntityComponent", {
-            id: `{${compGuid}}`,
-            properties: [{ key: "m_sDisplayName", value: opts.description }],
-          })
-        );
-      }
     }
+    componentNodes.push(
+      createNode(comp.type, {
+        id: `{${comp.guid ?? matches[0]?.guid ?? generateGuid()}}`,
+        properties: properties.map(([key, value]) => ({ key, value })),
+      })
+    );
+  }
 
+  if (componentNodes.length > 0) {
     root.children.push(createNode("components", { children: componentNodes }));
   }
 

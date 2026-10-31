@@ -13,6 +13,7 @@ import { registerConfigCreate } from "../../src/tools/config-create.js";
 import { registerLayoutCreate } from "../../src/tools/layout-create.js";
 import { registerLayoutRecipe } from "../../src/tools/layout-recipe.js";
 import { registerMenuCreate } from "../../src/tools/menu-create.js";
+import { registerPrefab } from "../../src/tools/prefab.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-wtt-"));
 const projects = join(root, "projects");
@@ -42,6 +43,7 @@ registerConfigCreate(server, config);
 registerLayoutCreate(server, config);
 registerLayoutRecipe(server, config);
 registerMenuCreate(server, config);
+registerPrefab(server, config);
 
 const listing = () => readdirSync(projects, { recursive: true }).map(String).sort();
 const before = listing();
@@ -55,6 +57,7 @@ const calls: [string, Record<string, unknown>][] = [
   ["layout_create", { name: "WTT_Hud", layoutType: "hud" }],
   ["layout_recipe", { action: "create", recipe: "info_panel", name: "WTT_Info" }],
   ["menu_create", { action: "create", className: "WTT_Menu" }],
+  ["prefab", { action: "create", name: "WTT_Prefab", prefabType: "generic", includeAncestry: true }],
 ];
 
 describe.each(calls)("%s", (tool, args) => {

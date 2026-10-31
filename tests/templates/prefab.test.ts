@@ -119,40 +119,59 @@ describe("generatePrefab", () => {
     }
   });
 
-  it("uses ancestorComponents instead of recipe defaults when provided", () => {
-    const text = generatePrefab({
-      name: "Test",
-      prefabType: "character",
-      ancestorComponents: [
-        { type: "CustomComponent", guid: "AAAAAAAAAAAAAAAA", properties: {} },
-      ],
-    });
-    const node = parse(text);
-    const comps = node.children.find((c) => c.type === "components");
-    expect(comps).toBeDefined();
-    // ancestorComponents should be present with preserved GUID
-    const custom = comps!.children.find((c) => c.type === "CustomComponent");
-    expect(custom).toBeDefined();
-    // GUID should be preserved from ancestorComponents
-    expect(custom!.id).toBe("{AAAAAAAAAAAAAAAA}");
+  const rifleParent = [
+    { type: "MeshObject", guid: "CFBAA4B701F95D69" },
+    { type: "WeaponSoundComponent", guid: "5A8685198A9AEEDD" },
+  ];
+  const compsOf = (text: string) => parse(text).children.find((c) => c.type === "components")?.children ?? [];
+
+  it("never writes empty recipe placeholders", () => {
+    const mesh = compsOf(generatePrefab({ name: "T", prefabType: "firearm" })).find((c) => c.type === "MeshObject");
+    expect(mesh).toBeDefined();
+    expect(mesh!.properties.find((p) => p.key === "Object")).toBeUndefined();
   });
 
-  it("appends user components after ancestorComponents and recipe overrides", () => {
-    const text = generatePrefab({
-      name: "Test",
-      prefabType: "generic",
-      ancestorComponents: [
-        { type: "MeshObject", guid: "AAAAAAAAAAAAAAAA" },
-      ],
-      components: [
-        { type: "RigidBody" },
-      ],
-    });
-    const node = parse(text);
-    const comps = node.children.find((c) => c.type === "components");
-    expect(comps).toBeDefined();
-    expect(comps!.children.find((c) => c.type === "MeshObject")).toBeDefined();
-    expect(comps!.children.find((c) => c.type === "RigidBody")).toBeDefined();
+  it("writes no component blocks when the parent has every recipe type and nothing is set", () => {
+    const text = generatePrefab({ name: "T", prefabType: "firearm", variant: "rifle", parentComponents: rifleParent });
+    expect(compsOf(text)).toEqual([]);
+  });
+
+  it("reuses the parent's component ID for a value it sets", () => {
+    const comps = compsOf(generatePrefab({
+      name: "T",
+      prefabType: "firearm",
+      parentComponents: rifleParent,
+      components: [{ type: "MeshObject", properties: { Object: "{0000000000000001}Assets/X.xob" } }],
+    }));
+    expect(comps.map((c) => [c.type, c.id])).toEqual([["MeshObject", "{CFBAA4B701F95D69}"]]);
+  });
+
+  it("requires guid when the parent has the type twice", () => {
+    const parentComponents = [{ type: "SoundComponent", guid: "1111111111111111" }, { type: "SoundComponent", guid: "2222222222222222" }];
+    const components = [{ type: "SoundComponent", properties: { A: "1" } }];
+    expect(() => generatePrefab({ name: "T", prefabType: "generic", parentComponents, components })).toThrow(/pass "guid"/);
+    const comps = compsOf(generatePrefab({ name: "T", prefabType: "generic", parentComponents, components: [{ ...components[0], guid: "2222222222222222" }] }));
+    expect(comps.find((c) => c.type === "SoundComponent")!.id).toBe("{2222222222222222}");
+  });
+
+  it("uses rootClass over the recipe entity type", () => {
+    expect(parse(generatePrefab({ name: "T", prefabType: "prop", rootClass: "SCR_DestructibleEntity" })).type).toBe("SCR_DestructibleEntity");
+  });
+
+  it("keeps a property-less recipe component the parent lacks, with a new ID", () => {
+    const comps = compsOf(generatePrefab({ name: "T", prefabType: "group", parentComponents: [] }));
+    expect(comps.map((c) => c.type)).toEqual(["SCR_CallsignGroupComponent"]);
+    expect(comps[0].id).toMatch(/^\{[0-9A-F]{16}\}$/);
+  });
+
+  it("merges a user component into the recipe component of the same type", () => {
+    const comps = compsOf(generatePrefab({
+      name: "T",
+      prefabType: "firearm",
+      components: [{ type: "MeshObject", properties: { Object: "X.xob" } }, { type: "RigidBody" }],
+    }));
+    expect(comps.filter((c) => c.type === "MeshObject")).toHaveLength(1);
+    expect(comps.find((c) => c.type === "RigidBody")).toBeDefined();
   });
 
   it("generates all new recipe types", () => {
