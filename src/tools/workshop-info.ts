@@ -1,9 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Config } from "../config.js";
 import { parse, type EnfusionNode } from "../formats/enfusion-text.js";
+import { findGproj, resolveAddonDir } from "../utils/game-paths.js";
 
 export function registerWorkshopInfo(server: McpServer, config: Config): void {
   server.registerTool(
@@ -11,7 +12,7 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
     {
       description:
         "Read Workshop metadata from a mod's .gproj file. Shows mod ID, GUID, title, " +
-        "dependencies, and configurations. Useful for checking publish state before releasing.",
+        "dependencies, and configurations. Useful for checking publish state before releasing. Read only, never publishes.",
       inputSchema: {
         projectPath: z
           .string()
@@ -23,7 +24,7 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
           .string()
           .optional()
           .describe(
-            "Mod/addon name to look up. Used to find the .gproj if projectPath points to the addons directory."
+            "Addon folder name under projectPath (or the projects path); any .gproj inside counts. Defaults to ENFUSION_DEFAULT_MOD."
           ),
       },
     },
@@ -38,23 +39,19 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
             isError: true,
           };
         }
-        let gprojPath: string | null = null;
+        // projectPath may be the addon folder itself; otherwise look under it by name (any .gproj name)
+        const name = modName ?? config.defaultMod;
+        const gprojPath = (projectPath && findGproj(projectPath)) || findGproj(resolveAddonDir(basePath, name) ?? "");
 
-        if (modName) {
-          gprojPath = resolve(basePath, modName, `${modName}.gproj`);
-        } else {
-          const candidates = findGprojFiles(basePath);
-          gprojPath = candidates[0] || null;
-        }
-
-        if (!gprojPath || !existsSync(gprojPath)) {
+        if (!gprojPath) {
           return {
             content: [
               {
                 type: "text",
-                text: `No .gproj found. ${gprojPath ? `Checked: ${gprojPath}` : "Provide projectPath or modName."}`,
+                text: `No .gproj found in ${projectPath ? `${projectPath} or ` : ""}${name ? join(basePath, name) : `any folder under ${basePath}`}.`,
               },
             ],
+            isError: true,
           };
         }
 
@@ -106,15 +103,7 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
           }
         }
 
-        lines.push("\n### Publishing");
-        lines.push(
-          "To publish this mod to the Steam Workshop:\n" +
-          "1. Open the mod in Workbench (wb_launch with the .gproj path)\n" +
-          "2. Go to **File > Addon Publishing**\n" +
-          "3. Fill in the Workshop details (description, tags, preview image)\n" +
-          "4. Click **Publish**\n\n" +
-          "Note: First-time publishing requires Steam Workshop agreement acceptance."
-        );
+        lines.push("\nPublishing is done by Don in Workbench > Publish Project (first publish in the GUI). This tool does not publish.");
 
         return { content: [{ type: "text", text: lines.join("\n") }] };
       } catch (e) {
@@ -126,29 +115,6 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
       }
     }
   );
-}
-
-function findGprojFiles(dirPath: string): string[] {
-  try {
-    const entries = readdirSync(dirPath, { withFileTypes: true });
-    const results: string[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        if (entry.name.endsWith(".gproj")) {
-          results.push(join(dirPath, entry.name));
-        }
-      } else {
-        // Check for the conventional <addonName>/<addonName>.gproj layout one level deep.
-        const nested = join(dirPath, entry.name, `${entry.name}.gproj`);
-        if (existsSync(nested)) {
-          results.push(nested);
-        }
-      }
-    }
-    return results;
-  } catch {
-    return [];
-  }
 }
 
 function getProperty(node: EnfusionNode, key: string): string {

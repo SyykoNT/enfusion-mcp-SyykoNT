@@ -1,0 +1,56 @@
+import { describe, it, expect } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Config } from "../../src/config.js";
+import { registerWorkshopInfo } from "../../src/tools/workshop-info.js";
+
+const root = mkdtempSync(join(tmpdir(), "emcp-wsi-"));
+const projects = join(root, "projects");
+const addon = (base: string, name: string, guid: string, deps: string[] = []) => {
+  const dir = join(base, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "addon.gproj"),
+    `GameProject {\n ID "${name}"\n GUID "${guid}"\n TITLE "${name} Title"\n Dependencies {\n${deps.map((d) => `  "${d}"\n`).join("")} }\n}\n`
+  );
+  return dir;
+};
+addon(projects, "Alpha", "AAAA000000000001");
+addon(projects, "Default", "DDDD000000000001");
+addon(root, "Outside", "0000000000000099");
+const config = { projectPath: projects, gamePath: join(root, "game"), workshopPath: join(root, "workshop"), defaultMod: "Default" } as Config;
+
+type Handler = (args: Record<string, unknown>) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+let call: Handler = async () => ({ content: [] });
+registerWorkshopInfo({ registerTool: (_n: string, _d: unknown, h: Handler) => { call = h; } } as unknown as McpServer, config);
+const text = async (args: Record<string, unknown>) => (await call(args)).content[0].text;
+
+describe("workshop_info: finding the addon", () => {
+  it("projectPath = the addon folder itself (the F0.5 case)", async () => {
+    expect(await text({ projectPath: join(projects, "Alpha") })).toContain("AAAA000000000001");
+  });
+
+  it("modName finds addon.gproj", async () => {
+    expect(await text({ modName: "Alpha" })).toContain("AAAA000000000001");
+  });
+
+  it("no arguments use ENFUSION_DEFAULT_MOD", async () => {
+    expect(await text({})).toContain("DDDD000000000001");
+  });
+
+  it("refuses traversal and reports not found as an error", async () => {
+    for (const modName of ["..\\Outside", "../Outside", "Missing"]) {
+      const r = await call({ modName });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/No \.gproj found/);
+    }
+  });
+
+  it("prints no publishing steps, only the neutral closing line", async () => {
+    const t = await text({ modName: "Alpha" });
+    expect(t).not.toMatch(/Steam|Click|File > Addon Publishing/);
+    expect(t).toContain("This tool does not publish.");
+  });
+});
