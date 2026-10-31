@@ -286,8 +286,8 @@ export class WorkbenchClient {
         const modDir = join(this.config.projectPath, entry.name);
         const handlerDir = join(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
         if (existsSync(handlerDir)) {
-          const fileCount = readdirSync(handlerDir).filter((f) => f.endsWith(".c")).length;
-          installed.push({ modDir, handlerDir, fileCount });
+          const fileCount = readdirSync(handlerDir).filter((f) => f.startsWith("EMCP_") && f.endsWith(".c")).length;
+          if (fileCount) installed.push({ modDir, handlerDir, fileCount });
         }
       }
     } catch {
@@ -304,8 +304,12 @@ export class WorkbenchClient {
       return false;
     }
     try {
-      rmSync(handlerDir, { recursive: true, force: true });
-      logger.info(`Removed handler scripts from ${handlerDir}`);
+      // Only the server's own EMCP_* files: the folder can also hold the user's scripts.
+      const ours = readdirSync(handlerDir).filter((f) => f.startsWith("EMCP_"));
+      for (const f of ours) rmSync(join(handlerDir, f), { force: true });
+      if (readdirSync(handlerDir).length === 0) rmSync(handlerDir, { recursive: true });
+      if (!ours.length) return false;
+      logger.info(`Removed ${ours.length} handler scripts from ${handlerDir}`);
       // Clean up empty parent dirs
       const wbGameDir = join(modDir, "Scripts", "WorkbenchGame");
       if (existsSync(wbGameDir) && readdirSync(wbGameDir).length === 0) {
@@ -724,15 +728,17 @@ export class WorkbenchClient {
     mkdirSync(targetScriptsDir, { recursive: true });
 
     const files = readdirSync(bundledDir).filter((f) => f.endsWith(".c"));
+    const copied: string[] = [];
     try {
       for (const file of files) {
         copyFileSync(join(bundledDir, file), join(targetScriptsDir, file));
+        copied.push(file);
       }
     } catch (e) {
-      // Partial installation — clean up to avoid broken state on next attempt
+      // Partial installation: remove only what this attempt copied (the folder may hold user scripts)
       logger.error(`Failed to install handler scripts, rolling back: ${e}`);
       try {
-        rmSync(targetScriptsDir, { recursive: true, force: true });
+        for (const file of copied) rmSync(join(targetScriptsDir, file), { force: true });
       } catch { /* best-effort cleanup */ }
       throw e;
     }

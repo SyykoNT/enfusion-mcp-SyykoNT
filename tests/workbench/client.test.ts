@@ -349,4 +349,15 @@ describe("cleanupHandlerScripts", () => {
     expect(new WorkbenchClient("127.0.0.1", 1).cleanupHandlerScripts(mod)).toBe(true);
     expect(existsSync(join(mod, "Scripts", "WorkbenchGame"))).toBe(false);
   });
+
+  it("keeps other scripts in the handler folder", () => {
+    const mod = mkdtempSync(join(tmpdir(), "emcp-"));
+    const handlers = join(mod, "Scripts", "WorkbenchGame", "EnfusionMCP");
+    mkdirSync(handlers, { recursive: true });
+    writeFileSync(join(handlers, "EMCP_WB_Ping.c"), "");
+    writeFileSync(join(handlers, "MY_Probe.c"), "");
+    expect(new WorkbenchClient("127.0.0.1", 1).cleanupHandlerScripts(mod)).toBe(true);
+    expect(existsSync(join(handlers, "EMCP_WB_Ping.c"))).toBe(false);
+    expect(existsSync(join(handlers, "MY_Probe.c"))).toBe(true);
+  });
 });
