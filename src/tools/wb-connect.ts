@@ -18,7 +18,7 @@ export function registerWbConnect(server: McpServer, client: WorkbenchClient): v
             content: [
               {
                 type: "text" as const,
-                text: "**Connection Failed**\n\nCould not reach Workbench. Ensure:\n1. Arma Reforger Tools (Workbench) is running\n2. NET API is enabled: File > Options > General > Net API\n3. The EnfusionMCP handler addon is loaded in Workbench",
+                text: "**Connection Failed**\n\nCould not reach Workbench. Ensure:\n1. Arma Reforger Tools (Workbench) is running; start it with wb_launch after checking that nobody else is using Workbench\n2. NET API is enabled: File > Options > General > Net API\n3. The EnfusionMCP handler addon is loaded in Workbench",
               },
             ],
             isError: true,

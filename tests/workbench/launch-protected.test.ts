@@ -61,13 +61,23 @@ describe("launchWorkbench and protected addons", () => {
     const cacheMod = join(cache, "CacheMod");
     mkdirSync(cacheMod, { recursive: true });
     writeFileSync(join(cacheMod, "addon.gproj"), "GameProject {\n ID \"CacheMod\"\n}\n");
+    writeFileSync(join(cacheMod, "ServerData.json"), "{}");
     const { config, handlers } = setup();
     await expect(new WorkbenchClient("127.0.0.1", 1, config).ensureRunning(join(cacheMod, "addon.gproj"))).rejects.toThrow(/is inside .*copy handler scripts/);
-    // projectPath = the cache (the default when ENFUSION_PROJECT_PATH is unset): no cache addon, no standalone addon there
-    const inCache = { ...config, projectPath: cache, defaultMod: "CacheMod" } as Config;
+    // projectPath = the game's Workshop cache: no cache addon, no standalone addon there
+    const gameCache = join(home, "Documents", "My Games", "ArmaReforger", "addons");
+    const gameMod = join(gameCache, "GameMod");
+    mkdirSync(gameMod, { recursive: true });
+    writeFileSync(join(gameMod, "addon.gproj"), "GameProject {\n ID \"GameMod\"\n}\n");
+    const inCache = { ...config, projectPath: gameCache, defaultMod: "GameMod" } as Config;
     await expect(new WorkbenchClient("127.0.0.1", 1, inCache).ensureRunning()).rejects.toThrow(/is inside/);
+    expect(handlers(gameMod)).toBe(false);
+    expect(existsSync(join(gameCache, "EnfusionMCP"))).toBe(false);
+    // projectPath = the Workbench addons folder (the default when ENFUSION_PROJECT_PATH is unset): its Workshop downloads are skipped
+    const inWb = { ...config, projectPath: cache, defaultMod: "CacheMod" } as Config;
+    await expect(new WorkbenchClient("127.0.0.1", 1, inWb).ensureRunning()).rejects.toThrow(/Cannot find/);
     expect(handlers(cacheMod)).toBe(false);
-    expect(existsSync(join(cache, "EnfusionMCP"))).toBe(false);
+    expect(handlers(join(cache, "EnfusionMCP"))).toBe(true); // the standalone fallback addon, in the project root
   });
 
   it("names a missing gprojPath plainly and creates nothing", async () => {

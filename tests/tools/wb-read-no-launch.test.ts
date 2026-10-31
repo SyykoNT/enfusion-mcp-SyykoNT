@@ -43,5 +43,6 @@ describe("wb_* tools other than wb_launch with Workbench down", () => {
     expect(result.isError).toBe(true);
     expect(launch).not.toHaveBeenCalled();
     if (name !== "wb_connect") expect(result.content[0].text).toContain("Tools do not start Workbench");
+    else expect(result.content[0].text).toContain("start it with wb_launch after checking that nobody else is using Workbench");
   });
 });

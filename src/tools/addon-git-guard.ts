@@ -6,7 +6,7 @@ import type { Config } from "../config.js";
 import { handlerFiles, resolveGproj } from "../workbench/cli.js";
 import { isProtectedAddon } from "../utils/game-paths.js";
 import { forbiddenRoot, isContained, realPathOf } from "../utils/safe-path.js";
-import { COMMIT_MSG, DON_COMMIT_MSG, GUARDED_PATH, HOOK_VERSION, PRE_COMMIT, ourVersion } from "../release/hooks.js";
+import { COMMIT_MSG, STRIPPER_COMMIT_MSG, GUARDED_PATH, HOOK_VERSION, PRE_COMMIT, ourVersion } from "../release/hooks.js";
 import { gitOrNull, hooksDir, originUrl, stagedPaths, stagedStartsWithBom } from "../release/git.js";
 
 type HookName = "pre-commit" | "commit-msg";
@@ -55,7 +55,7 @@ function hookState(file: string, name: HookName): string {
   const text = readFileSync(file, "utf-8");
   const v = ourVersion(text);
   if (v !== null) return `ours v${v}`;
-  if (name === "commit-msg" && text.replace(/\r\n/g, "\n") === DON_COMMIT_MSG) return "Don's stripper";
+  if (name === "commit-msg" && text.replace(/\r\n/g, "\n") === STRIPPER_COMMIT_MSG) return "attribution stripper";
   return `foreign (${text.split(/\r?\n/)[0]})`;
 }
 
@@ -67,7 +67,7 @@ export function guardInstall(dir: string, opts: { hooks?: HookName[]; sharedRepo
   if (origin && !/github\.com[/:]SyykoNT\//i.test(origin) && !opts.sharedRepoOk) {
     return {
       ok: false,
-      lines: [`${basename(dir)} is a shared repo (origin ${origin}). Ask Don before installing a local hook there; then call again with sharedRepoOk: true. Nothing written.`],
+      lines: [`${basename(dir)} is a shared repo (origin ${origin}). Ask the user before installing a local hook there; then call again with sharedRepoOk: true. Nothing written.`],
     };
   }
   const hdir = hooksDir(dir);

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 import { guardCheck, guardInstall, registerAddonGitGuard } from "../../src/tools/addon-git-guard.js";
-import { COMMIT_MSG, DON_COMMIT_MSG, PRE_COMMIT } from "../../src/release/hooks.js";
+import { COMMIT_MSG, STRIPPER_COMMIT_MSG, PRE_COMMIT } from "../../src/release/hooks.js";
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const hasSh = spawnSync("sh", ["-c", "exit 0"]).status === 0;
@@ -89,7 +89,7 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
   it("refuses a non-SyykoNT origin without sharedRepoOk, then installs with it", async () => {
     const r = await call({ action: "install", addonName: "Shared" });
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toMatch(/shared repo.*Nothing written/s);
+    expect(r.content[0].text).toMatch(/shared repo.*Ask the user before installing.*Nothing written/s);
     expect(existsSync(hook(shared, "pre-commit"))).toBe(false);
     expect((await call({ action: "install", addonName: "Shared", sharedRepoOk: true })).isError).toBeFalsy();
     expect(readFileSync(hook(shared, "pre-commit"), "utf-8")).toBe(PRE_COMMIT);
@@ -114,7 +114,7 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
     expect(second.content[0].text).toBe("pre-commit already v2\ncommit-msg already v2");
   });
 
-  it("leaves a foreign pre-commit alone and keeps Don's own commit-msg", () => {
+  it("leaves a foreign pre-commit alone and keeps the user's own commit-msg", () => {
     const d = addon(projects, "Foreign", "6666666666666666");
     writeFileSync(hook(d, "pre-commit"), "#!/bin/sh\necho lfs\n");
     const r = guardInstall(d);
@@ -123,10 +123,10 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
     expect(readFileSync(hook(d, "pre-commit"), "utf-8")).toBe("#!/bin/sh\necho lfs\n");
     expect(existsSync(hook(d, "commit-msg"))).toBe(false);
 
-    const d2 = addon(projects, "DonHook", "7777777777777777");
-    writeFileSync(hook(d2, "commit-msg"), DON_COMMIT_MSG);
-    expect(guardInstall(d2).lines).toContain("kept commit-msg (Don's stripper); not ours, left alone");
-    expect(readFileSync(hook(d2, "commit-msg"), "utf-8")).toBe(DON_COMMIT_MSG);
+    const d2 = addon(projects, "StripperHook", "7777777777777777");
+    writeFileSync(hook(d2, "commit-msg"), STRIPPER_COMMIT_MSG);
+    expect(guardInstall(d2).lines).toContain("kept commit-msg (attribution stripper); not ours, left alone");
+    expect(readFileSync(hook(d2, "commit-msg"), "utf-8")).toBe(STRIPPER_COMMIT_MSG);
   });
 
   it("replaces an older version of our hook", () => {
@@ -150,7 +150,7 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
     const text = r.content[0].text;
     expect(text).toMatch(/^SYK-Test: pre-commit ours v2; commit-msg ours v2; handlers ignored no; handler files on disk 0$/m);
     expect(text).toMatch(/^Foreign: pre-commit foreign \(#!\/bin\/sh\); commit-msg none;/m);
-    expect(text).toMatch(/^DonHook: pre-commit ours v2; commit-msg Don's stripper;/m);
+    expect(text).toMatch(/^StripperHook: pre-commit ours v2; commit-msg attribution stripper;/m);
     expect(text).not.toMatch(/^NoGit/m);
   });
 });
