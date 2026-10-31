@@ -3,7 +3,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.js";
 import { findWorkbenchExe, findGproj } from "../utils/game-paths.js";
-import { findPids } from "../utils/process.js";
+import { findPids, serverProcesses, clientProcesses } from "../utils/process.js";
+import { workbenchProfileDir } from "../workbench/cli.js";
 import { gameGuidMap } from "../pak/rdb.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 
@@ -27,7 +28,7 @@ export function registerEnvCheck(server: McpServer, config: Config, client: Work
       const steamcmd = join(config.steamcmdPath, process.platform === "win32" ? "steamcmd.exe" : "steamcmd.sh");
 
       let version = "";
-      const wbLogs = join(config.projectPath, "..", "logs");
+      const wbLogs = join(workbenchProfileDir(config), "logs");
       try {
         const latest = existsSync(wbLogs) ? readdirSync(wbLogs).sort().reverse().find((d) => existsSync(join(wbLogs, d, "console.log"))) : undefined;
         if (latest) version = readFileSync(join(wbLogs, latest, "console.log"), "utf-8").match(/version (\d+\.\d+\.\d+\.\d+)/)?.[1] ?? "";
@@ -55,8 +56,8 @@ export function registerEnvCheck(server: McpServer, config: Config, client: Work
         "",
         "## Running",
         `- Workbench: ${findPids("ArmaReforgerWorkbenchSteamDiag.exe").length ? "yes" : "no"} · NET API: ${(await client.ping()) ? "responding" : "not reachable"} (${config.workbenchHost}:${config.workbenchPort})`,
-        `- Game: ${[...findPids("ArmaReforgerSteam.exe"), ...findPids("ArmaReforgerSteamDiag.exe")].length ? "yes" : "no"}`,
-        `- Dedicated server: ${findPids("ArmaReforgerServer.exe").length ? "yes" : "no"}`,
+        `- Game: ${clientProcesses().length ? "yes" : "no"}`,
+        `- Dedicated server: ${serverProcesses().length ? "yes" : "no"}`,
       );
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
