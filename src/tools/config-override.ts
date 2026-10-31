@@ -38,9 +38,15 @@ export function writeOverride(config: Config, addonDir: string, path: string, ed
   const { delta, changes } = buildDelta(eff.root, edits);
   const file = join(addonDir, ...entry.path.split("/"));
   if (changes.length) {
+    // An existing .meta (often Workbench's full form) is kept; one with another GUID would not override the base.
+    const meta = existsSync(file + ".meta") ? readFileSync(file + ".meta", "utf-8") : null;
+    const metaGuid = meta?.match(/\{([0-9A-Fa-f]{16})\}/)?.[1];
+    if (meta !== null && metaGuid?.toUpperCase() !== entry.guid.toUpperCase()) {
+      throw new Error(`${file}.meta has GUID {${metaGuid ?? "none"}}, not the base GUID {${entry.guid}}: it is not an override of ${entry.path}. Nothing written.`);
+    }
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, mergeOverride(existsSync(file) ? readFileSync(file, "utf-8") : null, delta), "utf-8");
-    writeFileSync(file + ".meta", overrideMeta(entry.guid, entry.path), "utf-8");
+    if (meta === null) writeFileSync(file + ".meta", overrideMeta(entry.guid, entry.path), "utf-8");
   }
   return { file, guid: entry.guid, changes, chain: eff.chain };
 }
