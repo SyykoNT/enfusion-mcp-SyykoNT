@@ -12,10 +12,11 @@ vi.mock("node:child_process", () => ({
   }),
 }));
 vi.mock("../../src/utils/python.js", () => ({
-  findPython: () => ({ cmd: "python", args: [], version: "3.14.2" }),
+  findPython: vi.fn(() => ({ cmd: "python", args: [], version: "3.14.2" })),
 }));
 
 import { execFile } from "node:child_process";
+import { findPython } from "../../src/utils/python.js";
 import {
   parseQaReport,
   parseSynopsis,
@@ -191,6 +192,14 @@ describe("mission_validate", () => {
     const r = await call({ world: join(root, "Other", "Worlds", "Stray.ent") });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("World must be inside the CRF clone");
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it("says how to fix a missing Python", async () => {
+    vi.mocked(findPython).mockReturnValueOnce(null);
+    const r = await call({ world: "Worlds/Testland/Fixture.ent" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe("Python 3 not found. Set ENFUSION_PYTHON to python.exe, or install Python 3.11+.");
     expect(execFile).not.toHaveBeenCalled();
   });
 });

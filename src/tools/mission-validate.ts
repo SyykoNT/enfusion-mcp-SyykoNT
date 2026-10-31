@@ -170,7 +170,7 @@ async function missionValidate(config: Config, p: Params): Promise<{ text: strin
       abs = validateProjectPath(crf, p.world);
     } catch {
       throw new Error(
-        `World must be inside the CRF clone; the validator only finds mission .conf files in ${join(crf, "Missions")}/<Terrain>/.`
+        `World must be inside the CRF clone; the validator only finds mission .conf files in ${join(crf, "Missions", "<Terrain>")}.`
       );
     }
     if (!existsSync(abs)) throw new Error(`World not found: ${abs}`);
