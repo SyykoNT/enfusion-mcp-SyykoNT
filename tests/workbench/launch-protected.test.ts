@@ -11,6 +11,11 @@ vi.mock("../../src/utils/process.js", async (importActual) => ({
 }));
 const { WorkbenchClient } = await import("../../src/workbench/client.js");
 
+// A fake home: the "Workshop cache" below is a temp folder, never the real one.
+const home = mkdtempSync(join(tmpdir(), "emcp-lp-home-"));
+process.env.USERPROFILE = process.env.HOME = home;
+const cache = join(home, "Documents", "My Games", "ArmaReforgerWorkbench", "addons");
+
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "emcp-lp-"));
   const projects = join(root, "projects");
@@ -50,5 +55,18 @@ describe("launchWorkbench and protected addons", () => {
     await expect(client.ensureRunning()).rejects.toThrow(/Cannot find/);
     expect(handlers(crf)).toBe(false);
     expect(handlers(join(projects, "EnfusionMCP"))).toBe(true);
+  });
+
+  it("refuses an addon in the Workshop cache, explicit or as the fallback", async () => {
+    const cacheMod = join(cache, "CacheMod");
+    mkdirSync(cacheMod, { recursive: true });
+    writeFileSync(join(cacheMod, "addon.gproj"), "GameProject {\n ID \"CacheMod\"\n}\n");
+    const { config, handlers } = setup();
+    await expect(new WorkbenchClient("127.0.0.1", 1, config).ensureRunning(join(cacheMod, "addon.gproj"))).rejects.toThrow(/is inside .*copy handler scripts/);
+    // projectPath = the cache (the default when ENFUSION_PROJECT_PATH is unset): no cache addon, no standalone addon there
+    const inCache = { ...config, projectPath: cache, defaultMod: "CacheMod" } as Config;
+    await expect(new WorkbenchClient("127.0.0.1", 1, inCache).ensureRunning()).rejects.toThrow(/is inside/);
+    expect(handlers(cacheMod)).toBe(false);
+    expect(existsSync(join(cache, "EnfusionMCP"))).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
 import { findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
+import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import type { Config } from "../config.js";
@@ -604,8 +605,9 @@ export class WorkbenchClient {
       try {
         for (const f of readdirSync(dir, { withFileTypes: true })) {
           if (!f.isDirectory() && f.name.endsWith(".gproj")) {
-            // Never a protected addon: the handler scripts would be copied into it.
-            return isProtectedAddon(this.config!, join(dir, f.name)) ? null : join(dir, f.name);
+            // Never a protected addon or one in an install or Workshop cache: the handler scripts would be copied into it.
+            const g = join(dir, f.name);
+            return isProtectedAddon(this.config!, g) || forbiddenRoot(this.config!, dir) ? null : g;
           }
         }
       } catch { /* ignore */ }
@@ -691,6 +693,14 @@ export class WorkbenchClient {
     const isFallback = !modDir;
     const targetBase = modDir || join(fallbackBase!, HANDLER_FOLDER);
     const targetScriptsDir = join(targetBase, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
+    const root = this.config && forbiddenRoot(this.config, targetBase);
+    if (root) {
+      throw new WorkbenchError(
+        `Refused: ${targetBase} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS); ` +
+          `wb_launch would copy handler scripts into it. Pass the .gproj of an addon of your own.`,
+        "LAUNCH_FAILED"
+      );
+    }
 
     // Already installed? Skip (stale handlers stay until they are cleaned up)
     if (existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {
