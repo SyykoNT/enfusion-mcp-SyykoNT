@@ -110,7 +110,13 @@ describe("scriptErrorParser", () => {
     const s = parse(lines);
     expect(new Date(s.groups.find((g) => g.message === "late")!.first)).toEqual(new Date(2026, 9, 24, 21, 30));
     expect(parse(lines, { since: "21:00" }).groups.map((g) => g.message)).toEqual(["late"]);
-    expect(parse(lines, { since: "07:00" }).errors).toBe(0); // before the start, so 07:00 the next day
+    expect(parse(lines, { since: "06:00" }).errors).toBe(0); // over 1 h before the start, so 06:00 the next day
+  });
+
+  it("keeps a 1 h backward jump (DST fall-back) on the same day", () => {
+    const head = HEADER.map((l) => l.replace("2026-10-24 15:00:36", "2026-11-01 00:30:00"));
+    const s = parse([...head, "01:59:59.000 SCRIPT    (E): before", "01:00:05.000 SCRIPT    (E): repeated hour", "02:30:00.000 SCRIPT    (E): after"]);
+    for (const g of s.groups) expect(new Date(g.first).toDateString(), g.message).toBe(new Date(2026, 10, 1).toDateString());
   });
 
   it("counts a block cut off at the end of the log", () => {

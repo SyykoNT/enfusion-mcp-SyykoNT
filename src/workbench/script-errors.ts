@@ -59,8 +59,8 @@ const VME_START = /^\d\d:\d\d:\d\d\.\d{3}\s+SCRIPT\s+\(E\): Virtual Machine Exce
 const SCRIPT_ERROR = /^\d\d:\d\d:\d\d\.\d{3}\s+SCRIPT\s+\(E\): (.+)$/;
 const FRAME = /^(\S.*\.c):(\d+) Function (\S+)$/;
 const DAY = 24 * 3600_000;
-/** Lines can be a few ms out of order (around midnight too), so only a time this far before the previous one is the next day. */
-const REORDER_MS = 60_000;
+/** Lines can be a few ms out of order and a DST fall-back repeats an hour, so only a time this far before the previous one is the next day. */
+const REORDER_MS = 3600_000 + 60_000;
 
 /** Start time of a log from its header line `Log <path> started at YYYY-MM-DD HH:MM:SS`, local epoch ms. */
 export function parseLogHeader(line: string): number | undefined {
@@ -70,7 +70,7 @@ export function parseLogHeader(line: string): number | undefined {
 
 /**
  * Local epoch ms of a line's leading `HH:MM:SS.mmm`: the first such time at or after `prevMs` (else the header,
- * else 1970-01-01), less a minute for lines logged slightly out of order. Time only moves forward, so runs cross midnight.
+ * else 1970-01-01), less REORDER_MS. Time only moves forward, so runs cross midnight.
  */
 export function parseLogTime(header: number | undefined, line: string, prevMs?: number): number | undefined {
   const m = TIME.exec(line);
