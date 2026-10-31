@@ -54,11 +54,7 @@ class EMCP_WB_Exit : NetApiHandler
 		if (worldEditor)
 			api = worldEditor.GetApi();
 
-		// Save() opens a "Save world as" dialog (blocking the handler) for an unsaved world or in prefab edit mode.
-		string worldPath;
-		if (api)
-			api.GetWorldPath(worldPath);
-		if (req.save && worldPath != "" && !worldEditor.IsPrefabEditMode())
+		if (req.save && worldEditor && EMCP_SaveGuard.Refusal(worldEditor) == "")
 			resp.saved = worldEditor.Save();
 
 		resp.status = "ok";
