@@ -10,6 +10,7 @@ import {
   type ConfigType,
 } from "../templates/config.js";
 import { validateFilename } from "../utils/safe-path.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 
 export function registerConfigCreate(
   server: McpServer,
@@ -89,7 +90,11 @@ export function registerConfigCreate(
         projectPath: z
           .string()
           .optional()
-          .describe("Addon root path. Uses configured default if omitted."),
+          .describe("Addon root path. Wins over modName. modName or projectPath is required to write."),
+        modName: z
+          .string()
+          .optional()
+          .describe("Addon folder under the project path or ENFUSION_ADDONS_DIR."),
       },
     },
     async ({
@@ -109,8 +114,9 @@ export function registerConfigCreate(
       prefabRefs,
       categoryName,
       projectPath,
+      modName,
     }) => {
-      const basePath = projectPath || config.projectPath;
+      const target = resolveWriteAddon(config, { projectPath, modName });
 
       try {
         validateFilename(name);
@@ -133,10 +139,10 @@ export function registerConfigCreate(
           categoryName,
         });
 
-        if (basePath) {
+        if (!("error" in target)) {
           const subdir = getConfigSubdirectory(configType as ConfigType);
           const filename = getConfigFilename(name);
-          const targetDir = resolve(basePath, subdir);
+          const targetDir = resolve(target.dir, subdir);
           const targetPath = join(targetDir, filename);
 
           mkdirSync(targetDir, { recursive: true });
@@ -168,9 +174,10 @@ export function registerConfigCreate(
           content: [
             {
               type: "text",
-              text: `Generated config (no project path configured — not written to disk):\n\n\`\`\`\n${content}\n\`\`\`\n\nSet ENFUSION_PROJECT_PATH to write files automatically.`,
+              text: `${target.error}\n\nGenerated config (not written):\n\n\`\`\`\n${content}\n\`\`\``,
             },
           ],
+          isError: true,
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

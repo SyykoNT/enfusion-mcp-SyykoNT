@@ -7,6 +7,7 @@ import { generateLayoutTree } from "../templates/layout.js";
 import { uiRecipeLoader } from "../templates/ui-recipe-loader.js";
 import { renderRecipe } from "../templates/ui-recipe.js";
 import { validateFilename } from "../utils/safe-path.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 
 export function registerLayoutRecipe(server: McpServer, config: Config): void {
   server.registerTool(
@@ -34,10 +35,14 @@ export function registerLayoutRecipe(server: McpServer, config: Config): void {
         projectPath: z
           .string()
           .optional()
-          .describe("Addon root path. Uses configured default if omitted."),
+          .describe("Addon root path. Wins over modName. modName or projectPath is required to write."),
+        modName: z
+          .string()
+          .optional()
+          .describe("Addon folder under the project path or ENFUSION_ADDONS_DIR."),
       },
     },
-    async ({ action, recipe, name, params, projectPath }) => {
+    async ({ action, recipe, name, params, projectPath, modName }) => {
       try {
         if ((action ?? "create") === "list") {
           const recipes = uiRecipeLoader.listRecipes();
@@ -80,9 +85,9 @@ export function registerLayoutRecipe(server: McpServer, config: Config): void {
           ? `\n\nWarning: unresolved placeholders left literal: ${rendered.unresolved.join(", ")}`
           : "";
 
-        const basePath = projectPath || config.projectPath;
-        if (basePath) {
-          const targetDir = resolve(basePath, rendered.subdirectory);
+        const target = resolveWriteAddon(config, { projectPath, modName });
+        if (!("error" in target)) {
+          const targetDir = resolve(target.dir, rendered.subdirectory);
           const targetPath = join(targetDir, `${name}.layout`);
           mkdirSync(targetDir, { recursive: true });
 
@@ -107,8 +112,9 @@ export function registerLayoutRecipe(server: McpServer, config: Config): void {
         return {
           content: [{
             type: "text",
-            text: `Generated layout from recipe '${recipe}' (no project path configured — not written):\n\n\`\`\`\n${content}\n\`\`\`${notes}${warn}\n\nSet ENFUSION_PROJECT_PATH to write files automatically.`,
+            text: `${target.error}\n\nGenerated layout from recipe '${recipe}' (not written):\n\n\`\`\`\n${content}\n\`\`\`${notes}${warn}`,
           }],
+          isError: true,
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

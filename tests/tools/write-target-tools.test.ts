@@ -9,6 +9,10 @@ import { registerConfigOverride } from "../../src/tools/config-override.js";
 import { registerEconomy } from "../../src/tools/economy.js";
 import { registerGameDuplicate } from "../../src/tools/game-duplicate.js";
 import type { WorkbenchClient } from "../../src/workbench/client.js";
+import { registerConfigCreate } from "../../src/tools/config-create.js";
+import { registerLayoutCreate } from "../../src/tools/layout-create.js";
+import { registerLayoutRecipe } from "../../src/tools/layout-recipe.js";
+import { registerMenuCreate } from "../../src/tools/menu-create.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-wtt-"));
 const projects = join(root, "projects");
@@ -34,6 +38,10 @@ const server = { registerTool: (name: string, _def: unknown, h: Handler) => { to
 registerConfigOverride(server, config);
 registerEconomy(server, config);
 registerGameDuplicate(server, config, {} as WorkbenchClient);
+registerConfigCreate(server, config);
+registerLayoutCreate(server, config);
+registerLayoutRecipe(server, config);
+registerMenuCreate(server, config);
 
 const listing = () => readdirSync(projects, { recursive: true }).map(String).sort();
 const before = listing();
@@ -43,6 +51,10 @@ const calls: [string, Record<string, unknown>][] = [
   ["config_override", { action: "set", path: "Configs/Campaign/XPRewards.conf", edits: [{ property: "m_iRewardXP", value: "1" }] }],
   ["economy", { action: "set", category: "xp", multiplier: 2 }],
   ["game_duplicate", { sourcePath: "Prefabs/Src.conf", destPath: "Configs/Copy.conf", register: false }],
+  ["config_create", { configType: "faction", name: "WTT_Faction" }],
+  ["layout_create", { name: "WTT_Hud", layoutType: "hud" }],
+  ["layout_recipe", { action: "create", recipe: "info_panel", name: "WTT_Info" }],
+  ["menu_create", { action: "create", className: "WTT_Menu" }],
 ];
 
 describe.each(calls)("%s", (tool, args) => {
@@ -68,5 +80,21 @@ describe.each(calls)("%s", (tool, args) => {
 
   it("wrote nothing", () => {
     expect(listing()).toEqual(before);
+  });
+});
+
+describe("create tools", () => {
+  it("return the generated content with the refusal", async () => {
+    const r = await tools.layout_create({ name: "WTT_Hud", layoutType: "hud" });
+    expect(r.content[0].text).toMatch(/Generated layout \(not written\)[\s\S]*FrameWidgetClass/);
+  });
+
+  it("write into an explicit addon", async () => {
+    const dir = join(root, "elsewhere", "MyAddon");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "addon.gproj"), "GameProject {\n ID \"MyAddon\"\n}\n");
+    const r = await tools.config_create({ configType: "faction", name: "WTT_Faction", projectPath: dir });
+    expect(r.isError).toBeUndefined();
+    expect(readdirSync(dir, { recursive: true }).map(String)).toContain(join("Configs", "Factions", "WTT_Faction.conf"));
   });
 });

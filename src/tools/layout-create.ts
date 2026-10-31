@@ -13,6 +13,7 @@ import {
   type WidgetNode,
 } from "../templates/layout.js";
 import { validateFilename } from "../utils/safe-path.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 
 // Recursive widget-tree schema for the parent-aware layout API.
 type WidgetNodeInput = {
@@ -147,11 +148,15 @@ export function registerLayoutCreate(server: McpServer, config: Config): void {
         projectPath: z
           .string()
           .optional()
-          .describe("Addon root path. Uses configured default if omitted."),
+          .describe("Addon root path. Wins over modName. modName or projectPath is required to write."),
+        modName: z
+          .string()
+          .optional()
+          .describe("Addon folder under the project path or ENFUSION_ADDONS_DIR."),
       },
     },
-    async ({ name, root, layoutType, rootWidgetType, anchor, offset, widgets, description, projectPath }) => {
-      const basePath = projectPath || config.projectPath;
+    async ({ name, root, layoutType, rootWidgetType, anchor, offset, widgets, description, projectPath, modName }) => {
+      const target = resolveWriteAddon(config, { projectPath, modName });
 
       try {
         validateFilename(name);
@@ -168,10 +173,10 @@ export function registerLayoutCreate(server: McpServer, config: Config): void {
               description,
             });
 
-        if (basePath) {
+        if (!("error" in target)) {
           const subdir = getLayoutSubdirectory();
           const filename = getLayoutFilename(name);
-          const targetDir = resolve(basePath, subdir);
+          const targetDir = resolve(target.dir, subdir);
           const targetPath = join(targetDir, filename);
 
           mkdirSync(targetDir, { recursive: true });
@@ -203,9 +208,10 @@ export function registerLayoutCreate(server: McpServer, config: Config): void {
           content: [
             {
               type: "text",
-              text: `Generated layout (no project path configured — not written to disk):\n\n\`\`\`\n${content}\n\`\`\`\n\nSet ENFUSION_PROJECT_PATH to write files automatically.`,
+              text: `${target.error}\n\nGenerated layout (not written):\n\n\`\`\`\n${content}\n\`\`\``,
             },
           ],
+          isError: true,
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

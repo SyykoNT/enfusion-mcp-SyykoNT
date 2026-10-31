@@ -15,6 +15,7 @@ import {
   type MenuBaseClass,
 } from "../templates/menu.js";
 import { validateFilename, validateEnforceIdentifier } from "../utils/safe-path.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 
 const SCRIPT_SUBDIR = "scripts/Game/UI";
 const LAYOUT_SUBDIR = "UI/layouts/Menus";
@@ -81,10 +82,14 @@ export function registerMenuCreate(server: McpServer, config: Config): void {
         projectPath: z
           .string()
           .optional()
-          .describe("Addon root path. Uses configured default if omitted."),
+          .describe("Addon root path. Wins over modName. modName or projectPath is required to write."),
+        modName: z
+          .string()
+          .optional()
+          .describe("Addon folder under the project path or ENFUSION_ADDONS_DIR."),
       },
     },
-    async ({ action, className, presetName, layoutName, title, baseClass, actionContext, hints, projectPath }) => {
+    async ({ action, className, presetName, layoutName, title, baseClass, actionContext, hints, projectPath, modName }) => {
       try {
         if ((action ?? "create") === "list") {
           return {
@@ -195,14 +200,16 @@ export function registerMenuCreate(server: McpServer, config: Config): void {
           actionContext: ctx,
         });
 
-        const basePath = projectPath || config.projectPath;
+        const target = resolveWriteAddon(config, { projectPath, modName });
 
-        if (!basePath) {
+        if ("error" in target) {
           return {
             content: [{
               type: "text",
               text: [
-                `Generated menu scaffold (no project path configured — nothing written).`,
+                target.error,
+                ``,
+                `Generated menu scaffold (nothing written).`,
                 ``,
                 `**${SCRIPT_SUBDIR}/${className}.c**`,
                 "```c",
@@ -214,14 +221,14 @@ export function registerMenuCreate(server: McpServer, config: Config): void {
                 layoutContent,
                 "```",
                 ``,
-                ...presetInstructions(presetBlock, basePath),
-                ``,
-                `Set ENFUSION_PROJECT_PATH to write files automatically.`,
+                ...presetInstructions(presetBlock, undefined),
               ].join("\n"),
             }],
+            isError: true,
           };
         }
 
+        const basePath = target.dir;
         const scriptDir = resolve(basePath, SCRIPT_SUBDIR);
         const layoutDir = resolve(basePath, LAYOUT_SUBDIR);
         const scriptPath = join(scriptDir, `${className}.c`);
