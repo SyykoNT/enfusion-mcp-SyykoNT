@@ -6,14 +6,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ProcInfo } from "../../src/utils/process.js";
 
 // No real process is listed, signalled or killed: the process helpers are replaced.
-const procs = vi.hoisted(() => ({ servers: [] as ProcInfo[], clients: [] as ProcInfo[], alive: new Set<number>() }));
+const procs = vi.hoisted(() => ({ servers: [] as ProcInfo[], clients: [] as ProcInfo[], alive: new Set<number>(), ignorePolite: false }));
 vi.mock("../../src/utils/process.js", async (orig) => ({
   ...(await orig<typeof import("../../src/utils/process.js")>()),
   serverProcesses: () => procs.servers,
   clientProcesses: () => procs.clients,
   processInfo: (pid: number) => [...procs.servers, ...procs.clients].find((p) => p.pid === pid),
   isAlive: (pid: number) => procs.alive.has(pid),
-  killPids: vi.fn((pids: number[]) => pids.forEach((p) => procs.alive.delete(p))),
+  killPids: vi.fn((pids: number[], force?: boolean) => {
+    if (force || !procs.ignorePolite) pids.forEach((p) => procs.alive.delete(p));
+  }),
   sleep: () => Promise.resolve(),
 }));
 
@@ -36,6 +38,7 @@ const own = { ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: n
 beforeEach(() => {
   vi.mocked(killPids).mockClear();
   procs.alive = new Set();
+  procs.ignorePolite = false;
 });
 
 describe("server stop", () => {
@@ -53,6 +56,18 @@ describe("server stop", () => {
     expect(result.content[0].text).toContain("Not touched: 1 server(s)");
     expect(procs.alive.has(200)).toBe(true);
     expect(existsSync(join(config.serverProfilePath, INSTANCE_FILE))).toBe(false);
+  });
+
+  it("force-kills its own server after the grace time when the close request is ignored", async () => {
+    const config = { ...loadConfig(), serverProfilePath: mkdtempSync(join(tmpdir(), "emcp-srv-")) };
+    writeInstance(join(config.serverProfilePath, INSTANCE_FILE), { kind: "server", pid: 100, ...own });
+    procs.servers = [{ pid: 100, ppid: 1, cmd: `ArmaReforgerServerDiag.exe -profile "${config.serverProfilePath}"`, created: now }];
+    procs.alive = new Set([100]);
+    procs.ignorePolite = true;
+    const result = await tool(registerServer, config)({ action: "stop", graceSec: 0 });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("forced after 0 s grace");
+    expect(vi.mocked(killPids).mock.calls).toEqual([[[100]], [[100], true]]);
   });
 
   it("with only foreign servers running, kills nothing even with force", async () => {
