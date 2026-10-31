@@ -2,23 +2,21 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { watchAction, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
+import { watchAction, type WatchArgs, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
 import { formatConnectionStatus, watchAlerts } from "../../src/workbench/status.js";
-import { alertLine, formatReport, type WatchState } from "../../src/watchdog/wb-watch.js";
+import { alertLine, createWatcher, formatReport, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { WorkbenchClient } from "../../src/workbench/client.js";
 
 // Temp state dir and lock file; processes, ownership and the watcher spawn are stubs.
+const lockPath = join(mkdtempSync(join(tmpdir(), "emcp-wt-lock-")), "WORKBENCH_LOCK.txt");
 const at = (hms: string) => new Date(`2026-10-31T${hms}`).getTime();
 const WB = "\"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe\" -gproj x";
 
 function deps(over: Partial<WatchToolDeps> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "emcp-wt-"));
-  const lockPath = join(dir, "WORKBENCH_LOCK.txt");
-  writeFileSync(lockPath, "owner: broker (AM test)\r\npid: 19524\r\nsince: 2026-10-31 06:12\r\n");
   const procs: Record<number, string> = { 19524: WB, 600: "node.exe C:\\x\\dist\\watchdog\\wb-watch.js --pid 19524", 4242: "notepad.exe" };
   const d: WatchToolDeps = {
     stateDir: dir,
-    lockPath,
     proc: (pid) => (procs[pid] ? { pid, ppid: 1, cmd: procs[pid], created: at("06:12:43.000") } : undefined),
     owned: () => false,
     alive: (pid) => pid === 600 || pid === 19524,
@@ -47,16 +45,35 @@ describe("wb_watch start", () => {
     expect(d.start).not.toHaveBeenCalled();
   });
 
-  it("refuses adopt when the lock pid or owner differs, accepts it when both match", () => {
+  it("review B1: a person's lock text never makes a Workbench owned; hung for 5 min with autoRecover, no Exit and no kill", async () => {
     const d = deps();
-    writeFileSync(d.lockPath!, "owner: broker (AM test)\r\npid: 22172\r\n");
-    expect(watchAction({ action: "start", pid: 19524, adopt: true, owner: "broker (AM test)" }, d)).toEqual({ text: "adopt refused: lock pid is 22172, not 19524", isError: true });
-    writeFileSync(d.lockPath!, "owner: broker (AM test)\r\npid: 19524\r\n");
-    expect(watchAction({ action: "start", pid: 19524, adopt: true, owner: "someone else" }, d).isError).toBe(true);
-    expect(watchAction({ action: "start", pid: 19524, adopt: true }, deps({ lockPath: undefined })).text).toMatch(/^adopt refused: no lock file/);
-    expect(d.start).not.toHaveBeenCalled();
-    expect(watchAction({ action: "start", pid: 19524, adopt: true, owner: "broker (AM test)", autoRecover: true }, d).text).toContain("(owned)");
-    expect(d.start).toHaveBeenCalledWith(expect.objectContaining({ owned: true, autoRecover: true, owner: "broker (AM test)" }));
+    writeFileSync(lockPath, "owner: Don (AM test)\r\npid: 19524\r\nsince: 2026-10-31 06:12\r\n");
+    // The old adopt arguments are ignored: ownership comes only from isOwned (stubbed false here).
+    watchAction({ action: "start", pid: 19524, adopt: true, owner: "Don (AM test)", autoRecover: true } as WatchArgs, d);
+    const started = vi.mocked(d.start).mock.calls[0][0];
+    expect(started).toMatchObject({ owned: false, autoRecover: false });
+    expect(started).not.toHaveProperty("owner");
+
+    // Run those options, and also an owned watcher (as if started with --owned), against Don's lock and a window hung for 6 min.
+    const run = async (opts: { owned: boolean; autoRecover: boolean; session?: string }) => {
+      let now = at("10:00:00.000");
+      const recover = vi.fn(async () => "");
+      const hung = { hwnd: 1, cls: "Qt5QWindowIcon", text: "Workbench", visible: true, hung: true, children: [] };
+      const w = createWatcher(
+        { pid: 19524, stateDir: d.stateDir, lock: lockPath, dismiss: "watched", recoverAfterMin: 5, host: "127.0.0.1", port: 5775, ...opts },
+        { sample: () => ({ t: 0, alive: true, start: at("06:12:43.000"), ws: 4e9, cpu: 1, wins: [hung], crs: [], port: 19524 }),
+          alive: () => true, now: () => now, dismiss: vi.fn(async () => ""), recover }
+      );
+      let s;
+      for (let i = 0; i <= 72; i++, now += 5000) s = await w.tick();
+      expect(s!.state).toBe("not_responding");
+      return recover.mock.calls.length;
+    };
+    expect(await run({ owned: started.owned, autoRecover: !!started.autoRecover })).toBe(0);
+    expect(await run({ owned: true, autoRecover: true })).toBe(0);
+    // Control: an owned Workbench whose lock names this session is recovered once.
+    writeFileSync(lockPath, "owner: overnight-boats\r\nsession: s1\r\npid: 19524\r\n");
+    expect(await run({ owned: true, autoRecover: true, session: "s1" })).toBe(1);
   });
 
   it("passes dismissLeakAssert never through", () => {

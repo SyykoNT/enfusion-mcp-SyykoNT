@@ -31,7 +31,6 @@ export interface WatchOpts {
   pid: number;
   startTime?: number;
   owned: boolean;
-  owner?: string;
   session?: string;
   lock?: string;
   stateDir: string;
@@ -47,7 +46,6 @@ export interface WatchState {
   pid: number;
   watcherPid: number;
   owned: boolean;
-  owner?: string;
   state: WatchStateName;
   since: number;
   kind?: string;
@@ -143,7 +141,7 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
     appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action }) + "\n");
   };
   const st: WatchState = {
-    pid: o.pid, watcherPid: process.pid, owned: o.owned, owner: o.owner, state: "ok", since: deps.now(),
+    pid: o.pid, watcherPid: process.pid, owned: o.owned, state: "ok", since: deps.now(),
     lastLines: [], actions: [], dismiss: o.dismiss, autoRecover: o.autoRecover, updated: deps.now(),
   };
 
@@ -380,7 +378,6 @@ export interface StartWatcher {
   pid: number;
   startTime?: number;
   owned: boolean;
-  owner?: string;
   dismiss?: Dismiss;
   autoRecover?: boolean;
   logsRoot?: string;
@@ -396,7 +393,6 @@ export function startWatcher(w: StartWatcher): number {
   const args = [SELF, "--pid", String(w.pid), "--state-dir", stateDir, "--host", w.host, "--port", String(w.port), "--dismiss", w.dismiss ?? "watched"];
   if (w.startTime) args.push("--start-time", String(w.startTime));
   if (w.owned) args.push("--owned");
-  if (w.owner) args.push("--owner", w.owner);
   if (w.autoRecover) args.push("--auto-recover");
   if (w.logsRoot) args.push("--logs-root", w.logsRoot);
   if (process.env.ENFUSION_WORKBENCH_LOCK) args.push("--lock", process.env.ENFUSION_WORKBENCH_LOCK);
@@ -459,7 +455,7 @@ const LABEL: Record<WatchStateName, string> = {
 /** Full report for wb_watch status and wb_diagnose. */
 export function formatReport(s: WatchState, now = Date.now()): string {
   const who = s.owned ? "owned" : "not owned";
-  const lines = [`Workbench PID ${s.pid} (${who}${s.owner ? `, owner "${s.owner}"` : ""}): ${LABEL[s.state]}${s.kind ? ` (${s.kind})` : ""} since ${hms(s.since)} (${dur(now - s.since)})`];
+  const lines = [`Workbench PID ${s.pid} (${who}): ${LABEL[s.state]}${s.kind ? ` (${s.kind})` : ""} since ${hms(s.since)} (${dur(now - s.since)})`];
   if (s.dialog) lines.push(`  dialog: "${s.dialog.title}" ${s.dialog.text ? `"${s.dialog.text}"` : ""}`.trimEnd());
   if (s.crash?.reason) lines.push(`  crash.log: ${s.crash.reason}${s.crash.line ? ` (line ${s.crash.line})` : ""}`);
   if (s.reloadOpenSince) lines.push(`  open operation: script reload started ${hms(s.reloadOpenSince)}, not finished`);
@@ -496,7 +492,7 @@ async function main(argv: string[]): Promise<number> {
     args: argv,
     allowPositionals: true,
     options: {
-      pid: { type: "string" }, "start-time": { type: "string" }, owned: { type: "boolean" }, owner: { type: "string" },
+      pid: { type: "string" }, "start-time": { type: "string" }, owned: { type: "boolean" },
       session: { type: "string" }, lock: { type: "string" }, "state-dir": { type: "string" }, "logs-root": { type: "string" },
       dismiss: { type: "string" }, "auto-recover": { type: "boolean" }, "recover-after-min": { type: "string" },
       host: { type: "string" }, port: { type: "string" }, event: { type: "string" },
@@ -516,7 +512,7 @@ async function main(argv: string[]): Promise<number> {
   return runWatcher({
     pid, stateDir, dismiss,
     startTime: values["start-time"] ? Number(values["start-time"]) : undefined,
-    owned: !!values.owned, owner: values.owner, session: values.session, lock: values.lock, logsRoot: values["logs-root"],
+    owned: !!values.owned, session: values.session, lock: values.lock, logsRoot: values["logs-root"],
     autoRecover: !!values["auto-recover"], recoverAfterMin: Number(values["recover-after-min"] ?? 5),
     host: values.host ?? "127.0.0.1", port: Number(values.port ?? 5775),
   });

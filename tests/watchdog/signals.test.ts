@@ -194,13 +194,13 @@ describe("decide: who may be clicked or killed", () => {
     expect(recover({ owned: true, lockHeld: true, badSince: now - 10_000 })).toEqual([]);
   });
 
-  it("a lock held by a person is never ours", () => {
+  it("a lock held by a person is never ours: only a session line naming this session counts", () => {
     const lock = "owner: Don (AM test)\npid: 19524\nsince: 2026-10-31 06:12\n";
-    expect(lockHeldBy(lock, { owner: "overnight-boats" })).toBe(false);
     expect(lockHeldBy(lock, { session: "s1" })).toBe(false);
-    expect(lockHeldBy("owner: overnight-boats\npid: 31008\n", { owner: "overnight-boats" })).toBe(true);
-    expect(lockHeldBy("owner: overnight-boats\nsession: s2\n", { owner: "overnight-boats", session: "s1" })).toBe(false);
-    expect(lockHeldBy(undefined, { owner: "x" })).toBe(false);
+    expect(lockHeldBy(lock, {})).toBe(false);
+    expect(lockHeldBy("owner: overnight-boats\nsession: s1\n", { session: "s1" })).toBe(true);
+    expect(lockHeldBy("owner: overnight-boats\nsession: s2\n", { session: "s1" })).toBe(false);
+    expect(lockHeldBy(undefined, { session: "s1" })).toBe(false);
   });
 });
 

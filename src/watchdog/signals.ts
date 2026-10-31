@@ -118,12 +118,10 @@ export function parseLock(text: string): Record<string, string> {
   return out;
 }
 
-/** True when the lock names this session (`session:`), or its `owner:` is the name this watcher was given. A person's hold is never ours. */
-export function lockHeldBy(lockText: string | undefined, who: { session?: string; owner?: string }): boolean {
-  if (!lockText) return false;
-  const l = parseLock(lockText);
-  if (l.session) return !!who.session && l.session === who.session;
-  return !!who.owner && l.owner === who.owner;
+/** True only when the lock's `session:` line names this session; an `owner:` line alone is a person's hold, never ours (review B1). */
+export function lockHeldBy(lockText: string | undefined, who: { session?: string }): boolean {
+  const l = parseLock(lockText ?? "");
+  return !!l.session && l.session === who.session;
 }
 
 /** PID listening on `port` in `netstat -ano` output. */
