@@ -20,6 +20,8 @@ import { registerBuildingSetup } from "../../src/tools/building-setup.js";
 import { registerServerConfig } from "../../src/tools/server-config.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-wtt-"));
+// A fake home, so the "Workshop cache" case below is a temp folder: an unguarded (older) build must not reach the real cache.
+process.env.USERPROFILE = process.env.HOME = join(root, "home");
 const projects = join(root, "projects");
 const addon = (name: string, guid: string) => {
   mkdirSync(join(projects, name), { recursive: true });
@@ -56,6 +58,10 @@ registerServerConfig(server, config);
 const listing = () => readdirSync(projects, { recursive: true }).map(String).sort();
 const before = listing();
 const workshop = join(myGamesDir(), "ArmaReforgerWorkbench", "addons", "SomeMod");
+
+it("the Workshop cache case is inside the temp home", () => {
+  expect(workshop.startsWith(join(root, "home"))).toBe(true);
+});
 
 const manifest = join(root, "building_manifest.json");
 writeFileSync(manifest, JSON.stringify({ building_name: "WTT_House", export_root: "", structure: { fbx: "h.fbx", sockets: [] }, parts: [] }));
