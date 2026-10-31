@@ -295,8 +295,8 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
   version control. `addon_git_guard install` adds local pre-commit and commit-msg hooks (`hooks` picks which);
   the pre-commit hook refuses commits of those files,
   their folder `.meta`, `resourceDatabase.rdb`, and `.c` files that start with a UTF-8 BOM.
-- `wb_launch` refuses a `gprojPath` in `ENFUSION_PROTECTED_ADDONS`, in the game or Tools install or in a
-  Workshop cache. Without `gprojPath` it falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project
+- `wb_launch` refuses a `gprojPath` in `ENFUSION_PROTECTED_ADDONS`, in the game or Tools install, in the game's
+  Workshop cache or in a Workshop download (a folder with `ServerData.json`). Without `gprojPath` it falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project
   path, skipping those.
 - Only `wb_launch` starts Workbench. `wb_cleanup`, `wb_diagnose` and `wb_knowledge` work without it, and
   `wb_close` reports that it is not running. Every other `wb_*` tool returns an error when Workbench is not
