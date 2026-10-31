@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 export function registerWbLocalization(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
@@ -34,9 +34,9 @@ export function registerWbLocalization(server: McpServer, client: WorkbenchClien
         // Mutating actions require edit mode
         const MUTATING_ACTIONS = ["insert", "delete", "modify"];
         if (MUTATING_ACTIONS.includes(action)) {
-          const modeErr = requireEditMode(client, `${action} localization entry`);
+          const modeErr = await ensureMode(client, "edit", `${action} localization entry`);
           if (modeErr) {
-            return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+            return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
           }
         }
 

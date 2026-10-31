@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 export function registerWbResources(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
@@ -30,9 +30,9 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
       try {
         // Mutating actions require edit mode
         if (action === "register" || action === "rebuild") {
-          const modeErr = requireEditMode(client, `${action} resource`);
+          const modeErr = await ensureMode(client, "edit", `${action} resource`);
           if (modeErr) {
-            return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+            return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
           }
         }
 

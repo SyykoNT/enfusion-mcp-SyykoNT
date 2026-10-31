@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 function formatEntityDetails(data: Record<string, unknown>): string {
   const lines: string[] = [];
@@ -86,9 +86,9 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       },
     },
     async ({ prefab, position, rotation, name, layerPath }) => {
-      const modeErr = requireEditMode(client, "create entity");
+      const modeErr = await ensureMode(client, "edit", "create entity");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
       try {
         const params: Record<string, unknown> = { prefab };
@@ -128,9 +128,9 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       },
     },
     async ({ name }) => {
-      const modeErr = requireEditMode(client, "delete entity");
+      const modeErr = await ensureMode(client, "edit", "delete entity");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
       try {
         await client.call("EMCP_WB_DeleteEntity", { name });
@@ -292,9 +292,9 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       // Only require edit mode for mutating actions, not read-only ones
       const READ_ONLY_ACTIONS = ["getProperty", "listProperties", "listArrayItems", "getWorldTransform", "makeVisible"];
       if (!READ_ONLY_ACTIONS.includes(action)) {
-        const modeErr = requireEditMode(client, "modify entity");
+        const modeErr = await ensureMode(client, "edit", "modify entity");
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
       }
       try {

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode, requirePlayMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 export function registerWbEditorTools(server: McpServer, client: WorkbenchClient): void {
   // wb_play — Switch to game mode (Play in Editor)
@@ -22,9 +22,9 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       },
     },
     async ({ debugMode, fullScreen }) => {
-      const modeErr = requireEditMode(client, "start play mode");
+      const modeErr = await ensureMode(client, "edit", "start play mode");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
       try {
         const params: Record<string, unknown> = { action: "play" };
@@ -32,6 +32,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         if (fullScreen !== undefined) params.fullScreen = fullScreen;
 
         const result = await client.call<Record<string, unknown>>("EMCP_WB_EditorControl", params);
+        client.setMode("play");
 
         return {
           content: [
@@ -60,14 +61,15 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       inputSchema: {},
     },
     async () => {
-      const modeErr = requirePlayMode(client, "stop play mode");
+      const modeErr = await ensureMode(client, "play", "stop play mode");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
       try {
         const result = await client.call<Record<string, unknown>>("EMCP_WB_EditorControl", {
           action: "stop",
         });
+        client.setMode("edit");
 
         return {
           content: [
@@ -101,9 +103,9 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       },
     },
     async ({ path }) => {
-      const modeErr = requireEditMode(client, "save");
+      const modeErr = await ensureMode(client, "edit", "save");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
       try {
         const params: Record<string, unknown> = {

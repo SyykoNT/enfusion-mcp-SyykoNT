@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 const MUTATING_LAYER_ACTIONS = new Set(["create", "delete", "rename", "toggleLock"]);
 
@@ -51,9 +51,9 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
     },
     async ({ action, subScene, layerPath, name, parentPath, visible }) => {
       if (MUTATING_LAYER_ACTIONS.has(action)) {
-        const modeErr = requireEditMode(client, `${action} layer`);
+        const modeErr = await ensureMode(client, "edit", `${action} layer`);
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
       }
       try {
