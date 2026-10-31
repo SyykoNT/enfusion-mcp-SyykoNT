@@ -23,6 +23,13 @@ const STEAMCMD_URL = IS_WIN
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
 
+/** Extract a .zip or .tar.gz with tar; paths go as arguments, never through a shell. */
+export function unpack(archive: string, dir: string): void {
+  // Windows 10+ ships bsdtar, which reads zip; a Git or MSYS tar earlier on PATH would not.
+  const tar = IS_WIN ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+  execFileSync(tar, ["-xf", archive, "-C", dir], { windowsHide: true });
+}
+
 async function ensureSteamcmd(config: Config): Promise<string> {
   const exe = join(config.steamcmdPath, STEAMCMD_EXE);
   if (existsSync(exe)) return exe;
@@ -31,11 +38,7 @@ async function ensureSteamcmd(config: Config): Promise<string> {
   if (!res.ok) throw new Error(`Downloading SteamCMD failed: HTTP ${res.status}`);
   const archive = join(config.steamcmdPath, IS_WIN ? "steamcmd.zip" : "steamcmd.tar.gz");
   writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
-  if (IS_WIN) {
-    execFileSync("powershell", ["-NoProfile", "-Command", `Expand-Archive -Force -LiteralPath '${archive}' -DestinationPath '${config.steamcmdPath}'`], { windowsHide: true });
-  } else {
-    execFileSync("tar", ["-xzf", archive, "-C", config.steamcmdPath]);
-  }
+  unpack(archive, config.steamcmdPath);
   if (!existsSync(exe)) throw new Error(`SteamCMD archive did not contain ${STEAMCMD_EXE}`);
   return exe;
 }

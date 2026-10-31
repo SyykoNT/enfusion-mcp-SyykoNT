@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
-import { registerServer } from "../../src/tools/server.js";
+import { registerServer, unpack } from "../../src/tools/server.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-srv-"));
 const config = {
@@ -65,5 +66,20 @@ describe("server install/update", () => {
       expect(r.content[0].text).toMatch(/Steam client install/);
     }
     expect(existsSync(steam.steamcmdPath)).toBe(false);
+  });
+});
+
+describe("unpack", () => {
+  // The zip path is Windows only (SteamCMD for Linux ships as .tar.gz).
+  it.runIf(process.platform === "win32")("extracts a zip into a path with an apostrophe", () => {
+    const src = join(root, "zipsrc");
+    mkdirSync(src);
+    writeFileSync(join(src, "steamcmd.exe"), "x");
+    const archive = join(root, "steamcmd.zip");
+    execFileSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"), ["-a", "-cf", archive, "-C", src, "steamcmd.exe"]);
+    const dest = join(root, "O'Neil", "steamcmd");
+    mkdirSync(dest, { recursive: true });
+    unpack(archive, dest);
+    expect(readFileSync(join(dest, "steamcmd.exe"), "utf-8")).toBe("x");
   });
 });
