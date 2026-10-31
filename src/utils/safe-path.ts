@@ -90,6 +90,7 @@ export function forbiddenRoots(config: Config): string[] {
     config.workbenchPath,
     join(myGamesDir(), "ArmaReforger", "addons"),
     join(myGamesDir(), "ArmaReforgerWorkbench", "addons"),
+    config.workshopPath,
     ...(process.env.ENFUSION_WORKBENCH_PROFILE ? [join(process.env.ENFUSION_WORKBENCH_PROFILE, "addons")] : []),
     ...(process.env.ENFUSION_FORBIDDEN_DIRS ?? "").split(","),
   ];
