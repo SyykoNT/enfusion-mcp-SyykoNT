@@ -482,6 +482,9 @@ export class WorkbenchClient {
     //    only compiles the active project and its declared dependencies, NOT every
     //    addon folder in the project directory.  A standalone sibling addon will
     //    never be compiled unless the user's project explicitly depends on it.
+    if (gprojPath && !existsSync(gprojPath)) {
+      throw new WorkbenchError(`Not found: ${gprojPath}. Pass the path of an addon's .gproj file.`, "LAUNCH_FAILED");
+    }
     if (gprojPath && isProtectedAddon(this.config!, gprojPath)) {
       throw new WorkbenchError(
         `Refused: ${gprojPath} is a protected addon (ENFUSION_PROTECTED_ADDONS) and wb_launch would copy handler scripts into it. ` +

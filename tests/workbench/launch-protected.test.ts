@@ -69,4 +69,11 @@ describe("launchWorkbench and protected addons", () => {
     expect(handlers(cacheMod)).toBe(false);
     expect(existsSync(join(cache, "EnfusionMCP"))).toBe(false);
   });
+
+  it("names a missing gprojPath plainly and creates nothing", async () => {
+    const { projects, client } = setup();
+    const missing = join(projects, "Nope", "addon.gproj");
+    await expect(client.ensureRunning(missing)).rejects.toThrow(/^Not found: .*addon\.gproj/);
+    expect(existsSync(join(projects, "Nope"))).toBe(false);
+  });
 });
