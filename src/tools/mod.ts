@@ -6,7 +6,7 @@ import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 import { generateScript } from "../templates/script.js";
 import type { PatternLibrary } from "../patterns/loader.js";
-import { validateFilename, validateProjectPath } from "../utils/safe-path.js";
+import { forbiddenRoot, validateFilename, validateProjectPath } from "../utils/safe-path.js";
 import type { SearchEngine } from "../index/search-engine.js";
 import { parse, getProperty } from "../formats/enfusion-text.js";
 
@@ -570,6 +570,7 @@ export function registerMod(
                   text: `Unknown pattern: "${patternName}"\nAvailable patterns: ${available}`,
                 },
               ],
+              isError: true,
             };
           }
         }
@@ -585,7 +586,55 @@ export function registerMod(
                 text: `Directory already exists: ${addonDir}\nUse a different name or delete the existing directory.`,
               },
             ],
+            isError: true,
           };
+        }
+
+        const root = forbiddenRoot(config, addonDir);
+        if (root) {
+          return {
+            content: [{
+              type: "text",
+              text: `Refused: ${addonDir} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS). Create the addon in your own projects folder.`,
+            }],
+            isError: true,
+          };
+        }
+
+        // Check for filename collisions after prefix replacement, before anything is written
+        if (patternName) {
+          const patternDef = patterns.get(patternName)!;
+          const scriptPaths: string[] = [];
+          for (const scriptDef of patternDef.scripts) {
+            const className = scriptDef.className.replace(/\{PREFIX\}/g, classPrefix);
+            const path = `Scripts/Game/${className}.c`;
+            if (scriptPaths.includes(path)) {
+              return {
+                content: [{
+                  type: "text",
+                  text: `Pattern "${patternName}" produces duplicate script file after prefix replacement: ${path}\nUse a different prefix to avoid collisions.`,
+                }],
+                isError: true,
+              };
+            }
+            scriptPaths.push(path);
+          }
+
+          const configPaths: string[] = [];
+          for (const configDef of patternDef.configs) {
+            const configName = configDef.name.replace(/\{PREFIX\}/g, classPrefix);
+            const path = `Configs/${configName}.conf`;
+            if (configPaths.includes(path)) {
+              return {
+                content: [{
+                  type: "text",
+                  text: `Pattern "${patternName}" produces duplicate config file after prefix replacement: ${path}\nUse a different prefix to avoid collisions.`,
+                }],
+                isError: true,
+              };
+            }
+            configPaths.push(path);
+          }
         }
 
         try {
@@ -619,37 +668,6 @@ export function registerMod(
           // Apply pattern if specified (already validated above)
           if (patternName) {
             const patternDef = patterns.get(patternName)!;
-
-            // Check for filename collisions after prefix replacement
-            const scriptPaths: string[] = [];
-            for (const scriptDef of patternDef.scripts) {
-              const className = scriptDef.className.replace(/\{PREFIX\}/g, classPrefix);
-              const path = `Scripts/Game/${className}.c`;
-              if (scriptPaths.includes(path)) {
-                return {
-                  content: [{
-                    type: "text",
-                    text: `Pattern "${patternName}" produces duplicate script file after prefix replacement: ${path}\nUse a different prefix to avoid collisions.`,
-                  }],
-                };
-              }
-              scriptPaths.push(path);
-            }
-
-            const configPaths: string[] = [];
-            for (const configDef of patternDef.configs) {
-              const configName = configDef.name.replace(/\{PREFIX\}/g, classPrefix);
-              const path = `Configs/${configName}.conf`;
-              if (configPaths.includes(path)) {
-                return {
-                  content: [{
-                    type: "text",
-                    text: `Pattern "${patternName}" produces duplicate config file after prefix replacement: ${path}\nUse a different prefix to avoid collisions.`,
-                  }],
-                };
-              }
-              configPaths.push(path);
-            }
 
             // Generate scripts from pattern
             for (const scriptDef of patternDef.scripts) {
