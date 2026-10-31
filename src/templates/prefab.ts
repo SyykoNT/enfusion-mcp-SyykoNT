@@ -58,7 +58,7 @@ export function generatePrefab(opts: PrefabOptions): string {
 
   const root = createNode(opts.rootClass ?? recipe.entityType, {
     inheritance: parentPrefab || undefined,
-    properties: [{ key: "ID", value: entityGuid }],
+    properties: [{ key: "ID", value: entityGuid, quoted: true }],
   });
 
   const recipeComponents: ComponentDef[] = recipe.overrideComponents.map((override) => ({

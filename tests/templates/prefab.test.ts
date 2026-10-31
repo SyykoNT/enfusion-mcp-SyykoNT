@@ -154,6 +154,12 @@ describe("generatePrefab", () => {
     expect(comps.find((c) => c.type === "SoundComponent")!.id).toBe("{2222222222222222}");
   });
 
+  it("always quotes the root ID, as Workbench writes it", () => {
+    for (let i = 0; i < 20; i++) {
+      expect(generatePrefab({ name: "T", prefabType: "generic" })).toMatch(/^ ID "[0-9A-F]{16}"$/m);
+    }
+  });
+
   it("uses rootClass over the recipe entity type", () => {
     expect(parse(generatePrefab({ name: "T", prefabType: "prop", rootClass: "SCR_DestructibleEntity" })).type).toBe("SCR_DestructibleEntity");
   });
