@@ -3,6 +3,7 @@ import { z } from "zod";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import type { Config } from "../config.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 import { gamemodeRecipeLoader } from "../templates/gamemode-recipe-loader.js";
 import { composeGamemode } from "../templates/gamemode-recipe.js";
 
@@ -31,10 +32,14 @@ export function registerGamemodeScaffold(server: McpServer, config: Config): voi
         projectPath: z
           .string()
           .optional()
-          .describe("Addon root path. Uses configured default if omitted."),
+          .describe("Addon root path. Wins over modName. modName or projectPath is required to write."),
+        modName: z
+          .string()
+          .optional()
+          .describe("Addon folder under the project path or ENFUSION_ADDONS_DIR."),
       },
     },
-    async ({ action, features, description, projectPath }) => {
+    async ({ action, features, description, projectPath, modName }) => {
       try {
         if ((action ?? "create") === "list") {
           const list = gamemodeRecipeLoader.listFeatures();
@@ -60,9 +65,9 @@ export function registerGamemodeScaffold(server: McpServer, config: Config): voi
           ? "\n\nLayer/prefab follow-up:\n" + composed.notes.map((n) => `[ ] ${n}`).join("\n")
           : "";
 
-        const basePath = projectPath || config.projectPath;
-        if (basePath) {
-          const targetDir = resolve(basePath, OUTPUT_SUBDIR);
+        const target = resolveWriteAddon(config, { projectPath, modName });
+        if (!("error" in target)) {
+          const targetDir = resolve(target.dir, OUTPUT_SUBDIR);
           const targetPath = join(targetDir, OUTPUT_FILE);
           mkdirSync(targetDir, { recursive: true });
 
@@ -87,8 +92,9 @@ export function registerGamemodeScaffold(server: McpServer, config: Config): voi
         return {
           content: [{
             type: "text",
-            text: `Generated gamemode scaffold (no project path configured — not written):\n\n\`\`\`c\n${composed.code}\n\`\`\`${notes}\n\nSet ENFUSION_PROJECT_PATH to write files automatically.`,
+            text: `${target.error}\n\nGenerated gamemode scaffold (not written):\n\n\`\`\`c\n${composed.code}\n\`\`\`${notes}`,
           }],
+          isError: true,
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

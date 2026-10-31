@@ -3,6 +3,7 @@ import { z } from "zod";
 import { writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Config } from "../config.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 import { generateServerConfig } from "../templates/server-config.js";
 
 export function registerServerConfig(
@@ -58,7 +59,7 @@ export function registerServerConfig(
         projectPath: z
           .string()
           .optional()
-          .describe("Project root to write server.json. Uses configured default if omitted."),
+          .describe("Addon root to write server.json into; required to write (modName here is the addon ID to load, not the target)."),
       },
     },
     async ({
@@ -73,7 +74,7 @@ export function registerServerConfig(
       password,
       projectPath,
     }) => {
-      const basePath = projectPath || config.projectPath;
+      const target = resolveWriteAddon(config, { projectPath });
 
       try {
         const content = generateServerConfig({
@@ -88,8 +89,8 @@ export function registerServerConfig(
           password,
         });
 
-        if (basePath) {
-          const targetPath = resolve(basePath, "server.json");
+        if (!("error" in target)) {
+          const targetPath = resolve(target.dir, "server.json");
 
           if (existsSync(targetPath)) {
             return {
@@ -118,9 +119,10 @@ export function registerServerConfig(
           content: [
             {
               type: "text",
-              text: `Generated server config (no project path — not written to disk):\n\n\`\`\`json\n${content}\n\`\`\`\n\nSet ENFUSION_PROJECT_PATH to write files automatically.`,
+              text: `${target.error}\n\nGenerated server config (not written):\n\n\`\`\`json\n${content}\n\`\`\``,
             },
           ],
+          isError: true,
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
