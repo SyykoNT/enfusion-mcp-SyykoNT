@@ -10,7 +10,7 @@
  * This module resolves a file's effective content (merging its ": parent" chain),
  * lets callers pick objects and set properties, and emits the minimal delta.
  */
-import { parse, serialize, createNode, type EnfusionNode } from "./enfusion-text.js";
+import { parse, serialize, serializeAll, createNode, type EnfusionNode } from "./enfusion-text.js";
 
 export type Reader = (path: string) => string | null;
 
@@ -32,13 +32,17 @@ export function mergeNode(base: EnfusionNode, over: EnfusionNode): EnfusionNode 
   const out = clone(base);
   out.type = over.type;
   out.className = over.className ?? out.className;
-  out.inheritance = over.inheritance;
+  out.inheritance = over.inheritance ?? out.inheritance;
+  out.append = over.append ?? out.append;
+  out.group = over.group ?? out.group;
   for (const p of over.properties) {
     const i = out.properties.findIndex((q) => q.key === p.key);
     const v = { ...p, value: typeof p.value === "string" ? p.value : clone(p.value) };
-    if (i >= 0) out.properties[i] = v; else out.properties.push(v);
+    // Keep the base line's place, quoting and text so an unchanged value is written as it was
+    if (i >= 0) { const b = out.properties[i]; out.properties[i] = { ...v, pos: b.pos, quoted: v.quoted ?? b.quoted, raw: v.raw ?? b.raw }; }
+    else out.properties.push(v);
   }
-  if (over.values.length) out.values = [...over.values];
+  if (over.values.length) { out.values = [...over.values]; out.valuesQuoted = over.valuesQuoted; }
   for (const c of over.children) {
     const i = out.children.findIndex((d) => childKey(d) === childKey(c));
     if (i >= 0) out.children[i] = mergeNode(out.children[i], c);
@@ -155,8 +159,10 @@ export function buildDelta(effective: EnfusionNode, edits: Edit[]): { delta: Enf
       if (to === null || to === from) continue;
       const target = o.ancestors.length === 0 && o.node === effective ? delta : ensurePath([...o.ancestors, o.node]);
       const i = target.properties.findIndex((p) => p.key === edit.property);
-      if (i >= 0) target.properties[i] = { key: edit.property, value: to };
-      else target.properties.push({ key: edit.property, value: to });
+      // Write the new line quoted or bare the way the base file writes that key
+      const quoted = o.node.properties.find((p) => p.key === edit.property)?.quoted;
+      if (i >= 0) target.properties[i] = { key: edit.property, value: to, quoted };
+      else target.properties.push({ key: edit.property, value: to, quoted });
       o.props[edit.property] = to; // later edits see the new value
       const label = describe(o);
       const prev = changes.find((c) => c.object === label && c.property === edit.property);
@@ -169,7 +175,11 @@ export function buildDelta(effective: EnfusionNode, edits: Edit[]): { delta: Enf
 /** Merge a new delta into an override file the mod already has (new values win). */
 export function mergeOverride(existingText: string | null, delta: EnfusionNode): string {
   if (!existingText) return serialize(delta);
-  return serialize(mergeNode(parse(existingText), delta));
+  // Keep the file's BOM, line endings and final newline
+  const bom = existingText.startsWith("﻿") ? "﻿" : "";
+  const eol = existingText.includes("\r\n") ? "\r\n" : "\n";
+  const end = existingText.endsWith("\n") ? eol : "";
+  return bom + serializeAll([mergeNode(parse(existingText), delta)], eol) + end;
 }
 
 /** .meta for an override: it must carry the base resource's GUID. */

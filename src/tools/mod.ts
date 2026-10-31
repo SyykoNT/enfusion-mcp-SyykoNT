@@ -173,7 +173,7 @@ function checkScripts(projectPath: string): ValidationIssue[] {
   return issues;
 }
 
-function checkPrefabs(projectPath: string): ValidationIssue[] {
+export function checkPrefabs(projectPath: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   const allPrefabs = findFiles(projectPath, ".et");
@@ -196,7 +196,7 @@ function checkPrefabs(projectPath: string): ValidationIssue[] {
   return issues;
 }
 
-function checkConfigs(projectPath: string, searchEngine?: SearchEngine): ValidationIssue[] {
+export function checkConfigs(projectPath: string, searchEngine?: SearchEngine): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const allConfigs = findFiles(projectPath, ".conf");
 
@@ -218,10 +218,12 @@ function checkConfigs(projectPath: string, searchEngine?: SearchEngine): Validat
       if (searchEngine) {
         const walkNodes = (node: ReturnType<typeof parse>) => {
           for (const child of node.children || []) {
-            if (child.type && /^[A-Z]/.test(child.type) && !searchEngine.hasClass(child.type)) {
+            // An object member's type is its key (`Suspension VehicleSuspension "{ID}" {`); check its class
+            const cls = child.className ?? child.type;
+            if (cls && /^[A-Z]/.test(cls) && !searchEngine.hasClass(cls)) {
               issues.push({
                 level: "warning",
-                message: `${rel}: Class "${child.type}" not found in API index.`,
+                message: `${rel}: Class "${cls}" not found in API index.`,
               });
             }
             walkNodes(child);

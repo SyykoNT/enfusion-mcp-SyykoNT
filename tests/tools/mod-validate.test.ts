@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { checkConfigs, checkPrefabs } from "../../src/tools/mod.js";
+import type { SearchEngine } from "../../src/index/search-engine.js";
 
 // We test the validation logic by importing the check functions indirectly
 // through a test addon structure
@@ -98,6 +100,32 @@ describe("mod_validate test structures", () => {
     });
 
     expect(existsSync(join(TEST_DIR, "Prefabs/Bad.et"))).toBe(true);
+  });
+
+  it("reports a config with an extra '}' with its line", () => {
+    setup({ "Configs/Bad.conf": "SCR_Root {\n a 1\n}\n}" });
+    expect(checkConfigs(TEST_DIR).map((i) => i.message)).toEqual([expect.stringMatching(/Configs\/Bad\.conf: Invalid config format .*line 4: '}' without a matching/)]);
+  });
+
+  it("checks an object member by its class, not its key", () => {
+    setup({
+      "Configs/Axle.conf": [
+        "SCR_Root {",
+        ' Suspension VehicleSuspension "{0000000000000007}" : "{0000000000000008}s.conf" {',
+        "  Stiffness 2",
+        " }",
+        ' Tyre MissingTyreClass "{0000000000000009}" {',
+        " }",
+        "}",
+      ].join("\n"),
+    });
+    const engine = { hasClass: (c: string) => ["SCR_Root", "VehicleSuspension"].includes(c) } as unknown as SearchEngine;
+    expect(checkConfigs(TEST_DIR, engine).map((i) => i.message)).toEqual(['Configs/Axle.conf: Class "MissingTyreClass" not found in API index.']);
+  });
+
+  it("reports a prefab with two top-level objects", () => {
+    setup({ "Prefabs/Two.et": "A {\n}\nB {\n}" });
+    expect(checkPrefabs(TEST_DIR).map((i) => i.message)).toEqual([expect.stringMatching(/Prefabs\/Two\.et: Invalid prefab format .*2 top-level objects/)]);
   });
 
   it("detects missing .gproj", () => {
