@@ -22,10 +22,10 @@ export function registerServerModPrompt(server: McpServer): void {
             type: "text" as const,
             text: `Build an Arma Reforger server mod${modName ? ` named "${modName}"` : ""}: ${goal}
 
-You are autonomous — do every step yourself.
+Work step by step. Ask the user when information is missing or before anything that affects shared resources (closing Workbench, starting servers, downloads, deleting files). End with what was done, what was not verified, and any step the user must do in the GUI.
 
-1. **env_check** — make sure game, Workbench and (for testing) the dedicated server are available. If the server is
-   missing, run **server** action 'install' and follow it with 'status' while you work.
+1. **env_check**: make sure game, Workbench and (for testing) the dedicated server are available. If the dedicated
+   server is missing, tell the user; **server** 'install' downloads SteamCMD and needs their OK.
 2. Create the addon if needed: **mod** action 'create' (bare scaffold, no pattern).
 3. Values first: prefer data over scripts:
    - **economy** 'inspect' then 'set' for: xp (reward IDs like ENEMY_KILL, BASE_SEIZED), ranks (PRIVATE…COLONEL

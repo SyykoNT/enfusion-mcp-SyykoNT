@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 export function registerWbResources(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
@@ -9,7 +9,8 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
     {
       description:
         "Manage Workbench resources. Register new resources, rebuild resource databases, get resource info, or open a resource in its editor. " +
-        "To SEARCH for resources by name, use asset_search (searches base game data and .pak archives offline) — this tool cannot list or browse.",
+        "To SEARCH for resources by name, use asset_search (searches base game data and .pak archives offline); this tool cannot list or browse. " +
+        "Register only new files that exist on disk: registering an already registered or missing file can open a dialog or hang Workbench.",
       inputSchema: {
         action: z
           .enum(["register", "rebuild", "getInfo", "open"])
@@ -29,9 +30,9 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
       try {
         // Mutating actions require edit mode
         if (action === "register" || action === "rebuild") {
-          const modeErr = requireEditMode(client, `${action} resource`);
+          const modeErr = await ensureMode(client, "edit", `${action} resource`);
           if (modeErr) {
-            return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+            return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
           }
         }
 

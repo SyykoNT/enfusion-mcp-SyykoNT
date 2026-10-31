@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 function formatEntityDetails(data: Record<string, unknown>): string {
   const lines: string[] = [];
@@ -66,7 +66,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       inputSchema: {
         prefab: z
           .string()
-          .describe("Prefab resource path (e.g., '{GUID}Prefabs/Characters/SoldierUS.et')"),
+          .describe("Prefab resource path: a {GUID}path such as '{GUID}Prefabs/<path>.et' from asset_search or game_read; never typed from memory."),
         position: z
           .string()
           .optional()
@@ -86,9 +86,9 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       },
     },
     async ({ prefab, position, rotation, name, layerPath }) => {
-      const modeErr = requireEditMode(client, "create entity");
+      const modeErr = await ensureMode(client, "edit", "create entity");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
       try {
         const params: Record<string, unknown> = { prefab };
@@ -128,9 +128,9 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       },
     },
     async ({ name }) => {
-      const modeErr = requireEditMode(client, "delete entity");
+      const modeErr = await ensureMode(client, "edit", "delete entity");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
       try {
         await client.call("EMCP_WB_DeleteEntity", { name });
@@ -255,7 +255,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
     "wb_entity_modify",
     {
       description:
-        "Modify an entity in the World Editor. Supports moving, rotating, renaming, reparenting, and setting or clearing component properties. Only works in edit mode.",
+        "Modify an entity in the World Editor. Supports moving, rotating, renaming, reparenting, and setting or clearing component properties. Only works in edit mode. Enum properties: verify a setProperty with getProperty (known silent failure).",
       inputSchema: {
         name: z.string().describe("Name of the entity to modify"),
         action: z
@@ -292,9 +292,9 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       // Only require edit mode for mutating actions, not read-only ones
       const READ_ONLY_ACTIONS = ["getProperty", "listProperties", "listArrayItems", "getWorldTransform", "makeVisible"];
       if (!READ_ONLY_ACTIONS.includes(action)) {
-        const modeErr = requireEditMode(client, "modify entity");
+        const modeErr = await ensureMode(client, "edit", "modify entity");
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
       }
       try {
@@ -403,7 +403,8 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
     "wb_entity_select",
     {
       description:
-        "Manage entity selection in the World Editor. Select, deselect, clear selection, or get the current selection.",
+        "Manage entity selection in the World Editor. 'select' clears the current selection and only locates the entity; it does not select it. " +
+        "'deselect', 'clear' and 'getSelected' use the documented selection API.",
       inputSchema: {
         action: z
           .enum(["select", "deselect", "clear", "getSelected"])

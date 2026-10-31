@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 // Menu paths that are known-safe for read-only or non-destructive use
 const BLOCKED_MENU_PREFIXES = [
@@ -16,13 +16,13 @@ export function registerWbExecuteAction(server: McpServer, client: WorkbenchClie
     "wb_execute_action",
     {
       description:
-        "Execute any Workbench menu action by its menu path. Use comma-separated path segments to identify the action (e.g., 'Tools,Reload Scripts' or 'File,Save'). " +
+        "Execute any Workbench menu action by its menu path. Use comma-separated path segments to identify the action (e.g., 'Game,Exit game' in WorldEditor, or 'File,Save'). " +
         "Some destructive actions (File,Close; File,New; File,Exit) are blocked for safety.",
       inputSchema: {
         menuPath: z
           .string()
           .describe(
-            "Comma-separated menu path (e.g., 'Tools,Reload Scripts', 'File,Save', 'Edit,Undo')"
+            "Comma-separated menu path (e.g., 'Game,Exit game', 'File,Save', 'Edit,Undo')"
           ),
         module: z
           .enum(["WorldEditor", "ScriptEditor", "ResourceManager", "AnimEditor", "ParticleEditor", "BehaviorEditor", "AudioEditor", "LocalizationEditor"])
@@ -46,9 +46,9 @@ export function registerWbExecuteAction(server: McpServer, client: WorkbenchClie
         }
 
         // Mutating actions require edit mode
-        const modeErr = requireEditMode(client, `execute menu action "${menuPath}"`);
+        const modeErr = await ensureMode(client, "edit", `execute menu action "${menuPath}"`);
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
         const result = await client.call<Record<string, unknown>>("EMCP_WB_ExecuteAction", {
           menuPath,

@@ -89,8 +89,8 @@ export function registerPrefab(server: McpServer, config: Config): void {
         "Create or inspect Arma Reforger prefab (.et) files.\n\n" +
         "action=create: Create a new Entity Template (.et) prefab file for an Arma Reforger mod. Generates a properly structured prefab with components in valid Enfusion text serialization format. " +
         "When parentPrefab is provided, automatically resolves the full ancestor chain and pre-populates inherited components (set includeAncestry=false to skip). " +
-        "IMPORTANT: For 'interactive' and other visible prefabs, the MeshObject component MUST have its 'Object' property set to a base game .xob model path (e.g., '{5F4C4181F065B447}Assets/Props/Military/Barrels/BarrelGreen_01.xob') or the entity will be invisible in-game. Use api_search to find model paths. " +
-        "Both actions flag known hard component-dependency violations (e.g. a DamageManager component with no RplComponent or no HitZone, a WeaponComponent with no RigidBody) as warnings — see arma-knowledge component-anatomy-and-dependencies.md for the full rule set and for implicit (non-checkable) coupling like signal names, collider names, and bone PivotIDs that require manual review.\n\n" +
+        "IMPORTANT: For 'interactive' and other visible prefabs, the MeshObject component MUST have its 'Object' property set to a base game .xob model path or the entity will be invisible in-game; find a model with asset_search type 'model'. " +
+        "Both actions flag known hard component-dependency violations as warnings (rules: arma-knowledge component-anatomy-and-dependencies.md).\n\n" +
         "action=inspect: Inspect an Arma Reforger prefab (.et file) and its full inheritance chain. " +
         "Reads each ancestor prefab, parses all components, and returns a fully merged view " +
         "showing which ancestor each component comes from. " +

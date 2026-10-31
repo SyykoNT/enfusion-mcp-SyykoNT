@@ -11,7 +11,7 @@ import type { Config } from "../config.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { resolveGameDataPath, findLooseFile, resolveAddonDir } from "../utils/game-paths.js";
 import { validateProjectPath } from "../utils/safe-path.js";
-import { requireEditMode, formatConnectionStatus } from "../workbench/status.js";
+import { ensureMode, formatConnectionStatus } from "../workbench/status.js";
 
 /**
  * wb_entity_duplicate — duplicate a scene entity into the mod folder.
@@ -63,9 +63,9 @@ export function registerWbEntityDuplicate(
       },
     },
     async ({ entityName, destPath, modName, replaceInScene }) => {
-      const modeErr = requireEditMode(client, "duplicate entity");
+      const modeErr = await ensureMode(client, "edit", "duplicate entity");
       if (modeErr) {
-        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+        return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
       }
 
       // Resolve addon directory

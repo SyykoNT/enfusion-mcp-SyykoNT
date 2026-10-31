@@ -28,8 +28,7 @@ const postWrite = process.env.ENFUSION_TUNING_POST_WRITE || "rebuild";
 
 const wbClient = new WorkbenchClient(config.workbenchHost, config.workbenchPort, config);
 
-// skipAutoLaunch: the tuner must never spawn Workbench just because a value changed.
-const CALL_OPTS = { skipAutoLaunch: true, timeout: 8000 } as const;
+const CALL_OPTS = { timeout: 8000 } as const;
 
 async function notifyWorkbench(relPath: string): Promise<string | null> {
   if (postWrite === "none") return null;

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 const MUTATING_CLIPBOARD_ACTIONS = new Set(["paste", "pasteAtCursor", "cut", "duplicate"]);
 
@@ -21,9 +21,9 @@ export function registerWbClipboard(server: McpServer, client: WorkbenchClient):
     },
     async ({ action }) => {
       if (MUTATING_CLIPBOARD_ACTIONS.has(action)) {
-        const modeErr = requireEditMode(client, `${action}`);
+        const modeErr = await ensureMode(client, "edit", `${action}`);
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
       }
       try {
