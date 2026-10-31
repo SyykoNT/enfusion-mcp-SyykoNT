@@ -1,10 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
-import { registerWorkshopInfo } from "../../src/tools/workshop-info.js";
+import { nextVersion, registerWorkshopInfo } from "../../src/tools/workshop-info.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-wsi-"));
 const projects = join(root, "projects");
@@ -115,5 +115,62 @@ describe("workshop_info: preview image", () => {
     expect(await text({ modName: "Alpha", previewImage: join(root, "ok.png") })).toContain("- PNG 1920x1080, 33 bytes: ok");
     expect(await text({ modName: "Alpha", previewImage: join(root, "big.png") })).toContain("2097153 bytes, over the 2 MB limit; info: 1280x720, 1920x1080 recommended");
     expect(await text({ modName: "Alpha", previewImage: join(root, "x.gif") })).toContain("not a PNG or JPG");
+  });
+});
+
+describe("workshop_info: published state", () => {
+  const page = readFileSync(join(__dirname, "..", "fixtures", "workshop-page.json"), "utf-8");
+  const html = (json: string) => `<html><script id="__NEXT_DATA__" type="application/json">${json}</script></html>`;
+  const stubFetch = (impl: (url: string) => Promise<Response>) => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", (url: string) => { urls.push(url); return impl(url); });
+    return urls;
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads the local Workshop cache folder for the GUID", async () => {
+    const d = join(root, "workshop", "Boat_EEEE000000000001");
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "ServerData.json"), '﻿{"id":"EEEE000000000001","revision":{"version":"1.1.0"}}');
+    writeFileSync(join(d, "meta"), '﻿{"meta":{"name":"Boat","summary":"Fast boat","license":"APL","versions":[{"version":"1.1.0"}]}}');
+    expect(await text({ modName: "Boat" })).toContain('- Workshop cache Boat_EEEE000000000001: installed 1.1.0; name "Boat"; summary "Fast boat"; licence APL; versions 1.1.0');
+    expect(await text({ modName: "Alpha" })).toMatch(/- Workshop cache: no folder for AAAA000000000001/);
+  });
+
+  it("is offline unless online is true", async () => {
+    const urls = stubFetch(async () => new Response(html(page)));
+    expect(await text({ modName: "Boat" })).not.toContain("- online");
+    expect(urls).toEqual([]);
+  });
+
+  it("online: page fields, approval, dependency diff against the closure, next version", async () => {
+    const urls = stubFetch(async () => new Response(html(page)));
+    const t = await text({ modName: "Boat", online: true });
+    expect(urls).toEqual(["https://reforger.armaplatform.com/workshop/EEEE000000000001"]);
+    expect(t).toContain('name "Boat Test"; version 1.1.1 (approved); gameVersion 1.8.0.13; size 6254; licence Custom license');
+    expect(t).toContain("- tags: VEHICLES; preview 1920x1080");
+    expect(t).toContain("- published dependencies (2): Ws Dep BBBB000000000001 2.0.0; Extra 9999000000000001 1.0.0");
+    // local closure minus vanilla: BBBB (workshop), CCCC (local), FFFF (missing)
+    expect(t).toContain("- dependencies vs local closure: only published: 9999000000000001; only local: CCCC000000000001, FFFF000000000001");
+    expect(t).toContain("- next version: 1.1.2");
+  });
+
+  it("online: 404, deleted asset, missing page JSON and a timeout each give one line and keep the report", async () => {
+    stubFetch(async () => new Response("", { status: 404 }));
+    expect(await text({ modName: "Boat", online: true })).toContain("not published yet (HTTP 404)");
+    stubFetch(async () => new Response(html(page.replace('"deletedAt": null', '"deletedAt": "2026-01-01T00:00:00Z"'))));
+    expect(await text({ modName: "Boat", online: true })).toContain("deleted from the Workshop (2026-01-01T00:00:00Z)");
+    stubFetch(async () => new Response("<html></html>"));
+    expect(await text({ modName: "Boat", online: true })).toContain("online check failed: no __NEXT_DATA__");
+    stubFetch(async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); });
+    const t = await text({ modName: "Boat", online: true });
+    expect(t).toContain("online check failed: The operation was aborted due to timeout");
+    expect(t).toContain("This tool does not publish.");
+  });
+
+  it("next version keeps each part within 32000", () => {
+    expect(nextVersion("1.1.1")).toBe("1.1.2");
+    expect(nextVersion("1.2.32000")).toMatch(/^none \(patch would pass 32000/);
+    expect(nextVersion("1.0")).toMatch(/^none \(version "1.0"/);
   });
 });

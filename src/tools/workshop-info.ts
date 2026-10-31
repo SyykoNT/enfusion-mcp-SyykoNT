@@ -15,7 +15,9 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
     {
       description:
         "Read Workshop metadata from a mod's .gproj file. Shows mod ID, GUID, title, " +
-        "dependencies, and configurations. Useful for checking publish state before releasing. Read only, never publishes.",
+        "dependencies (named, with the closure), and configurations; lints planned Workshop name, summary, description, " +
+        "change notes and preview image; shows the published state from the local Workshop cache and, with online: true, " +
+        "the public Workshop page. Useful for checking publish state before releasing. Read only, never publishes.",
       inputSchema: {
         projectPath: z
           .string()
@@ -38,9 +40,10 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
           .optional()
           .describe("Paths of UTF-8 text files to lint instead of passing the text"),
         previewImage: z.string().optional().describe("Preview image to check: PNG or JPG, at most 2 MB, 1920x1080 recommended"),
+        online: z.boolean().optional().describe("Also read the public Workshop page for this GUID (one anonymous GET, no login). Default false"),
       },
     },
-    async ({ projectPath, modName, name, summary, description, changeNotes, textFiles, previewImage }) => {
+    async ({ projectPath, modName, name, summary, description, changeNotes, textFiles, previewImage, online }) => {
       try {
         const basePath = projectPath || config.projectPath;
         if (!basePath) {
@@ -118,6 +121,9 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
 
         if (previewImage) lines.push("\n### Preview", previewLine(previewImage));
 
+        lines.push("\n### Published state", cacheLine(config, guid));
+        if (online) lines.push(...(await onlineLines(guid, depInfo.closure)));
+
         lines.push("\nPublishing is done by Don in Workbench > Publish Project (first publish in the GUI). This tool does not publish.");
 
         return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -180,6 +186,90 @@ function previewLine(path: string): string {
     ...(img.width !== 1920 || img.height !== 1080 ? [`info: ${img.width}x${img.height}, 1920x1080 recommended`] : []),
   ];
   return `- ${img.format.toUpperCase()} ${img.width}x${img.height}, ${buf.length} bytes: ${issues.length ? issues.join("; ") : "ok"}`;
+}
+
+const readJson = (path: string) => JSON.parse(readFileSync(path, "utf-8").replace(/^﻿/, ""));
+
+/** What the local Workshop cache (a subscribed copy) says about this GUID. */
+function cacheLine(config: Config, guid: string): string {
+  const root = config.workshopPath;
+  let dir: string | undefined;
+  try {
+    dir = root ? readdirSync(root).find((d) => d.toUpperCase().endsWith(`_${guid.toUpperCase()}`)) : undefined;
+  } catch {
+    // no cache folder: same as not subscribed
+  }
+  if (!root || !dir) return `- Workshop cache: no folder for ${guid} in ${root ?? "(no Workshop path)"} (not subscribed or not published)`;
+  try {
+    const installed = readJson(join(root, dir, "ServerData.json")).revision?.version;
+    const m = readJson(join(root, dir, "meta")).meta ?? {};
+    const versions = (m.versions ?? []).map((v: { version?: string }) => v.version).join(", ");
+    return `- Workshop cache ${dir}: installed ${installed ?? "?"}; name "${m.name}"; summary "${m.summary ?? ""}"; licence ${m.license ?? "?"}; versions ${versions || "?"}`;
+  } catch (e) {
+    return `- Workshop cache ${dir}: unreadable (${(e as Error).message})`;
+  }
+}
+
+// The base game addons are implied, the Workshop page does not list them
+const VANILLA = new Set(["58D0FB3206B6F859", "5614BBCCBB55ED1C"]);
+
+/** Next patch version (each part at most 32000 per BI), or why there is none. */
+export function nextVersion(v: string): string {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(v);
+  if (!m) return `none (version "${v}" is not x.y.z)`;
+  const patch = Number(m[3]) + 1;
+  return patch <= 32000 ? `${m[1]}.${m[2]}.${patch}` : "none (patch would pass 32000; bump the minor version)";
+}
+
+interface PageAsset {
+  name?: string;
+  license?: string | { name?: string };
+  currentVersionNumber?: string;
+  currentVersionSize?: number;
+  gameVersion?: string;
+  versions?: { version?: string; approved?: boolean }[];
+  dependencies?: { asset?: { id?: string; name?: string }; version?: string }[];
+  tags?: (string | { name?: string })[];
+  previews?: { width?: number; height?: number }[];
+  dependencyTree?: { deletedAt?: string | null };
+}
+
+/** The public Workshop page's state for this GUID (anonymous GET; undocumented page JSON, so every failure is one line). */
+async function onlineLines(guid: string, closure: string[]): Promise<string[]> {
+  const id = guid.toUpperCase();
+  if (!/^[0-9A-F]{16}$/.test(id)) return [`- online check failed: GUID "${guid}" is not 16 hex digits`];
+  const url = `https://reforger.armaplatform.com/workshop/${id}`;
+  let asset: PageAsset | undefined;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (res.status === 404) return [`- online (${url}): not published yet (HTTP 404)`];
+    if (!res.ok) return [`- online check failed: HTTP ${res.status} from ${url}`];
+    const m = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(await res.text());
+    if (!m) return [`- online check failed: no __NEXT_DATA__ on ${url}`];
+    asset = JSON.parse(m[1])?.props?.pageProps?.asset;
+  } catch (e) {
+    return [`- online check failed: ${(e as Error).message}`];
+  }
+  if (!asset) return [`- online check failed: page JSON has no props.pageProps.asset (layout changed?)`];
+  if (asset.dependencyTree?.deletedAt) return [`- online (${url}): deleted from the Workshop (${asset.dependencyTree.deletedAt})`];
+
+  const or = (v: unknown, field: string) => (v === undefined || v === null ? `(no ${field})` : String(v));
+  const cur = asset.currentVersionNumber;
+  const latest = asset.versions?.find((v) => v.version === cur);
+  const lic = typeof asset.license === "object" ? asset.license?.name : asset.license;
+  const deps = asset.dependencies ?? [];
+  const published = new Set(deps.map((d) => (d.asset?.id ?? "").toUpperCase()));
+  const local = new Set(closure.filter((g) => !VANILLA.has(g)));
+  const onlyPublished = [...published].filter((g) => !local.has(g));
+  const onlyLocal = [...local].filter((g) => !published.has(g));
+  const p = asset.previews?.[0];
+  return [
+    `- online (${url}): name "${or(asset.name, "name")}"; version ${or(cur, "currentVersionNumber")} (${latest ? (latest.approved ? "approved" : "not approved") : "approval unknown"}); gameVersion ${or(asset.gameVersion, "gameVersion")}; size ${or(asset.currentVersionSize, "currentVersionSize")}; licence ${or(lic, "license")}`,
+    `- tags: ${(asset.tags ?? []).map((t) => (typeof t === "string" ? t : t.name)).join(", ") || "none"}; preview ${p ? `${p.width}x${p.height}` : "none"}`,
+    `- published dependencies (${deps.length}): ${deps.map((d) => `${d.asset?.name ?? "?"} ${d.asset?.id ?? "?"} ${d.version ?? ""}`.trim()).join("; ") || "none"}`,
+    `- dependencies vs local closure: ${onlyPublished.length || onlyLocal.length ? `only published: ${onlyPublished.join(", ") || "none"}; only local: ${onlyLocal.join(", ") || "none"}` : "same"}`,
+    `- next version: ${cur ? nextVersion(cur) : "unknown"}`,
+  ];
 }
 
 const SOURCE: Record<LayerKind, string> = { loose: "local", workshop: "workshop", vanilla: "game" };

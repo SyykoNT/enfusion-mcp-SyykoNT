@@ -1,0 +1,24 @@
+{
+  "props": {
+    "pageProps": {
+      "asset": {
+        "name": "Boat Test",
+        "license": "Custom license",
+        "currentVersionNumber": "1.1.1",
+        "currentVersionSize": 6254,
+        "gameVersion": "1.8.0.13",
+        "versions": [
+          { "version": "1.1.1", "approved": true, "gameVersion": "1.8.0.13" },
+          { "version": "1.1.0", "approved": true, "gameVersion": "1.8.0.13" }
+        ],
+        "dependencies": [
+          { "asset": { "id": "BBBB000000000001", "name": "Ws Dep" }, "version": "2.0.0" },
+          { "asset": { "id": "9999000000000001", "name": "Extra" }, "version": "1.0.0" }
+        ],
+        "tags": [{ "name": "VEHICLES" }],
+        "previews": [{ "width": 1920, "height": 1080 }],
+        "dependencyTree": { "deletedAt": null }
+      }
+    }
+  }
+}
