@@ -109,6 +109,7 @@ export function forbiddenRoot(config: Config, path: string): string | null {
     return path;
   }
   const wbAddons = join(myGamesDir(), "ArmaReforgerWorkbench", "addons");
+  const denied = (process.env.ENFUSION_FORBIDDEN_DIRS ?? "").split(",").filter((d) => d.trim());
   for (const root of forbiddenRoots(config)) {
     let real: string;
     try {
@@ -117,8 +118,9 @@ export function forbiddenRoot(config: Config, path: string): string | null {
       continue;
     }
     if (!isContained(real, target)) continue;
-    // Workbench's addons folder is also its default project folder: as the project root, only its Workshop downloads stay forbidden.
-    if (root === wbAddons && isProjectRoot(config, real)) {
+    // Workbench's addons folder is also its default project folder: as the project root, only its Workshop downloads
+    // stay forbidden. An ENFUSION_FORBIDDEN_DIRS entry for the same folder always wins.
+    if (root === wbAddons && isRealPath(config.projectPath, real) && !denied.some((d) => isRealPath(d, real))) {
       const top = join(real, relative(real, target).split(sep)[0]);
       if (top !== real && existsSync(join(top, "ServerData.json"))) return top;
       continue;
@@ -128,9 +130,9 @@ export function forbiddenRoot(config: Config, path: string): string | null {
   return null;
 }
 
-function isProjectRoot(config: Config, real: string): boolean {
+function isRealPath(p: string | undefined, real: string): boolean {
   try {
-    return !!config.projectPath && realPathOf(config.projectPath) === real;
+    return !!p && realPathOf(p.trim()) === real;
   } catch {
     return false;
   }

@@ -34,6 +34,19 @@ describe("default project path (Workbench addons folder)", () => {
     expect(err(resolveWriteAddon(cfg(wbAddons), { modName: "Cached_3333333333333333" }))).toMatch(/^Refused: .* is inside .*cached_3333333333333333/i);
   });
 
+  it("stays forbidden when ENFUSION_FORBIDDEN_DIRS lists it, in any spelling", () => {
+    const saved = process.env.ENFUSION_FORBIDDEN_DIRS;
+    try {
+      for (const d of [wbAddons, ` ${wbAddons.toUpperCase()}`]) {
+        process.env.ENFUSION_FORBIDDEN_DIRS = d;
+        if (process.platform === "win32" || d === wbAddons) expect(forbiddenRoot(cfg(wbAddons), join(wbAddons, "NewMod"))).not.toBeNull();
+      }
+    } finally {
+      if (saved === undefined) delete process.env.ENFUSION_FORBIDDEN_DIRS;
+      else process.env.ENFUSION_FORBIDDEN_DIRS = saved;
+    }
+  });
+
   it("stays forbidden when the project root is elsewhere", () => {
     expect(forbiddenRoot(cfg(join(root, "projects")), join(wbAddons, "MyMod"))).toBe(wbAddons);
   });
