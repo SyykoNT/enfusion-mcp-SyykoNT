@@ -63,7 +63,7 @@ function unknownGuids(text: string): string[] {
   return [...new Set(text.match(/\{[0-9A-Fa-f]{16}\}/g) ?? [])].filter((g) => !VERIFIED_GUIDS.has(g));
 }
 
-const PROMPTS = [
+const PROMPTS: { name: string; arguments: Record<string, string> }[] = [
   { name: "create-mod", arguments: { description: "test" } },
   { name: "modify-mod", arguments: { projectPath: "C:/x", task: "test" } },
   { name: "server-mod", arguments: { goal: "test" } },
