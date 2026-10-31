@@ -26,4 +26,17 @@ describe("server text", () => {
     expect(text.length).toBeGreaterThan(0);
     expect(text.length).toBeLessThan(4096);
   });
+
+  it("prompts carry no autonomy directives or close-Workbench advice", async () => {
+    for (const p of PROMPTS) {
+      const text = JSON.stringify(await client.getPrompt(p));
+      expect(text, p.name).not.toMatch(/fully autonomous|you are autonomous|MUST NEVER contain|close it first with|wb_close\*\* first/i);
+    }
+  });
 });
+
+const PROMPTS = [
+  { name: "create-mod", arguments: { description: "test" } },
+  { name: "modify-mod", arguments: { projectPath: "C:/x", task: "test" } },
+  { name: "server-mod", arguments: { goal: "test" } },
+];

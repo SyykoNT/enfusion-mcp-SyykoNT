@@ -27,9 +27,9 @@ export function registerModifyModPrompt(server: McpServer): void {
 
 I want to: ${task}
 
-YOU ARE FULLY AUTONOMOUS. You have all the tools to modify the mod AND set it up in Workbench. The user should not need to do anything manually. Do not tell them to "open Workbench", "build with Ctrl+F7", or list any "next steps". You do everything.
+Work step by step. Ask the user when information is missing or before anything that affects shared resources (closing Workbench, starting servers, downloads, deleting files). End with what was done, what was not verified, and any step the user must do in the GUI.
 
-Follow this workflow — every step is mandatory:
+Follow this workflow:
 
 1. **Read the plan** — Use **project** (action='read') to check for a \`MODPLAN.md\` file in the project root.
    - If it exists: this is a phased project. Read the plan carefully. It contains the full mod vision, what's been completed, what's pending, architecture notes, class prefixes, and file names. Use this as your primary context. If the user's task matches the next pending phase, execute that phase. If it's a different task, still respect the existing architecture.
@@ -40,7 +40,7 @@ Follow this workflow — every step is mandatory:
    - Read existing scripts, prefabs, configs, and layouts
    - Identify the class prefix convention in use
 
-3. **Research the API** — **NEVER try to browse the game install directory directly or access the Bohemia Interactive Wiki via the web.** Use **asset_search** to find assets by name, **game_browse**/**game_read** to browse and read game files (reads .pak archives transparently), and **api_search** for class/method lookups. Use **component_search** to find components to attach to entities — filter by category (character, vehicle, weapon, damage, inventory, ai, ui) or by event handlers they implement. Wiki content is pre-downloaded — always use **wiki_search** instead of trying to fetch wiki pages from the web. When you need the full page (especially code examples), use **wiki_read** with the page title.
+3. **Research the API**: use the MCP tools first (they read .pak files and an offline wiki snapshot). If they disagree with the local Workbench API docs, the docs win. **asset_search** finds assets by name, **game_browse**/**game_read** list and read game files, **api_search** looks up classes and methods, **component_search** finds components by category or event handler, **wiki_search**/**wiki_read** search and read the wiki snapshot.
 
    Use **api_search** to find relevant classes and methods. **CRITICAL: NEVER guess or assume Enfusion API method names.** The API is non-standard — methods that seem obvious often don't exist (e.g., \`HitZone.SetHealth()\`, \`IEntity.GetVelocity()\`). You MUST search every class you plan to call methods on and verify the methods exist in the search results — inherited methods from parent classes are included automatically, so one lookup is usually enough. Check the **Related Classes** section for sibling classes in the same API group. For enums/constants, use \`api_search(type: "enum")\` which detects enum-like constant classes. If a method isn't listed, it does not exist — find an alternative.
 
@@ -56,7 +56,7 @@ Follow this workflow — every step is mandatory:
 6. **Validate** — Use **mod** (action='validate') to check for issues.
 
 7. **Compile** (MANDATORY): **mod** (action='compile'): headless Workbench, errors reported as \`file:line\`.
-   Fix and re-run until OK. Close an open Workbench with **wb_close** first.
+   Fix and re-run until OK. mod compile refuses while a Workbench GUI is open unless force is set (two instances on one addon can crash the GUI one). Ask the user to close that Workbench, or wait.
 
 8. **Build** with **mod** (action='build'), then test: **game** 'launch' (addons [name]) or, for server mods,
    **server** 'start' (addons [name]) + **game** 'launch' connect 127.0.0.1; read errors with 'logs' (errorsOnly).
@@ -80,21 +80,9 @@ Enfusion rules:
 - All scripts go in Scripts/Game/ (other folders are silently ignored)
 - modded classes affect ALL instances globally
 - Always call super.MethodName() in overrides unless intentionally replacing
-- VISIBLE ENTITIES NEED A MESH: Any entity placed in the world MUST have a MeshObject component with its \`Object\` property set to a base game \`.xob\` model path. Without this, the entity is invisible. You don't need custom models — just pick any existing base game model that roughly fits (e.g., a medical box for a healing station, a radio for a terminal). After creating a prefab, always set the MeshObject Object property to a real path like \`{5F4C4181F065B447}Assets/Props/Military/Barrels/BarrelGreen_01.xob\`.
+- VISIBLE ENTITIES NEED A MESH: Any entity placed in the world MUST have a MeshObject component with its \`Object\` property set to a base game \`.xob\` model path. Without this, the entity is invisible. You don't need custom models: find a model with asset_search (type 'model'), copy its {GUID}path from the result, and set it as the MeshObject Object property after creating the prefab.
 
-YOUR FINAL SUMMARY MUST ONLY contain:
-- What files were changed/added and what each change does
-- How the mod works now
-- Any tuning values the user can adjust
-- For phased projects: what phase was completed and what the next phase covers
-
-YOUR FINAL SUMMARY MUST NEVER contain:
-- "Next steps" or "To get started" or any manual instructions
-- "Open in Workbench" / "Build with Ctrl+F7" / "Load the project"
-- Any instruction telling the user to do something you already did or should have done
-- References to manual Workbench operations
-
-If Workbench integration failed (e.g., Workbench not installed), say so explicitly — do not silently fall back to giving manual instructions.`,
+The final summary lists the files changed or added and what each change does, how the mod works now, tuning values, what was not verified, and any step the user must do in the GUI. For phased projects, say which phase was completed and what the next one covers.`,
           },
         },
       ],
