@@ -1,6 +1,9 @@
 import { readdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve, join, sep } from "node:path";
+import { resolve, join, sep, basename } from "node:path";
+import type { Config } from "../config.js";
+import { readGproj } from "../workbench/cli.js";
+import { forbiddenRoot, realPathOf } from "./safe-path.js";
 
 /**
  * The "My Games" folder Arma Reforger and Workbench write to. Windows may redirect Documents to
@@ -67,6 +70,55 @@ export function resolveAddonDir(projectPath: string, modName?: string): string |
     // ignore
   }
   return null;
+}
+
+/**
+ * The addon a file-writing tool may write into. Needs an explicit projectPath (wins) or modName
+ * (under the project path or an ENFUSION_ADDONS_DIR entry): writes never fall back to
+ * ENFUSION_DEFAULT_MOD or the first addon found. Refuses forbidden roots (installs, Workshop
+ * caches), the projects folder itself, folders without a .gproj and ENFUSION_PROTECTED_ADDONS.
+ */
+export function resolveWriteAddon(
+  config: Config,
+  { projectPath, modName }: { projectPath?: string; modName?: string }
+): { dir: string; gproj: string } | { error: string } {
+  let dir: string;
+  if (projectPath) {
+    dir = resolve(projectPath);
+  } else if (modName) {
+    const bases = [config.projectPath, ...(config.addonsDir ?? "").split(",")].map((d) => d.trim()).filter(Boolean);
+    const found = bases.map((b) => resolveAddonDir(b, modName)).find((d) => d);
+    if (!found) {
+      return {
+        error: `modName "${modName}" not found under ${config.projectPath} or ENFUSION_ADDONS_DIR. For an addon elsewhere (for example a test addon folder) pass projectPath.`,
+      };
+    }
+    dir = found;
+  } else {
+    return {
+      error: `No target addon. Pass modName (a folder under ${config.projectPath}) or projectPath (an addon root). Writes never default to ENFUSION_DEFAULT_MOD.`,
+    };
+  }
+
+  const root = forbiddenRoot(config, dir);
+  if (root) {
+    return { error: `Refused: ${dir} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS). Copy what you need into your own addon.` };
+  }
+  if (realPathOf(dir) === realPathOf(config.projectPath)) {
+    return { error: `Refused: ${dir} is the projects folder, not an addon. Pass modName or projectPath of one addon.` };
+  }
+  const gproj = findGproj(dir);
+  if (!gproj) return { error: `Not an addon: ${dir} has no .gproj.` };
+
+  const { id, guid } = readGproj(gproj);
+  const name = basename(dir);
+  const isProtected = (config.protectedAddons ?? []).some((p) =>
+    [guid, id, name].some((v) => v && v.toLowerCase() === p.toLowerCase())
+  );
+  if (isProtected) {
+    return { error: `Refused: ${name} (GUID ${guid || "unknown"}) is protected (ENFUSION_PROTECTED_ADDONS). Use a test addon.` };
+  }
+  return { dir, gproj };
 }
 
 const WORKBENCH_EXE_NAME = "ArmaReforgerWorkbenchSteamDiag.exe";

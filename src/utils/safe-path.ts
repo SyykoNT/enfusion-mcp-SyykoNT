@@ -1,4 +1,7 @@
-import { resolve, sep } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import type { Config } from "../config.js";
+import { myGamesDir } from "./game-paths.js";
 
 /**
  * Validate that a user-supplied name is safe for use as a filename.
@@ -55,8 +58,65 @@ export function validateEnforceIdentifier(name: string): void {
  * Check that resolved is equal to or contained within normalizedBase.
  * Uses trailing separator to prevent prefix collisions (e.g., C:\Proj vs C:\ProjEvil).
  */
-function isContained(normalizedBase: string, resolved: string): boolean {
+export function isContained(normalizedBase: string, resolved: string): boolean {
   return resolved === normalizedBase || resolved.startsWith(normalizedBase + sep);
+}
+
+/**
+ * Real path of p after junctions and symlinks, resolved through its deepest existing ancestor
+ * (p itself may not exist yet). Lower-cased on Windows so comparisons ignore case.
+ * Throws when an existing part of the path cannot be read.
+ */
+export function realPathOf(p: string): string {
+  const rest: string[] = [];
+  let cur = resolve(p);
+  for (;;) {
+    try {
+      const real = join(realpathSync.native(cur), ...rest);
+      return process.platform === "win32" ? real.toLowerCase() : real;
+    } catch (e) {
+      const parent = dirname(cur);
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT" || parent === cur) throw e;
+      rest.unshift(basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/** Folders no tool writes into: game and Tools installs, both Workshop caches, ENFUSION_FORBIDDEN_DIRS. */
+export function forbiddenRoots(config: Config): string[] {
+  const roots = [
+    config.gamePath,
+    config.workbenchPath,
+    join(myGamesDir(), "ArmaReforger", "addons"),
+    join(myGamesDir(), "ArmaReforgerWorkbench", "addons"),
+    ...(process.env.ENFUSION_WORKBENCH_PROFILE ? [join(process.env.ENFUSION_WORKBENCH_PROFILE, "addons")] : []),
+    ...(process.env.ENFUSION_FORBIDDEN_DIRS ?? "").split(","),
+  ];
+  return roots.map((r) => r?.trim()).filter((r): r is string => !!r);
+}
+
+/**
+ * The forbidden root that holds path, compared by real path, or null when path is allowed.
+ * A path whose real path cannot be read is refused (returned as its own root).
+ */
+export function forbiddenRoot(config: Config, path: string): string | null {
+  let target: string;
+  try {
+    target = realPathOf(path);
+  } catch {
+    return path;
+  }
+  for (const root of forbiddenRoots(config)) {
+    let real: string;
+    try {
+      real = realPathOf(root);
+    } catch {
+      continue;
+    }
+    if (isContained(real, target)) return root;
+  }
+  return null;
 }
 
 /**
