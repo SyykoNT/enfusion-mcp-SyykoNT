@@ -24,7 +24,8 @@ const addon = (base: string, name: string, guid: string, opts: { git?: boolean; 
   }
   return dir;
 };
-const config = { projectPath: projects, protectedAddons: ["5EB3564A02CE294F", "69EA43E490A50DBE"] } as Config;
+// gamePath inside the projects folder, so the forbidden-root refusal is reachable with a temp repo.
+const config = { projectPath: projects, gamePath: join(projects, "GameInstall"), protectedAddons: ["5EB3564A02CE294F", "69EA43E490A50DBE"] } as Config;
 
 type Handler = (args: Record<string, unknown>) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 let call: Handler = async () => ({ content: [] });
@@ -67,6 +68,16 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
       }
     }
     expect(existsSync(hook(outside, "pre-commit"))).toBe(false);
+  });
+
+  it("refuses an addon inside a forbidden root (install or Workshop cache) and writes nothing", async () => {
+    const d = addon(projects, "GameInstall", "BBBBBBBBBBBBBBBB");
+    for (const action of ["check", "install"]) {
+      const r = await call({ action, addonName: "GameInstall" });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/is inside .*GameInstall/);
+    }
+    expect(existsSync(hook(d, "pre-commit"))).toBe(false);
   });
 
   it("refuses an addon that is not its own git repo", async () => {

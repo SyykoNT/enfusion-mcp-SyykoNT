@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import type { Config } from "../config.js";
 import { handlerFiles, resolveGproj } from "../workbench/cli.js";
 import { isProtectedAddon } from "../utils/game-paths.js";
-import { isContained, realPathOf } from "../utils/safe-path.js";
+import { forbiddenRoot, isContained, realPathOf } from "../utils/safe-path.js";
 import { COMMIT_MSG, DON_COMMIT_MSG, GUARDED_PATH, HOOK_VERSION, PRE_COMMIT, ourVersion } from "../release/hooks.js";
 import { gitOrNull, hooksDir, originUrl, stagedPaths, stagedStartsWithBom } from "../release/git.js";
 
@@ -30,6 +30,8 @@ export function resolveGuardRepo(config: Config, addonName?: string, gprojPath?:
   if (!roots.some((r) => real !== realPathOf(r) && isContained(realPathOf(r), real))) {
     return { error: `Refused: ${dir} is outside the projects folder (${roots.join(", ")}).` };
   }
+  const fr = forbiddenRoot(config, dir);
+  if (fr) return { error: `Refused: ${dir} is inside ${fr} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS).` };
   const top = gitOrNull(dir, ["rev-parse", "--show-toplevel"]);
   if (!top || realPathOf(top) !== real) return { error: `${dir} is not a git repository; nothing to guard.` };
   return { dir, gproj };
