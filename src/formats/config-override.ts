@@ -177,6 +177,13 @@ export function overrideMeta(guid: string, path: string): string {
   return `MetaFileClass {\n Name "{${guid}}${path}"\n}\n`;
 }
 
+/** .meta for a new prefab, in the full form Workbench writes for .et files (one block per platform). */
+export function entityTemplateMeta(guid: string, path: string): string {
+  const platforms = ["PC", "XBOX_ONE", "XBOX_SERIES", "PS4", "PS5", "HEADLESS", "Xbox"];
+  const blocks = platforms.map((p, i) => `  EntityTemplateResourceClass ${p}${i ? " : PC" : ""} {\n  }\n`).join("");
+  return `MetaFileClass {\n Name "{${guid}}${path}"\n Configurations {\n${blocks} }\n}\n`;
+}
+
 /** Numeric helper: scale an int/float string, keeping ints as ints. */
 export function scaleNumber(current: string | undefined, factor: number, fallback?: number): string | null {
   const n = current !== undefined ? Number(current) : fallback;
