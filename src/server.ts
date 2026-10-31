@@ -10,6 +10,7 @@ import { registerMod } from "./tools/mod.js";
 import { registerConfigCreate } from "./tools/config-create.js";
 import { registerServerConfig } from "./tools/server-config.js";
 import { registerMissionValidate } from "./tools/mission-validate.js";
+import { registerGearscriptInspect } from "./tools/gearscript-inspect.js";
 import { registerLayoutCreate } from "./tools/layout-create.js";
 import { registerLayoutRecipe } from "./tools/layout-recipe.js";
 import { registerMenuCreate } from "./tools/menu-create.js";
@@ -80,6 +81,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerConfigCreate(server, config);
   registerServerConfig(server, config);
   registerMissionValidate(server, config);
+  registerGearscriptInspect(server, config);
   registerLayoutCreate(server, config);
   registerLayoutRecipe(server, config);
   registerMenuCreate(server, config);
