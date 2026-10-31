@@ -165,9 +165,14 @@ describe("generatePrefab", () => {
   });
 
   it("keeps a property-less recipe component the parent lacks, with a new ID", () => {
-    const comps = compsOf(generatePrefab({ name: "T", prefabType: "group", parentComponents: [] }));
-    expect(comps.map((c) => c.type)).toEqual(["SCR_CallsignGroupComponent"]);
-    expect(comps[0].id).toMatch(/^\{[0-9A-F]{16}\}$/);
+    const comps = compsOf(generatePrefab({ name: "T", prefabType: "prop", variant: "interactive", parentComponents: [] }));
+    const storage = comps.find((c) => c.type === "SCR_UniversalInventoryStorageComponent");
+    expect(storage?.id).toMatch(/^\{[0-9A-F]{16}\}$/);
+  });
+
+  it("a group without ancestry gets no second SCR_CallsignGroupComponent", () => {
+    // PlayableGroup already has one; an empty override block would add a copy with a new ID.
+    expect(compsOf(generatePrefab({ name: "T", prefabType: "group" }))).toEqual([]);
   });
 
   it("merges a user component into the recipe component of the same type", () => {
