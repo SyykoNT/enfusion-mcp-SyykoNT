@@ -155,6 +155,14 @@ describe("scan", () => {
     expect(scan({ file: f, from: r.cursor }).linesRead).toBe(0);
   });
 
+  it("scans a log of more than 200,000 lines and more than one 8 MB read", () => {
+    const line = "10:00:00.000 DEFAULT   (W): x\n"; // 29 bytes
+    const f = put("big.log", line.repeat(400_000)); // 11.6 MB
+    const r = scan({ file: f });
+    expect(r.linesRead).toBe(400_000);
+    expect(r.counts.W).toBe(400_000);
+  });
+
   it("caps rows and fails noScriptErrorsIn on a compile error in the addon", () => {
     put("A/Scripts/Game/Foo.c", "");
     const f = put("c.log", `10:00:00.000 SCRIPT    (E): @"Scripts/Game/Foo.c,3": Undefined variable 'x'\n` + "SCRIPT : [T] V a=1\n".repeat(5));

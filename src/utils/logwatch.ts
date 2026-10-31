@@ -58,13 +58,6 @@ export class LogCursor {
       closeSync(fd);
     }
   }
-
-  /** Everything up to the current end of the file. */
-  readAll(): string[] {
-    const out: string[] = [];
-    for (let lines = this.read(); lines.length; lines = this.read()) out.push(...lines);
-    return out;
-  }
 }
 
 /** Line clock: untimed lines (VM exception continuation lines) take the previous line's time. */
@@ -243,21 +236,25 @@ export function scan(o: ScanOptions): ScanResult {
     if (rows.length < maxRows) rows.push(row);
   };
 
-  for (const line of cur.readAll()) {
-    lineNo++;
-    const t = time(line);
-    const hit = (r: RegExp) => ({ name: r.source, lineNo, time: t, line });
-    const sev = /\((E|W|F)\)/.exec(line);
-    if (sev) counts[sev[1] as "E" | "W" | "F"]++;
-    vme.line(line);
-    if (/SCRIPT\s+\(E\): @"/.test(line)) compile.push(line);
-    for (const x of [...must, ...mustNot]) if (!x.hit && x.r.test(line)) x.hit = hit(x.r);
-    for (const r of o.extract ?? []) {
-      const m = r.exec(line);
-      if (m) addRow({ ...(m.groups ?? {}) });
+  const checks = [...must, ...mustNot];
+  // Chunk by chunk: a whole log in one array costs memory and a spread of 8 MB of lines overflows the stack.
+  for (let lines = cur.read(); lines.length; lines = cur.read()) {
+    for (const line of lines) {
+      lineNo++;
+      const t = time(line);
+      const hit = (r: RegExp) => ({ name: r.source, lineNo, time: t, line });
+      const sev = /\((E|W|F)\)/.exec(line);
+      if (sev) counts[sev[1] as "E" | "W" | "F"]++;
+      vme.line(line);
+      if (/SCRIPT\s+\(E\): @"/.test(line)) compile.push(line);
+      for (const x of checks) if (!x.hit && x.r.test(line)) x.hit = hit(x.r);
+      for (const r of o.extract ?? []) {
+        const m = r.exec(line);
+        if (m) addRow({ ...(m.groups ?? {}) });
+      }
+      const h = o.harnessTag ? parseHarnessLine(o.harnessTag, line) : null;
+      if (h) addRow(h);
     }
-    const h = o.harnessTag ? parseHarnessLine(o.harnessTag, line) : null;
-    if (h) addRow(h);
   }
 
   const groups = vme.summary().groups;
