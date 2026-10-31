@@ -66,7 +66,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
       inputSchema: {
         prefab: z
           .string()
-          .describe("Prefab resource path (e.g., '{GUID}Prefabs/Characters/SoldierUS.et'): a {GUID}path from asset_search or game_read; never typed from memory."),
+          .describe("Prefab resource path: a {GUID}path such as '{GUID}Prefabs/<path>.et' from asset_search or game_read; never typed from memory."),
         position: z
           .string()
           .optional()
