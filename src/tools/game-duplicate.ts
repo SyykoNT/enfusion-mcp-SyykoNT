@@ -336,9 +336,8 @@ export function registerGameDuplicate(
         }
       }
 
-      const relDest = destPath.replace(/\\/g, "/").replace(/^\/+/, "");
       const resourceGuid = generateGuid();
-      writeFileSync(absDestPath + ".meta", `MetaFileClass {\n Name "{${resourceGuid}}${relDest}"\n}\n`, "utf-8");
+      writeFileSync(absDestPath + ".meta", `MetaFileClass {\n Name "{${resourceGuid}}${rel}"\n}\n`, "utf-8");
       return {
         content: [
           {
@@ -347,7 +346,7 @@ export function registerGameDuplicate(
               `**Copied with a new GUID**`,
               `- Source: ${sourcePath} ${sourceLabel}`,
               `- Saved to: ${absDestPath} (+ .meta)`,
-              `- Reference it as: \`{${resourceGuid}}${relDest}\``,
+              `- Reference it as: \`{${resourceGuid}}${rel}\``,
             ].join("\n") + ancestryNote,
           },
         ],

@@ -35,4 +35,11 @@ describe("game_duplicate", () => {
     expect(r.content[0].text).toMatch(/base-game path[\s\S]*config_override/);
     expect(existsSync(join(addon, "configs"))).toBe(false);
   });
+
+  it("names the .meta from the resolved path, not the raw destPath", async () => {
+    const r = await dup({ sourcePath: "Configs/Base.conf", destPath: "./Configs\\Mine.conf", projectPath: addon, register: false });
+    expect(r.isError).toBeUndefined();
+    expect(readFileSync(join(addon, "Configs", "Mine.conf.meta"), "utf-8")).toMatch(/Name "\{[0-9A-F]{16}\}Configs\/Mine\.conf"/);
+    expect(r.content[0].text).toMatch(/Reference it as: `\{[0-9A-F]{16}\}Configs\/Mine\.conf`/);
+  });
 });
