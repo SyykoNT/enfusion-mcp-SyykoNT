@@ -3,26 +3,21 @@ import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
-// Menu paths that are known-safe for read-only or non-destructive use
-const BLOCKED_MENU_PREFIXES = [
-  "File,Close",
-  "File,New",
-  "File,Exit",
-  "File,Quit",
-];
+// Destructive menu paths, compared lower case with each segment trimmed
+const BLOCKED_MENU_PREFIXES = ["file,close", "file,new", "file,exit", "file,quit"];
 
 export function registerWbExecuteAction(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
     "wb_execute_action",
     {
       description:
-        "Execute any Workbench menu action by its menu path. Use comma-separated path segments to identify the action (e.g., 'Game,Exit game' in WorldEditor, or 'File,Save'). " +
-        "Some destructive actions (File,Close; File,New; File,Exit) are blocked for safety.",
+        "Execute any Workbench menu action by its menu path. Use comma-separated path segments to identify the action (e.g., 'Game,Exit game' in WorldEditor). " +
+        "Some destructive actions (File,Close; File,New; File,Exit) are blocked for safety, and so is File,Save in the World Editor (use wb_save).",
       inputSchema: {
         menuPath: z
           .string()
           .describe(
-            "Comma-separated menu path (e.g., 'Game,Exit game', 'File,Save', 'Edit,Undo')"
+            "Comma-separated menu path (e.g., 'Game,Exit game', 'Edit,Undo')"
           ),
         module: z
           .enum(["WorldEditor", "ScriptEditor", "ResourceManager", "AnimEditor", "ParticleEditor", "BehaviorEditor", "AudioEditor", "LocalizationEditor"])
@@ -32,17 +27,16 @@ export function registerWbExecuteAction(server: McpServer, client: WorkbenchClie
     },
     async ({ menuPath, module }) => {
       try {
-        // Block known-destructive menu paths
-        const normalizedPath = menuPath.trim();
-        for (const blocked of BLOCKED_MENU_PREFIXES) {
-          if (normalizedPath.startsWith(blocked)) {
-            return {
-              content: [{
-                type: "text" as const,
-                text: `**Blocked:** "${menuPath}" is a destructive action and cannot be executed via this tool. Perform it manually in Workbench.${formatConnectionStatus(client)}`,
-              }],
-            };
-          }
+        // The handler trims each segment (EMCP_WB_ExecuteAction.c), so compare the same way.
+        const normalizedPath = menuPath.split(",").map((s) => s.trim()).join(",").toLowerCase();
+        const isWorldSave = module === "WorldEditor" && normalizedPath.startsWith("file,save");
+        if (isWorldSave || BLOCKED_MENU_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+          const hint = isWorldSave
+            ? " Use wb_save: it refuses unnamed worlds and prefab edit mode, which open a blocking \"Save world as\" dialog."
+            : " Perform it manually in Workbench.";
+          return {
+            content: [{ type: "text" as const, text: `**Blocked:** "${menuPath}" cannot be executed via this tool.${hint}${formatConnectionStatus(client)}` }],
+          };
         }
 
         // Mutating actions require edit mode
