@@ -72,7 +72,7 @@ describe("mode gate on wb_* tools", () => {
 
   it("wb_save with Workbench down is an error and starts nothing", async () => {
     const client = new WorkbenchClient("127.0.0.1", 1, {} as Config);
-    const launch = vi.spyOn(client, "ensureRunning");
+    const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
     const result = await editorTools(client).wb_save({});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("not running");

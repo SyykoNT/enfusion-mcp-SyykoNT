@@ -116,7 +116,7 @@ describe("ensureMode", () => {
 
   it("refuses when Workbench is not running and never launches it", async () => {
     const client = new WorkbenchClient("127.0.0.1", 1, {} as Config);
-    const launch = vi.spyOn(client, "ensureRunning");
+    const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
     const result = await ensureMode(client, "edit", "save");
     expect(result).toContain("not running on 127.0.0.1:1");
     expect(launch).not.toHaveBeenCalled();

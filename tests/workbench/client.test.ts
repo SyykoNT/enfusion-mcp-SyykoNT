@@ -389,7 +389,7 @@ describe("probeMode", () => {
 
   it("reports not_running on a refused port and never launches", async () => {
     const client = new WorkbenchClient("127.0.0.1", 1, {} as Config);
-    const launch = vi.spyOn(client, "ensureRunning");
+    const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
     expect(await client.probeMode()).toBe("not_running");
     expect(launch).not.toHaveBeenCalled();
     expect(client.state.connected).toBe(false);
