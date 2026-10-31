@@ -12,10 +12,12 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { Config } from "../config.js";
 import { findWorkbenchExe, myGamesDir } from "../utils/game-paths.js";
 import { newestDir } from "../utils/process.js";
+import { forbiddenRoot, isContained, realPathOf } from "../utils/safe-path.js";
+import { parsePakIndex, type PakDirEntry } from "../pak/reader.js";
 
 export interface ScriptIssue {
   file: string;
@@ -138,6 +140,73 @@ export function readGproj(gprojPath: string): { id: string; guid: string; title:
   const t = readFileSync(gprojPath, "utf-8");
   const get = (k: string) => t.match(new RegExp(`^\\s*${k}\\s+"?([^"\\r\\n]+?)"?\\s*$`, "m"))?.[1] ?? "";
   return { id: get("ID"), guid: get("GUID"), title: get("TITLE") };
+}
+
+/** The MCP's Workbench handler files inside an addon (relative paths); they must not ship in a pack. */
+export function handlerFiles(addonDir: string): string[] {
+  const rel = "Scripts/WorkbenchGame/EnfusionMCP";
+  const dir = join(addonDir, rel);
+  const files = existsSync(dir)
+    ? readdirSync(dir, { recursive: true, withFileTypes: true })
+        .filter((e) => e.isFile())
+        .map((e) => relative(addonDir, join(e.parentPath, e.name)).replace(/\\/g, "/"))
+    : [];
+  if (existsSync(`${dir}.meta`)) files.push(`${rel}.meta`);
+  return files;
+}
+
+/**
+ * Why outDir is not a safe pack folder, or null. The pack folder is what a Workshop update
+ * uploads and what -addonsDir loads, so it must not be an install or Workshop cache, the addon
+ * itself, inside an addons dir (a second addon with the same GUID), or hold someone else's files.
+ */
+export function checkPackOutput(config: Config, addonDir: string, guid: string, outDir: string, cleanOutput = false): string | null {
+  const root = forbiddenRoot(config, outDir);
+  if (root) return `outputPath is inside ${root} (Workshop cache / install). Choose a folder outside it.`;
+  const out = realPathOf(outDir);
+  if (isContained(realPathOf(addonDir), out)) return "outputPath is inside the addon itself; BI: do not pack or publish into the addon folder.";
+  const addonsDirs = [config.projectPath, ...(config.addonsDir ?? "").split(",")].map((d) => d.trim()).filter(Boolean);
+  const inAddons = addonsDirs.find((d) => isContained(realPathOf(d), out));
+  if (inAddons) return `outputPath is inside an addons dir (${inAddons}); Workbench and servers would see a second addon with GUID ${guid}.`;
+  if (!existsSync(outDir)) return null;
+
+  const names = readdirSync(outDir);
+  for (const g of names.filter((n) => n.endsWith(".gproj"))) {
+    const other = readGproj(join(outDir, g));
+    if (other.guid && other.guid.toUpperCase() !== guid.toUpperCase()) return `outputPath holds a pack of another addon (${other.id} ${other.guid}).`;
+  }
+  const stray = names.filter((n) => n !== "data.pak" && n !== "resourceDatabase.rdb" && !n.endsWith(".gproj"));
+  if (stray.length && !cleanOutput) return `outputPath has other files: ${stray.join(", ")}. Pass cleanOutput=true to pack anyway (nothing is deleted).`;
+  return null;
+}
+
+export interface PakSummary {
+  entries: number;
+  bytes: number;
+  byTopFolder: Record<string, number>;
+  largest: [string, number][];
+  handlerEntries: number;
+}
+
+/** What a data.pak holds, from its index only (nothing is decompressed). */
+export function pakSummary(pakPath: string): PakSummary {
+  const s: PakSummary = { entries: 0, bytes: 0, byTopFolder: {}, largest: [], handlerEntries: 0 };
+  const files: [string, number][] = [];
+  const walk = (dir: PakDirEntry, prefix: string) => {
+    for (const e of dir.children.values()) {
+      const path = prefix + e.name;
+      if (e.kind === "dir") { walk(e, `${path}/`); continue; }
+      s.entries++;
+      s.bytes += e.decompressedLen;
+      const top = path.includes("/") ? path.slice(0, path.indexOf("/")) : "(root)";
+      s.byTopFolder[top] = (s.byTopFolder[top] ?? 0) + 1;
+      if (path.includes("EnfusionMCP")) s.handlerEntries++;
+      files.push([path, e.decompressedLen]);
+    }
+  };
+  walk(parsePakIndex(pakPath).root, "");
+  s.largest = files.sort((a, b) => b[1] - a[1]).slice(0, 10);
+  return s;
 }
 
 /** Find an addon's .gproj by addon folder name (under projectPath) or return the given path. */
