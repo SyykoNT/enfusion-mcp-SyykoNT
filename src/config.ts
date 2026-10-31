@@ -43,6 +43,8 @@ export interface Config {
   addonsDir?: string;
   /** Addons no tool may write into, by .gproj GUID, ID or folder name. Set via ENFUSION_PROTECTED_ADDONS (comma-separated). */
   protectedAddons?: string[];
+  /** Workshop download cache the addon stack reads (read only). Set via ENFUSION_WORKSHOP_PATH. */
+  workshopPath?: string;
 }
 
 const DEFAULT_WORKBENCH_PATH =
@@ -59,6 +61,7 @@ const DEFAULTS: Config = {
   serverProfilePath: join(MCP_HOME, "server-profile"),
   clientProfilesRoot: join(MCP_HOME, "client-profiles"),
   packedPath: join(myGamesDir(), "ArmaReforgerWorkbench", "packed"),
+  workshopPath: join(myGamesDir(), "ArmaReforger", "addons"),
   projectPath: join(myGamesDir(), "ArmaReforgerWorkbench", "addons"),
   gamePath: resolve(DEFAULT_WORKBENCH_PATH, "..", "Arma Reforger"),
   dataDir: resolve(
@@ -140,6 +143,7 @@ export function loadConfig(): Config {
   if (process.env.ENFUSION_CLIENT_PROFILES) config.clientProfilesRoot = process.env.ENFUSION_CLIENT_PROFILES;
   if (process.env.ENFUSION_PACKED_PATH) config.packedPath = process.env.ENFUSION_PACKED_PATH;
   if (process.env.ENFUSION_ADDONS_DIR) config.addonsDir = process.env.ENFUSION_ADDONS_DIR;
+  if (process.env.ENFUSION_WORKSHOP_PATH) config.workshopPath = process.env.ENFUSION_WORKSHOP_PATH;
   if (process.env.ENFUSION_PROTECTED_ADDONS) {
     config.protectedAddons = process.env.ENFUSION_PROTECTED_ADDONS.split(",").map((s) => s.trim()).filter(Boolean);
   }
