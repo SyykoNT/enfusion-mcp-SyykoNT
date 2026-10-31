@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { argValue, parseProcJson } from "../../src/utils/process.js";
+import { argValue, parseProcJson, spawnDetached } from "../../src/utils/process.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Hand-made in the shape of the Win32_Process query (ConvertTo-Json -Compress); no real process is queried.
 const ONE = '{"ProcessId":41236,"ParentProcessId":1200,"CommandLine":"\\"C:\\\\S\\\\ArmaReforgerServerDiag.exe\\" -profile \\"C:\\\\Users\\\\me\\\\.enfusion-mcp\\\\server-profile\\" -bindPort 2001","Created":1761890000000}';
@@ -39,5 +41,12 @@ describe("argValue", () => {
   it("is case-insensitive and returns undefined when the flag is absent", () => {
     expect(argValue("x.exe -PROFILE C:\\p", "-profile")).toBe("C:\\p");
     expect(argValue(cmd, "-bindPort")).toBeUndefined();
+  });
+});
+
+describe("spawnDetached", () => {
+  it("throws for an exe that cannot start, without an uncaught error event", async () => {
+    expect(() => spawnDetached(join(tmpdir(), "emcp-no-such.exe"), [], tmpdir())).toThrow(/Failed to start/);
+    await new Promise((r) => setTimeout(r, 50));
   });
 });
