@@ -12,7 +12,8 @@ import { deflateSync } from "node:zlib";
 export function buildTestPak(files: Array<{ path: string; content: string; compress: boolean }>): Buffer {
   // ── Build DATA payload and FILE tree simultaneously ────────────────────
   const dataChunks: Buffer[] = [];
-  let dataOffset = 0;
+  // FILE-chunk offsets are absolute positions in the .pak: 56 is where this layout's DATA payload starts
+  let dataOffset = 56;
 
   interface TreeFile {
     name: string;
@@ -143,4 +144,16 @@ export function buildTestPak(files: Array<{ path: string; content: string; compr
   fileTreeBuf.copy(buf, pos);
 
   return buf;
+}
+
+/** One resourceDatabase.rdb record the way Arma Reforger 1.8 stores it. */
+export function record(path: string, guidHex: string): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(path.length + 1);
+  return Buffer.concat([len, Buffer.from(path + "\0", "latin1"), Buffer.from([6, 0, 0, 0, 0, 0]), Buffer.from(guidHex, "hex").reverse(), Buffer.alloc(8)]);
+}
+
+/** A whole resourceDatabase.rdb from path to GUID pairs. */
+export function buildRdb(entries: Record<string, string>): Buffer {
+  return Buffer.concat([Buffer.from("FORM\0\0\0\0RDBC"), ...Object.entries(entries).map(([path, guid]) => record(path, guid))]);
 }

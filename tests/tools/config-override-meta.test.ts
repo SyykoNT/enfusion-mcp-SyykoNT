@@ -20,8 +20,6 @@ const data = join(root, "game", "addons", "data");
 mkdirSync(data, { recursive: true });
 writeFileSync(join(data, "resourceDatabase.rdb"), Buffer.concat([Buffer.from("FORM\0\0\0\0RDBC"), record(PATH, GUID)]));
 const pak = buildTestPak([{ path: PATH, content: "SCR_XPInfoConfig {\n m_iRewardXP 10\n}\n", compress: false }]);
-// buildTestPak stores payload-relative offsets; the reader wants absolute ones (56 = start of the DATA payload, see vfs.test.ts).
-pak.writeUInt32LE(56, pak.lastIndexOf("XPRewards.conf") + "XPRewards.conf".length);
 writeFileSync(join(data, "data.pak"), pak);
 const config = { gamePath: join(root, "game") } as Config;
 const edits = (v: string) => [{ property: "m_iRewardXP", match: () => true, value: () => v }];
