@@ -88,7 +88,8 @@ export function registerWbWatch(server: McpServer, config: Config): void {
         owned: (pid) => isOwned(pid),
         alive: isAlive,
         start: startWatcher,
-        kill: (pid) => killPids([pid], true),
+        // Tree kill: the watcher's finally never runs under taskkill /F, so its probe PowerShell must go with it.
+        kill: (pid) => killPids([pid], true, true),
         base: { logsRoot: join(workbenchProfileDir(config), "logs"), host: config.workbenchHost, port: config.workbenchPort },
       });
       return { content: [{ type: "text" as const, text: r.text }], ...(r.isError ? { isError: true as const } : {}) };
