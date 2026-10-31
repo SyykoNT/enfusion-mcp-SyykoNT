@@ -45,7 +45,7 @@ class EMCP_WB_EditorControlResponse : JsonApiStruct
 	}
 }
 
-//! The one save guard (EditorControl save, Exit): Save() opens a blocking 'Save world as' dialog for an unnamed world or in prefab edit mode.
+//! The one save guard (EditorControl save, Exit): Save() opens a blocking 'Save world as' dialog for an unnamed world or in prefab edit mode; no save during Play.
 class EMCP_SaveGuard
 {
 	//! Why Save() must not be called now, or "" when it is safe.
@@ -59,6 +59,8 @@ class EMCP_SaveGuard
 			api.GetWorldPath(worldPath);
 		if (worldPath == "")
 			return "No world file: the open world is unnamed, and saving it would open the blocking 'Save world as' dialog.";
+		if (api.IsGameMode())
+			return "Play mode: stop it with wb_stop before saving.";
 		return "";
 	}
 }
@@ -116,9 +118,6 @@ class EMCP_WB_EditorControl : NetApiHandler
 		else if (req.action == "save")
 		{
 			string refusal = EMCP_SaveGuard.Refusal(worldEditor);
-			WorldEditorAPI saveApi = worldEditor.GetApi();
-			if (refusal == "" && saveApi.IsGameMode())
-				refusal = "Play mode: stop it with wb_stop before saving.";
 			if (refusal != "")
 			{
 				resp.status = "error";

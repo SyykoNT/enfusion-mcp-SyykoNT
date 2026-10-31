@@ -79,6 +79,7 @@ describe("wb_save", () => {
     [{ worldPath: "" }, "No world file: the open world is unnamed"],
     [{ prefabEditMode: true }, "Prefab edit mode: wb_save saves worlds. Use wb_prefabs save"],
     [{ absPath: "" }, "has no file on disk"],
+    [{ gameMode: true }, "Play mode: stop it with wb_stop before saving"],
   ])("refuses %j without a save call", async (info, text) => {
     const t = setup(info, () => ({ status: "ok", saved: true }));
     const r = await t.save();
