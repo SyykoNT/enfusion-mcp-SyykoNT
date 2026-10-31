@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config.js";
 import { checkPackOutput, handlerFiles, pakSummary } from "../../src/workbench/cli.js";
-import { parseGprojArg } from "../../src/utils/process.js";
+import { argValue } from "../../src/utils/process.js";
 import { buildTestPak } from "../pak/test-pak.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-po-"));
@@ -60,13 +60,14 @@ describe("handlerFiles", () => {
   });
 });
 
-describe("parseGprojArg", () => {
+describe("-gproj from a command line (argValue)", () => {
+  const gproj = (cmd: string) => argValue(cmd, "-gproj") ?? "";
   it("reads quoted and bare -gproj values", () => {
     const exe = `"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe"`;
-    expect(parseGprojArg(`${exe} -gproj "C:\\Arma Reforger Modding\\test-addons\\My Addon\\addon.gproj" -addonsDir "C:\\x"`))
+    expect(gproj(`${exe} -gproj "C:\\Arma Reforger Modding\\test-addons\\My Addon\\addon.gproj" -addonsDir "C:\\x"`))
       .toBe("C:\\Arma Reforger Modding\\test-addons\\My Addon\\addon.gproj");
-    expect(parseGprojArg(`${exe} -GPROJ C:\\a\\addon.gproj -wbSilent`)).toBe("C:\\a\\addon.gproj");
-    expect(parseGprojArg(`${exe} -wbModule=ResourceManager`)).toBe("");
+    expect(gproj(`${exe} -GPROJ C:\\a\\addon.gproj -wbSilent`)).toBe("C:\\a\\addon.gproj");
+    expect(gproj(`${exe} -wbModule=ResourceManager`)).toBe("");
   });
 });
 

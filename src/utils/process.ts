@@ -83,6 +83,9 @@ function cimQuery(filter: string): ProcInfo[] {
 export const processInfo = (pid: number): ProcInfo | undefined => cimQuery(`ProcessId=${Math.trunc(pid)}`)[0];
 export const serverProcesses = () => cimQuery("Name='ArmaReforgerServerDiag.exe' OR Name='ArmaReforgerServer.exe'");
 export const clientProcesses = () => cimQuery("Name='ArmaReforgerSteamDiag.exe' OR Name='ArmaReforgerSteam.exe'");
+/** Running Workbench processes with the -gproj of each, for refusal messages. */
+export const workbenchCommandLines = () =>
+  cimQuery("Name='ArmaReforgerWorkbenchSteamDiag.exe'").map((p) => ({ pid: p.pid, gproj: argValue(p.cmd, "-gproj") ?? "" }));
 
 export function isAlive(pid: number): boolean {
   try {
@@ -131,30 +134,3 @@ export function newestDir(dir: string, since = 0): string | null {
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** The -gproj value from a command line, quoted or bare ("" when absent). */
-export function parseGprojArg(cmd: string): string {
-  const m = /(?:^|\s)-gproj\s+(?:"([^"]*)"|(\S+))/i.exec(cmd);
-  return m ? (m[1] ?? m[2]) : "";
-}
-
-// shortcut: its own Win32_Process query until the shared CIM reader (TS-I1, Wave 0b) is merged; then call that.
-/** Running Workbench processes with the -gproj of each (Windows only; [] elsewhere or on error). */
-export function workbenchCommandLines(): { pid: number; gproj: string }[] {
-  if (!IS_WIN) return [];
-  const ps =
-    `Get-CimInstance Win32_Process -Filter "Name='ArmaReforgerWorkbenchSteamDiag.exe'" | ` +
-    `Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
-  try {
-    const out = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], {
-      encoding: "utf-8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (!out) return [];
-    const raw = JSON.parse(out);
-    return (Array.isArray(raw) ? raw : [raw]).map((r) => ({ pid: r.ProcessId, gproj: parseGprojArg(r.CommandLine ?? "") }));
-  } catch {
-    return [];
-  }
-}
