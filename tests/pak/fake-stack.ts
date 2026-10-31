@@ -69,7 +69,7 @@ export function makeFakeStack(): { root: string; config: Config } {
     "Prefabs/Character_Base.et.meta": `MetaFileClass {\n Name "{${G.character}}Prefabs/Character_Base.et"\n}\n`,
     "Prefabs/Pants_Base.et": "GenericEntity {\n m_Other 1\n}\n",
     "Prefabs/Pants_Base.et.meta": `MetaFileClass {\n Name "{${G.shadow}}Prefabs/Pants_Base.et"\n}\n`,
-    "Prefabs/Hash.et": "GenericEntity {\n# broken\n m_A 1\n}\n",
+    "Prefabs/Hash.et": "GenericEntity {\n# m_Old 1\n m_A 1\n}\n",
   });
 
   const config = { gamePath: join(root, "game"), projectPath: projects, workshopPath: workshop } as Config;

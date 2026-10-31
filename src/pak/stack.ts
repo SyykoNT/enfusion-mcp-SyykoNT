@@ -138,6 +138,12 @@ function vfsOf(root: string): PakVirtualFS | null {
   return e.vfs;
 }
 
+/** Path of a resource GUID, from the topmost layer's rdb down. shortcut: loose layers' .meta files are not scanned. */
+export function pathOfGuid(layers: Layer[], guid: string): string | undefined {
+  for (const l of [...layers].reverse()) for (const e of rdbOf(l.root).values()) if (e.guid === guid) return e.path;
+  return undefined;
+}
+
 function makeLayer(a: Addon, info: Info, index: number): Layer {
   const base = { index, id: info.id, guid: info.guid, title: info.title, kind: a.kind, root: a.root };
   if (a.kind !== "loose") {
