@@ -20,6 +20,17 @@ export interface ScriptOptions {
   dynamicMethods?: string[];
   /** Description added as a comment at the top */
   description?: string;
+  /** (component, entity) Fields emitted as [Attribute("<default>", desc: "<desc>")] protected <type> <name>; */
+  attributes?: ScriptAttribute[];
+  /** (component) One [RplProp] field with an authority-checked setter and its callback */
+  replicated?: boolean;
+}
+
+export interface ScriptAttribute {
+  type: string;
+  name: string;
+  default?: string;
+  desc?: string;
 }
 
 const DEFAULT_PARENTS: Record<ScriptType, string> = {
@@ -117,7 +128,7 @@ export function generateScript(opts: ScriptOptions): string {
       lines.push(...generateModded(opts.className, parent, effectiveMethods));
       break;
     case "component":
-      lines.push(...generateComponent(opts.className, parent, effectiveMethods));
+      lines.push(...generateComponent(opts.className, parent, effectiveMethods, opts));
       break;
     case "gamemode":
       lines.push(...generateGamemode(opts.className, parent, effectiveMethods));
@@ -126,7 +137,7 @@ export function generateScript(opts: ScriptOptions): string {
       lines.push(...generateAction(opts.className, parent, effectiveMethods));
       break;
     case "entity":
-      lines.push(...generateEntity(opts.className, parent, effectiveMethods));
+      lines.push(...generateEntity(opts.className, parent, effectiveMethods, opts));
       break;
     case "manager":
       lines.push(...generateManager(opts.className, effectiveMethods));
@@ -169,7 +180,7 @@ function generateModded(className: string, parent: string, methods?: string[]): 
   return lines;
 }
 
-function generateComponent(className: string, parent: string, methods?: string[]): string[] {
+function generateComponent(className: string, parent: string, methods?: string[], opts?: ScriptOptions): string[] {
   const lines: string[] = [];
   // Enfusion requires a paired *Class definition for every ScriptComponent
   lines.push("[ComponentEditorProps(category: \"GameScripted\", description: \"\")]");
@@ -181,13 +192,15 @@ function generateComponent(className: string, parent: string, methods?: string[]
   lines.push("{");
   lines.push("  // Member variables");
   lines.push("");
+  lines.push(...attributeLines(opts?.attributes));
+  if (opts?.replicated) lines.push(...REPLICATED_LINES);
 
-  const methodList = methods?.length
+  const methodList = withEventMask(methods?.length
     ? methods.map((m) => {
         const clean = stripOverride(m);
         return { signature: `override ${clean}`, body: `    // TODO: implement ${extractMethodName(clean)}` };
       })
-    : COMPONENT_METHODS;
+    : COMPONENT_METHODS);
 
   for (const m of methodList) {
     lines.push(`  ${m.signature}`);
@@ -253,12 +266,18 @@ function generateAction(className: string, parent: string, methods?: string[]): 
   return lines;
 }
 
-function generateEntity(className: string, parent: string, methods?: string[]): string[] {
+function generateEntity(className: string, parent: string, methods?: string[], opts?: ScriptOptions): string[] {
   const lines: string[] = [];
+  // Entities pair with a *Class definition, like components
+  lines.push(`class ${className}Class : ${parent}Class`);
+  lines.push("{");
+  lines.push("}");
+  lines.push("");
   lines.push(`class ${className} : ${parent}`);
   lines.push("{");
   lines.push("  // Member variables");
   lines.push("");
+  lines.push(...attributeLines(opts?.attributes));
 
   const methodList = methods?.length
     ? methods.map((m) => {
@@ -334,6 +353,53 @@ function generateBasic(className: string, parent: string, methods?: string[]): s
   lines.push("}");
   return lines;
 }
+
+/**
+ * A component's EOnInit/EOnFrame run only once its event mask is set (interfaceScriptComponent),
+ * so OnPostInit sets one mask per event; OnPostInit is added when the method list lacks it.
+ */
+function withEventMask(methods: { signature: string; body: string }[]): { signature: string; body: string }[] {
+  const events = [["EOnInit", "INIT"], ["EOnFrame", "FRAME"]].filter(([n]) => methods.some((m) => extractMethodName(m.signature) === n));
+  if (events.length === 0) return methods;
+  const post = methods.find((m) => extractMethodName(m.signature) === "OnPostInit");
+  const owner = (post && extractParamNames(post.signature).split(", ")[0]) || "owner";
+  const mask = events.map(([, e]) => `    SetEventMask(${owner}, EntityEvent.${e});`).join("\n");
+  if (!post) return [...methods, { signature: "override void OnPostInit(IEntity owner)", body: mask }];
+  return methods.map((m) => (m === post ? { ...m, body: `${mask}\n${m.body}` } : m));
+}
+
+/** Escape a value for an Enforce string literal. */
+function quoted(s: string): string {
+  return s.replace(/[\\"]/g, "\\$&");
+}
+
+function attributeLines(attributes?: ScriptAttribute[]): string[] {
+  return (attributes ?? []).flatMap((a) => [
+    `  [Attribute("${quoted(a.default ?? "")}"${a.desc ? `, desc: "${quoted(a.desc)}"` : ""})]`,
+    `  protected ${a.type} ${a.name};`,
+    "",
+  ]);
+}
+
+const REPLICATED_LINES = [
+  "  // Needs RplComponent on the prefab root (or a parent) to replicate.",
+  "  [RplProp(onRplName: \"OnStateChanged\")]",
+  "  protected int m_iState;",
+  "",
+  "  void SetState(int state)",
+  "  {",
+  "    if (!Replication.IsServer())",
+  "      return;",
+  "    m_iState = state;",
+  "    Replication.BumpMe();",
+  "  }",
+  "",
+  "  protected void OnStateChanged()",
+  "  {",
+  "    // Runs on proxies when m_iState arrives",
+  "  }",
+  "",
+];
 
 /** Strip leading "override" keyword if already present */
 function stripOverride(sig: string): string {

@@ -94,6 +94,46 @@ describe("generateScript", () => {
     expect(code).toContain("override void EOnInit(IEntity owner)");
     expect(code).toContain("override void OnPostInit(IEntity owner)");
     expect(code).toContain("override void OnDelete(IEntity owner)");
+    expect(code).toMatch(/override void OnPostInit\(IEntity owner\)\n  \{\n    SetEventMask\(owner, EntityEvent\.INIT\);\n/);
+  });
+
+  it("adds OnPostInit with the event masks when custom methods need them", () => {
+    const code = generateScript({
+      className: "TAG_C",
+      scriptType: "component",
+      methods: ["void EOnInit(IEntity owner)", "void EOnFrame(IEntity owner, float timeSlice)"],
+    });
+    expect(code).toMatch(/override void OnPostInit\(IEntity owner\)\n  \{\n    SetEventMask\(owner, EntityEvent\.INIT\);\n    SetEventMask\(owner, EntityEvent\.FRAME\);\n  \}/);
+  });
+
+  it("puts the mask first in a custom OnPostInit, using its parameter name", () => {
+    const code = generateScript({
+      className: "TAG_C",
+      scriptType: "component",
+      methods: ["void EOnInit(IEntity owner)", "void OnPostInit(IEntity ent)"],
+    });
+    expect(code).toContain("override void OnPostInit(IEntity ent)\n  {\n    SetEventMask(ent, EntityEvent.INIT);\n    // TODO: implement OnPostInit");
+    expect(code.match(/OnPostInit/g)).toHaveLength(2);
+  });
+
+  it("emits attribute fields with escaped strings", () => {
+    const code = generateScript({
+      className: "TAG_C",
+      scriptType: "component",
+      attributes: [
+        { type: "float", name: "m_fRate", default: "3", desc: "Tiller \"rate\" per second" },
+        { type: "array<string>", name: "m_aNames" },
+      ],
+    });
+    expect(code).toContain('  [Attribute("3", desc: "Tiller \\"rate\\" per second")]\n  protected float m_fRate;');
+    expect(code).toContain('  [Attribute("")]\n  protected array<string> m_aNames;');
+  });
+
+  it("adds a replicated property with an authority-checked setter", () => {
+    const code = generateScript({ className: "TAG_C", scriptType: "component", replicated: true });
+    expect(code).toContain('[RplProp(onRplName: "OnStateChanged")]');
+    expect(code).toContain("if (!Replication.IsServer())");
+    expect(code).toContain("Replication.BumpMe();");
   });
 
   it("generates component with custom parent", () => {
@@ -133,7 +173,7 @@ describe("generateScript", () => {
       className: "TAG_MyEntity",
       scriptType: "entity",
     });
-    expect(code).toContain("class TAG_MyEntity : GenericEntity");
+    expect(code).toContain("class TAG_MyEntityClass : GenericEntityClass\n{\n}\n\nclass TAG_MyEntity : GenericEntity");
     expect(code).toContain("override void EOnInit(IEntity owner)");
     expect(code).toContain("SetEventMask(EntityEvent.FRAME)");
   });
