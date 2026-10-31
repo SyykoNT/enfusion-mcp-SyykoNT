@@ -135,7 +135,7 @@ variables from [Configuration](#configuration). For Claude Code, in a project's 
 ```json
 {
   "mcpServers": {
-    "enfusion-mcp-syykont": {
+    "enfusion-mcp-SyykoNT": {
       "command": "node",
       "args": ["C:\\path\\to\\enfusion-mcp-SyykoNT\\dist\\index.js"],
       "env": {
