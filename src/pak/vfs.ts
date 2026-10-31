@@ -92,6 +92,11 @@ export class PakVirtualFS {
     return vfs;
   }
 
+  /** A separate VFS over the given paks (one addon of a stack); the game singleton is not touched. */
+  static forPaks(pakFiles: string[]): PakVirtualFS {
+    return new PakVirtualFS(pakFiles);
+  }
+
   private constructor(pakFiles: string[]) {
     const start = Date.now();
     let totalFiles = 0;

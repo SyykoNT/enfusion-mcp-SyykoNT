@@ -48,6 +48,7 @@ export function registerWikiSearch(server: McpServer, searchEngine: SearchEngine
               ? "Enfusion Engine docs"
               : "Arma Reforger docs";
         lines.push(`Source: ${sourceLabel}${page.url ? ` — ${page.url}` : ""}`);
+        lines.push(`Read: wiki_read title="${page.title}"`);
         lines.push("");
 
         // Show more content when only 1 result matches; otherwise truncate to preview length

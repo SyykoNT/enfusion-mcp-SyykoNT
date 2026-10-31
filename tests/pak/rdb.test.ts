@@ -1,13 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync } from "node:fs";
 import { parseResourceDatabase, resourceName } from "../../src/pak/rdb.js";
-
-/** Build one rdb record the way Arma Reforger 1.8 stores it. */
-function record(path: string, guidHex: string): Buffer {
-  const len = Buffer.alloc(4);
-  len.writeUInt32LE(path.length + 1);
-  return Buffer.concat([len, Buffer.from(path + "\0", "latin1"), Buffer.from([6, 0, 0, 0, 0, 0]), Buffer.from(guidHex, "hex").reverse(), Buffer.alloc(8)]);
-}
+import { record } from "./test-pak.js";
 
 describe("parseResourceDatabase", () => {
   it("reads path → GUID records (GUID stored little-endian)", () => {

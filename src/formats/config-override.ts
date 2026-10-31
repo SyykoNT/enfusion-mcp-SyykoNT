@@ -27,9 +27,39 @@ function clone(n: EnfusionNode): EnfusionNode {
   };
 }
 
-/** Deep-merge `over` onto a copy of `base`: properties replace by key, child blocks merge by {ID} (or type when unnamed). */
-export function mergeNode(base: EnfusionNode, over: EnfusionNode): EnfusionNode {
+/**
+ * What a merge did, for callers that track provenance. `path` is the child chain from the root,
+ * one `{ID}` (or type when unnamed) per level, so it stays the same when an override changes a class.
+ */
+export type MergeEvent =
+  | { kind: "set"; path: string; key: string; value: string }
+  | { kind: "typeChange"; path: string; from: string; to: string };
+
+const childPath = (path: string, c: EnfusionNode) => (path ? `${path}/` : "") + (c.id ?? c.type);
+
+/** Report every property of a block that only the overriding side has. */
+function report(n: EnfusionNode, path: string, onEvent: (e: MergeEvent) => void): void {
+  for (const p of n.properties) if (typeof p.value === "string") onEvent({ kind: "set", path, key: p.key, value: p.value });
+  for (const c of n.children) report(c, childPath(path, c), onEvent);
+}
+
+/**
+ * Deep-merge `over` onto a copy of `base`: properties replace by key, child blocks merge by {ID}
+ * (or type when unnamed), and a `key + {` block appends to the inherited list instead.
+ */
+export function mergeNode(base: EnfusionNode, over: EnfusionNode, onEvent?: (e: MergeEvent) => void, path = ""): EnfusionNode {
   const out = clone(base);
+  if (over.append) {
+    out.append = true;
+    const quoted = (n: EnfusionNode) => n.values.map((_, k) => n.valuesQuoted?.[k] ?? true);
+    out.valuesQuoted = [...quoted(out), ...quoted(over)];
+    out.values.push(...over.values);
+    for (const c of over.children) {
+      if (onEvent) report(c, childPath(path, c), onEvent);
+      out.children.push(clone(c));
+    }
+    return out;
+  }
   out.type = over.type;
   out.className = over.className ?? out.className;
   out.inheritance = over.inheritance ?? out.inheritance;
@@ -41,12 +71,20 @@ export function mergeNode(base: EnfusionNode, over: EnfusionNode): EnfusionNode 
     // Keep the base line's place, quoting and text so an unchanged value is written as it was
     if (i >= 0) { const b = out.properties[i]; out.properties[i] = { ...v, pos: b.pos, quoted: v.quoted ?? b.quoted, raw: v.raw ?? b.raw }; }
     else out.properties.push(v);
+    if (onEvent && typeof p.value === "string") onEvent({ kind: "set", path, key: p.key, value: p.value });
   }
   if (over.values.length) { out.values = [...over.values]; out.valuesQuoted = over.valuesQuoted; }
   for (const c of over.children) {
     const i = out.children.findIndex((d) => childKey(d) === childKey(c));
-    if (i >= 0) out.children[i] = mergeNode(out.children[i], c);
-    else out.children.push(clone(c));
+    const p = childPath(path, c);
+    if (i >= 0) {
+      const from = out.children[i].className ?? out.children[i].type, to = c.className ?? c.type;
+      if (onEvent && from !== to) onEvent({ kind: "typeChange", path: p, from, to });
+      out.children[i] = mergeNode(out.children[i], c, onEvent, p);
+    } else {
+      if (onEvent) report(c, p, onEvent);
+      out.children.push(clone(c));
+    }
   }
   return out;
 }

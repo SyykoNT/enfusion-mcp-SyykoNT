@@ -61,6 +61,14 @@ describe("forbiddenRoot", () => {
     expect(forbiddenRoot(cfg(), mine)).toBeNull();
   });
 
+  it("refuses writes in a custom ENFUSION_WORKSHOP_PATH", () => {
+    const ws = join(root, "customws");
+    const mod = addon(join(ws, "Mod_4444444444444444"), "4444444444444444", "ModID");
+    expect(forbiddenRoot(cfg({ workshopPath: ws }), mod)).toBe(ws);
+    expect(err(resolveWriteAddon(cfg({ workshopPath: ws }), { projectPath: mod }))).toMatch(/^Refused: .* is inside/);
+    expect(forbiddenRoot(cfg(), mod)).toBeNull();
+  });
+
   it.skipIf(process.platform !== "win32")("ignores case on Windows", () => {
     expect(forbiddenRoot(cfg(), join(root, "GAME", "Addons").toUpperCase())).toBe(join(root, "game"));
   });
