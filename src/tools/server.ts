@@ -8,6 +8,7 @@ import { generateServerConfig, validateAgainstSchema } from "../templates/server
 import { gameGuidMap } from "../pak/rdb.js";
 import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
+import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, type Entry } from "../utils/instances.js";
 
@@ -112,7 +113,7 @@ export function registerServer(server: McpServer, config: Config): void {
         "'logs' (tail / errors only), 'scenarios' (all scenario IDs of the game).",
       inputSchema: {
         action: z.enum(["install", "update", "config", "validate", "start", "stop", "status", "logs", "scenarios"]),
-        configPath: z.string().optional().describe("(start/validate/config) server.json path. Default <serverProfilePath>/server.json"),
+        configPath: z.string().optional().describe("(start/validate/config) server.json path. Default <serverProfilePath>/server.json. config/start replace only that default; any other path must not exist yet"),
         // config options
         name: z.string().optional().describe("(config/start) Server name"),
         scenarioId: z.string().optional().describe("(config/start) e.g. {ECC61978EDCC2B5A}Missions/23_Campaign.conf (see action scenarios)"),
@@ -146,7 +147,8 @@ export function registerServer(server: McpServer, config: Config): void {
     async (a) => {
       try {
         const exe = join(config.serverPath, SERVER_EXE);
-        const cfgPath = a.configPath ?? join(config.serverProfilePath, "server.json");
+        const defaultCfg = join(config.serverProfilePath, "server.json");
+        const cfgPath = a.configPath ?? defaultCfg;
 
         if (a.action === "install" || a.action === "update") {
           const steamcmd = await ensureSteamcmd(config);
@@ -187,6 +189,14 @@ export function registerServer(server: McpServer, config: Config): void {
           const schema = loadSchema(config);
           const errs = schema ? validateAgainstSchema(JSON.parse(json), schema) : [];
           if (errs.length) return text(`Generated config is invalid:\n${errs.map((e) => `- ${e}`).join("\n")}`, true);
+          // Only the MCP's own server.json is replaced; any other path must be new and outside installs and caches.
+          const own = sameDir(cfgPath, defaultCfg);
+          const root = own ? null : forbiddenRoot(config, cfgPath);
+          const refuse = own ? ""
+            : existsSync(cfgPath) ? `${cfgPath} already exists and is not this MCP's server.json`
+            : root ? `${cfgPath} is inside ${root}`
+            : "";
+          if (refuse) return text(`**server.json not written**: ${refuse}. Omit configPath or pass a new file path.\n\n\`\`\`json\n${json}\n\`\`\``, true);
           mkdirSync(join(cfgPath, ".."), { recursive: true });
           writeFileSync(cfgPath, json, "utf-8");
           if (a.action === "config") return text(`**server.json written** → \`${cfgPath}\`${schema ? " (schema-valid)" : ""}\n\n\`\`\`json\n${json}\n\`\`\``);
