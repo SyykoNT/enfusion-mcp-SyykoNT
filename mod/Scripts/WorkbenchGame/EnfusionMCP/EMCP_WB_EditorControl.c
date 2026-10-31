@@ -1,7 +1,7 @@
 /**
  * EMCP_WB_EditorControl.c - Editor mode control handler
  *
- * Supports actions: play, stop, save, undo, redo, openResource
+ * Supports actions: play, stop, save, worldInfo, undo, redo, openResource (saveAs only returns an error)
  * Called via NET API TCP protocol: APIFunc = "EMCP_WB_EditorControl"
  */
 
@@ -26,12 +26,42 @@ class EMCP_WB_EditorControlResponse : JsonApiStruct
 	string status;
 	string action;
 	string message;
+	bool saved;
+	string worldPath;
+	string absPath;
+	bool prefabEditMode;
+	bool gameMode;
 
 	void EMCP_WB_EditorControlResponse()
 	{
 		RegV("status");
 		RegV("action");
 		RegV("message");
+		RegV("saved");
+		RegV("worldPath");
+		RegV("absPath");
+		RegV("prefabEditMode");
+		RegV("gameMode");
+	}
+}
+
+//! The one save guard (EditorControl save, Exit): Save() opens a blocking 'Save world as' dialog for an unnamed world or in prefab edit mode; no save during Play.
+class EMCP_SaveGuard
+{
+	//! Why Save() must not be called now, or "" when it is safe.
+	static string Refusal(WorldEditor worldEditor)
+	{
+		if (worldEditor.IsPrefabEditMode())
+			return "Prefab edit mode: wb_save saves worlds. Use wb_prefabs save for the prefab.";
+		WorldEditorAPI api = worldEditor.GetApi();
+		string worldPath;
+		if (api)
+			api.GetWorldPath(worldPath);
+		if (worldPath == "")
+			return "No world file: the open world is unnamed, and saving it would open the blocking 'Save world as' dialog.";
+		if (api.IsGameMode())
+			return "Play mode: stop it with wb_stop before saving.";
+		return "";
 	}
 }
 
@@ -68,21 +98,43 @@ class EMCP_WB_EditorControl : NetApiHandler
 			resp.status = "ok";
 			resp.message = "Switched to edit mode";
 		}
+		else if (req.action == "worldInfo")
+		{
+			WorldEditorAPI infoApi = worldEditor.GetApi();
+			string infoPath;
+			string infoAbs;
+			if (infoApi)
+			{
+				infoApi.GetWorldPath(infoPath);
+				resp.gameMode = infoApi.IsGameMode();
+			}
+			if (infoPath != "" && !Workbench.GetAbsolutePath(infoPath, infoAbs, true))
+				infoAbs = "";
+			resp.worldPath = infoPath;
+			resp.absPath = infoAbs;
+			resp.prefabEditMode = worldEditor.IsPrefabEditMode();
+			resp.status = "ok";
+		}
 		else if (req.action == "save")
 		{
-			bool saved = worldEditor.Save();
-			resp.status = "ok";
-			if (saved)
-				resp.message = "World saved";
+			string refusal = EMCP_SaveGuard.Refusal(worldEditor);
+			if (refusal != "")
+			{
+				resp.status = "error";
+				resp.message = refusal;
+			}
 			else
-				resp.message = "Save returned false (may already be up to date)";
+			{
+				// The TS side words a false result: its meaning is not documented.
+				resp.saved = worldEditor.Save();
+				resp.status = "ok";
+				resp.message = "Save() returned " + resp.saved.ToString();
+			}
 		}
 		else if (req.action == "saveAs")
 		{
-			// WorldEditor does not expose SaveAs directly; fall back to Save
-			bool saved = worldEditor.Save();
-			resp.status = "ok";
-			resp.message = "SaveAs not available, used Save instead";
+			resp.status = "error";
+			resp.message = "Save As is not available in the 1.8 script API (WBModuleDef has only Save()). Nothing was saved.";
 		}
 		else if (req.action == "undo")
 		{
@@ -141,7 +193,7 @@ class EMCP_WB_EditorControl : NetApiHandler
 		else
 		{
 			resp.status = "error";
-			resp.message = "Unknown action: " + req.action + ". Valid: play, stop, save, saveAs, undo, redo, openResource";
+			resp.message = "Unknown action: " + req.action + ". Valid: play, stop, save, worldInfo, undo, redo, openResource";
 		}
 
 		return resp;

@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer, type Socket } from "node:net";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient } from "../../src/workbench/client.js";
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
@@ -46,7 +49,13 @@ afterEach(async () => {
 
 describe("mode gate on wb_* tools", () => {
   it("wb_save runs in edit mode on a client that never called wb_state", async () => {
-    mock = mockWorkbench((f) => (f === "EMCP_WB_GetState" ? { status: "ok", mode: "edit" } : { status: "ok" }));
+    const world = join(mkdtempSync(join(tmpdir(), "emcp-gate-")), "W.ent");
+    mock = mockWorkbench((f, p) => {
+      if (f === "EMCP_WB_GetState") return { status: "ok", mode: "edit" };
+      if (p.action === "worldInfo") return { status: "ok", worldPath: "$T:W.ent", absPath: world };
+      writeFileSync(world, "saved");
+      return { status: "ok", saved: true };
+    });
     const result = await editorTools(new WorkbenchClient("127.0.0.1", mock.port)).wb_save({});
     expect(result.isError).toBeUndefined();
   });

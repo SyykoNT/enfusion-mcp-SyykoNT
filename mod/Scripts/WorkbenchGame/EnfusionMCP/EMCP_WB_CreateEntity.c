@@ -18,6 +18,7 @@ class EMCP_WB_CreateEntityRequest : JsonApiStruct
 	string rotation;
 	string name;
 	int layerID;
+	string layerPath;
 
 	void EMCP_WB_CreateEntityRequest()
 	{
@@ -26,6 +27,7 @@ class EMCP_WB_CreateEntityRequest : JsonApiStruct
 		RegV("rotation");
 		RegV("name");
 		RegV("layerID");
+		RegV("layerPath");
 		layerID = -1;
 	}
 }
@@ -37,6 +39,7 @@ class EMCP_WB_CreateEntityResponse : JsonApiStruct
 	string entityName;
 	string entityClass;
 	string position;
+	string layerPath;
 
 	void EMCP_WB_CreateEntityResponse()
 	{
@@ -45,6 +48,7 @@ class EMCP_WB_CreateEntityResponse : JsonApiStruct
 		RegV("entityName");
 		RegV("entityClass");
 		RegV("position");
+		RegV("layerPath");
 	}
 }
 
@@ -106,10 +110,30 @@ class EMCP_WB_CreateEntity : NetApiHandler
 		vector pos = ParseVectorString(req.position);
 		vector rot = ParseVectorString(req.rotation);
 
-		// Default to layer 0 if not specified
+		// layerPath wins, then layerID (old callers), else the active layer (was always layer 0).
+		int subScene = api.GetCurrentSubScene();
 		int targetLayer = req.layerID;
-		if (targetLayer < 0)
-			targetLayer = 0;
+		if (req.layerPath != "")
+		{
+			targetLayer = api.GetSubsceneLayerId(subScene, req.layerPath);
+			if (targetLayer < 0)
+			{
+				array<string> layers = {};
+				api.GetSubsceneFolders(subScene, layers);
+				string list;
+				foreach (string layer : layers)
+				{
+					if (list != "")
+						list += ", ";
+					list += layer;
+				}
+				resp.status = "error";
+				resp.message = "Layer not found: " + req.layerPath + ". Layers: " + list;
+				return resp;
+			}
+		}
+		else if (targetLayer < 0)
+			targetLayer = api.GetCurrentEntityLayerId();
 
 		// Entity name defaults to empty (auto-generated)
 		string entityName = req.name;
@@ -137,6 +161,7 @@ class EMCP_WB_CreateEntity : NetApiHandler
 
 		resp.entityName = entSrc.GetName();
 		resp.entityClass = entSrc.GetClassName();
+		resp.layerPath = api.GetEntitySubsceneLayer(subScene, entSrc);
 		resp.position = pos[0].ToString() + " " + pos[1].ToString() + " " + pos[2].ToString();
 		resp.status = "ok";
 		resp.message = "Entity created from prefab: " + req.prefab;
