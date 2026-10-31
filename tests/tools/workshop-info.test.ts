@@ -54,3 +54,19 @@ describe("workshop_info: finding the addon", () => {
     expect(t).toContain("This tool does not publish.");
   });
 });
+
+describe("workshop_info: dependencies", () => {
+  // Loose dep -> Workshop dep -> base game, plus one GUID found nowhere
+  addon(join(root, "game", "addons"), "data", "58D0FB3206B6F859");
+  addon(join(root, "workshop"), "WsDep_BBBB000000000001", "BBBB000000000001", ["58D0FB3206B6F859"]);
+  addon(projects, "LocalDep", "CCCC000000000001", ["BBBB000000000001"]);
+  addon(projects, "Boat", "EEEE000000000001", ["58D0FB3206B6F859", "CCCC000000000001", "FFFF000000000001"]);
+
+  it("names direct deps with their source and counts the closure with missing ones", async () => {
+    const t = await text({ modName: "Boat" });
+    expect(t).toContain("- 58D0FB3206B6F859 data Title (game)");
+    expect(t).toContain("- CCCC000000000001 LocalDep Title (local)");
+    expect(t).toMatch(/- FFFF000000000001 \(missing: /);
+    expect(t).toContain("Closure: 3 addons found, 1 missing (FFFF000000000001)");
+  });
+});

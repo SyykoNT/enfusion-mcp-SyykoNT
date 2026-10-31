@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Config } from "../config.js";
 import { parse, type EnfusionNode } from "../formats/enfusion-text.js";
 import { findGproj, resolveAddonDir } from "../utils/game-paths.js";
+import { buildStack, type LayerKind } from "../pak/stack.js";
 
 export function registerWorkshopInfo(server: McpServer, config: Config): void {
   server.registerTool(
@@ -88,12 +89,10 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
         lines.push(`- **Title:** ${title}`);
         lines.push(`- **File:** ${gprojPath}`);
 
+        const depInfo = dependencyLines(config, gprojPath, deps);
         if (deps.length > 0) {
           lines.push(`\n### Dependencies (${deps.length})`);
-          for (const dep of deps) {
-            const label = dep === "58D0FB3206B6F859" ? " (Arma Reforger)" : "";
-            lines.push(`- ${dep}${label}`);
-          }
+          lines.push(...depInfo.lines);
         }
 
         if (configs.length > 0) {
@@ -115,6 +114,26 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
       }
     }
   );
+}
+
+const SOURCE: Record<LayerKind, string> = { loose: "local", workshop: "workshop", vanilla: "game" };
+
+/** Direct dependencies named from the addon stack, and the closure's GUIDs (missing ones included). Raw GUIDs when the stack cannot be built. */
+function dependencyLines(config: Config, gproj: string, deps: string[]): { lines: string[]; closure: string[] } {
+  try {
+    const stack = buildStack(config, gproj);
+    const layers = stack.layers.slice(0, -1); // the last layer is the addon itself
+    const byGuid = new Map(layers.map((l) => [l.guid, l]));
+    // RL-N3 (addon_deps) adds installed versions to these lines
+    const lines = deps.map((d) => {
+      const l = byGuid.get(d.toUpperCase());
+      return l ? `- ${d} ${l.title || l.id} (${SOURCE[l.kind]})` : `- ${d} (missing: not in a local project, the Workshop cache or the base game)`;
+    });
+    lines.push(`Closure: ${layers.length} addons found${stack.missing.length ? `, ${stack.missing.length} missing (${stack.missing.join(", ")})` : ""}`);
+    return { lines, closure: [...layers.map((l) => l.guid), ...stack.missing] };
+  } catch (e) {
+    return { lines: [...deps.map((d) => `- ${d}`), `(names unavailable: ${(e as Error).message})`], closure: deps.map((d) => d.toUpperCase()) };
+  }
 }
 
 function getProperty(node: EnfusionNode, key: string): string {
