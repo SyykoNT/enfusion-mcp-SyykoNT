@@ -18,6 +18,8 @@ import { findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
+import { workbenchProfileDir } from "./cli.js";
+import { startWatcher } from "../watchdog/wb-watch.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 
@@ -221,8 +223,9 @@ export class WorkbenchClient {
    * Ensure Workbench is running. Installs handler scripts, launches exe,
    * and waits for NET API. Safe to call concurrently — deduplicates launches.
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
+   * @param unattended Launch with -noThrow (no error dialogs).
    */
-  async ensureRunning(gprojPath?: string): Promise<void> {
+  async ensureRunning(gprojPath?: string, unattended = false): Promise<void> {
     if (!this.config) {
       throw new WorkbenchError("No config provided — cannot auto-launch Workbench.", "LAUNCH_FAILED");
     }
@@ -232,7 +235,7 @@ export class WorkbenchClient {
       return this.launchPromise;
     }
 
-    const promise = this.launchWorkbench(gprojPath).finally(() => {
+    const promise = this.launchWorkbench(gprojPath, unattended).finally(() => {
       // Only clear if this is still the active promise (guards against re-entrant calls)
       if (this.launchPromise === promise) {
         this.launchPromise = null;
@@ -459,7 +462,7 @@ export class WorkbenchClient {
     }
   }
 
-  private async launchWorkbench(gprojPath?: string): Promise<void> {
+  private async launchWorkbench(gprojPath?: string, unattended = false): Promise<void> {
     // 1. Check if already running (maybe it came up between the failed call and now)
     if (await this.ping()) {
       logger.info("Workbench is already running.");
@@ -531,6 +534,8 @@ export class WorkbenchClient {
       args.push("-gproj", resolvedGproj);
     }
     if (this.config?.addonsDir) args.push("-addonsDir", this.config.addonsDir);
+    // Bohemia's CLI docs: "Disable all kinds of error message dialogs. (VME's, asserts, crashes, ...)"
+    if (unattended) args.push("-noThrow");
 
     // Use the game install directory as CWD so Workbench finds base game addons
     // (data/ArmaReforger.gproj with GUID 58D0FB3206B6F859) via ./addons resolution.
@@ -543,6 +548,8 @@ export class WorkbenchClient {
       stdio: "ignore",
       cwd,
     });
+    // Without a listener a failed start is an uncaught 'error' that ends the MCP; the NET API wait below reports it.
+    proc.on("error", (e) => logger.warn(`Workbench did not start: ${e.message}`));
     proc.unref();
     // wb_close acts only on Workbench processes recorded here.
     if (proc.pid) {
@@ -553,6 +560,14 @@ export class WorkbenchClient {
         });
       } catch (e) {
         logger.warn(`Could not record Workbench PID ${proc.pid}; wb_close will not close it: ${e}`);
+      }
+      try {
+        startWatcher({
+          pid: proc.pid, startTime: launchedAt, owned: true, logsRoot: join(workbenchProfileDir(this.config!), "logs"),
+          host: this.host, port: this.port,
+        });
+      } catch (e) {
+        logger.warn(`Could not start the watchdog for Workbench PID ${proc.pid}: ${e}`);
       }
     }
 
