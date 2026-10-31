@@ -104,7 +104,9 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
         lines.push(`- **Prefab:** ${prefab}`);
         if (position) lines.push(`- **Position:** ${position}`);
         if (rotation) lines.push(`- **Rotation:** ${rotation}`);
-        if (layerPath) lines.push(`- **Layer:** ${layerPath}`);
+        // The layer the handler read back; an old handler ignores layerPath and reports none.
+        if (typeof result.layerPath === "string" && result.layerPath) lines.push(`- **Layer:** ${result.layerPath}`);
+        else if (layerPath) lines.push(`- **Layer:** ${layerPath} requested, not confirmed (handler out of date or no layer reported; check with wb_layers)`);
         if (result.id) lines.push(`- **ID:** ${result.id}`);
 
         return { content: [{ type: "text" as const, text: lines.join("\n") + formatConnectionStatus(client) }] };
