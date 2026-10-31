@@ -4,6 +4,7 @@ import {
   parseParentPath,
   parseComponents,
   mergeAncestryComponents,
+  mergeTopLevelComponents,
   type AncestorLevel,
 } from "../../src/utils/prefab-ancestry.js";
 
@@ -107,5 +108,18 @@ describe("mergeAncestryComponents", () => {
     expect(merged.size).toBe(2);
     expect(merged.has("AAAAAAAAAAAAAAAA")).toBe(true);
     expect(merged.has("BBBBBBBBBBBBBBBB")).toBe(true);
+  });
+});
+
+describe("mergeTopLevelComponents", () => {
+  const level = (depth: number, rawContent: string): AncestorLevel =>
+    ({ path: `level${depth}.et`, depth, entityClass: "GenericEntity", components: new Map(), rawContent });
+
+  it("skips nested objects and lets the child win by ID", () => {
+    const parent = level(0, `GenericEntity {\n components {\n  WeaponComponent "{AAAAAAAAAAAAAAAA}" {\n   components {\n    SightsComponent "{BBBBBBBBBBBBBBBB}" {\n    }\n   }\n  }\n  MeshObject "{CCCCCCCCCCCCCCCC}" {\n  }\n }\n}\n`);
+    const child = level(1, `GenericEntity : "Prefabs/P.et" {\n components {\n  MeshObject "{CCCCCCCCCCCCCCCC}" {\n   Object "x.xob"\n  }\n }\n}\n`);
+    const merged = mergeTopLevelComponents([parent, child]);
+    expect([...merged.keys()].sort()).toEqual(["AAAAAAAAAAAAAAAA", "CCCCCCCCCCCCCCCC"]);
+    expect(merged.get("CCCCCCCCCCCCCCCC")!.source.depth).toBe(1);
   });
 });

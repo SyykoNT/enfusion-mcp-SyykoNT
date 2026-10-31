@@ -244,3 +244,14 @@ export function mergeAncestryComponents(levels: AncestorLevel[]): Map<string, Me
   }
   return merged;
 }
+
+/** Like mergeAncestryComponents, but only each level's top-level components (no nested objects). */
+export function mergeTopLevelComponents(levels: AncestorLevel[]): Map<string, MergedComponent> {
+  const merged = new Map<string, MergedComponent>();
+  for (const level of levels) {
+    for (const [guid, comp] of parseTopLevelComponents(level.rawContent)) {
+      merged.set(guid, { comp, source: level });
+    }
+  }
+  return merged;
+}
