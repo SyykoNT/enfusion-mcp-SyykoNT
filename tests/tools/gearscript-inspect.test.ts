@@ -321,6 +321,13 @@ describe("gearscript_inspect lookup and output", () => {
 
   it("reports custom gear for roles not in the roles config", async () => {
     expect((await call({})).content[0].text).toContain("- Custom gear for roles not in the roles config: PILOT");
+    // Null role config: infantry medical and default items are listed but not given
+    const pilot = (await loadouts({ roles: ["PILOT"] })).PILOT;
+    expect(given(pilot)).toEqual([]);
+    expect(pilot.items.map((i) => [i.source, i.why])).toEqual([
+      ["m_InfantryMedicalItems[0]", "role not in the roles config"],
+      ["m_DefaultInventoryItems[0]", "role not in the roles config"],
+    ]);
   });
 
   it("usedBy lists mission files with their side field and the Lobby default", async () => {

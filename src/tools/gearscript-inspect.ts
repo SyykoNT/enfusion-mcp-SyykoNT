@@ -99,7 +99,7 @@ export function resolveLoadout(
   const customs = items(gs, "m_RolesToSetCustomSettings")
     .map((c, j) => [c, `m_RolesToSetCustomSettings[${j}]`] as const)
     .filter(([c]) => roleOf(c, enums) === role);
-  if (!roleCfg) out.notes.push("role not in the roles config: default weapons, magazines and role items fail (null role config)");
+  if (!roleCfg) out.notes.push("role not in the roles config: default weapons, magazines, role items, infantry medical and default items fail (null role config)");
 
   // Clothing :168-194: defaults, then custom entries; each entry replaces its slot with a random pick
   // of its list, and an empty list changes nothing (COA_ClothingHelper.UpdateClothingSlot)
@@ -162,9 +162,9 @@ export function resolveLoadout(
   }
 
   // Items :508-573: custom extras, then role items, then infantry medical and default items for everyone
-  const add = (list: EnfusionNode[], source: string) =>
+  const add = (list: EnfusionNode[], source: string, why?: string) =>
     list.forEach((it, i) =>
-      out.items.push({ what: prop(it, "m_sItemPrefab") ?? "", count: count(it, "m_iItemCount"), source: `${source}[${i}]`, given: true })
+      out.items.push({ what: prop(it, "m_sItemPrefab") ?? "", count: count(it, "m_iItemCount"), source: `${source}[${i}]`, given: !why, ...(why ? { why } : {}) })
     );
   const onOff = (b: boolean) => (b ? "on" : "off");
   const radio = (what: string, given: boolean, why: string) => out.items.push({ what, count: 1, source: "role m_aItems", given, why });
@@ -185,8 +185,10 @@ export function resolveLoadout(
     else if (item === "MEDIC_ITEMS") add(items(gs, "m_MedicMedicalItems"), "m_MedicMedicalItems");
     else out.notes.push(`${item}: item category this tool does not know`);
   }
-  add(items(gs, "m_InfantryMedicalItems"), "m_InfantryMedicalItems");
-  add(items(gs, "m_DefaultInventoryItems"), "m_DefaultInventoryItems");
+  // A null role config fails at rolesConfig.m_aItems (:526-528), before these are given (:567-572)
+  const noRole = roleCfg ? undefined : "role not in the roles config";
+  add(items(gs, "m_InfantryMedicalItems"), "m_InfantryMedicalItems", noRole);
+  add(items(gs, "m_DefaultInventoryItems"), "m_DefaultInventoryItems", noRole);
   return out;
 }
 
