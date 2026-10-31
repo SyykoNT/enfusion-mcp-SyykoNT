@@ -63,11 +63,11 @@ describe("script_errors", () => {
 
   it("takes a logPath file or folder and refuses bad input", async () => {
     const one = await call({ logPath: join(root, "profile/logs/logs_2026-10-30_10-00-00/console.log") });
-    expect(one.content[0].text).toContain("1 VM exceptions in 1 groups");
+    expect(one.content[0].text).toContain("1 VM exceptions in 1 group");
     expect((await call({ logPath: join(root, "projects/TestAddon/TestAddon.gproj") })).content[0].text).toMatch(/^Not a \.log file/);
     expect((await call({ logPath: join(root, "nope") })).isError).toBe(true);
     expect((await call({ logPath: join(root, "projects") })).content[0].text).toMatch(/^No logs in/);
     expect((await call({ since: "09:00", sessions: 2 })).content[0].text).toBe("since applies to one session; drop sessions or since");
-    expect((await call({ since: "09:00:02" })).content[0].text).toContain("2 VM exceptions in 1 groups");
+    expect((await call({ since: "09:00:02" })).content[0].text).toContain("2 VM exceptions in 1 group");
   });
 });

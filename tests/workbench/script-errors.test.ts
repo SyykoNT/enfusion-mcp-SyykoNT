@@ -77,7 +77,7 @@ describe("scriptErrorParser", () => {
       prefab("0123456789ABCDEF", "A"),
       prefab("1123456789ABCDEF", "B"),
       prefab("2123456789ABCDEF", "C"),
-      prefab("3123456789ABCDEF", "D"),
+      prefab("3123456789ABCDEF", "Gondola Car/D"),
       `10:00:01.000 SCRIPT    (E): @"Scripts/Game/Foo.c,12": Undefined variable 'x'`,
       "10:00:01.000 SCRIPT    (E): Can't compile \"Game\" script module!",
       "10:00:02.000 SCRIPT    (E): Faction '12' is not a valid SCR_Faction",

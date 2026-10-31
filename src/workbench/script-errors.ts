@@ -81,9 +81,9 @@ export function parseLogTime(header: number | undefined, line: string, prevMs?: 
   return t < ref - HALF_DAY ? at(1) : t > ref + HALF_DAY ? at(-1) : t;
 }
 
-/** Mask the variable parts of a runtime error so repeats group: resource names and numbers. */
+/** Mask the variable parts of a runtime error so repeats group: resource names (paths may hold spaces, so up to the extension) and numbers. */
 export const maskMessage = (msg: string) =>
-  msg.replace(/\{[0-9A-Fa-f]{16}\}[^\s'"]*/g, "<resource>").replace(/\b\d+(\.\d+)?\b/g, "<n>").trim();
+  msg.replace(/\{[0-9A-Fa-f]{16}\}(?:[^'"\n]*?\.[A-Za-z]{1,8}\b)?/g, "<resource>").replace(/\b\d+(\.\d+)?\b/g, "<n>").trim();
 
 interface Block {
   time: number;

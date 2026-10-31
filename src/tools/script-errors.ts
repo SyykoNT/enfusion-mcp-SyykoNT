@@ -66,6 +66,7 @@ const fmtTime = (ms: number, withDate: boolean) => {
   return `${date}${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 };
 const n = (x: number) => x.toLocaleString("en-US");
+const groupsOf = (x: number) => `${n(x)} group${x === 1 ? "" : "s"}`;
 
 export function registerScriptErrors(server: McpServer, config: Config): void {
   server.registerTool(
@@ -119,7 +120,7 @@ export function registerScriptErrors(server: McpServer, config: Config): void {
         const sessionLabel = found.length === 1 ? `${found[0].name}, ${basename(found[0].file)}` : `${found[found.length - 1].name} to ${found[0].name}`;
         const out = [
           `## Script runtime errors: ${a.logPath ? root : a.source}, ${found.length} session${found.length > 1 ? "s" : ""} (${sessionLabel}, ${(bytes / 1e6).toFixed(1)} MB, ${secs} s)`,
-          `${n(sum.vme)} VM exceptions in ${vmeGroups} groups; ${n(sum.errors)} other SCRIPT errors in ${sum.groups.length - vmeGroups} groups.`,
+          `${n(sum.vme)} VM exceptions in ${groupsOf(vmeGroups)}; ${n(sum.errors)} other SCRIPT errors in ${groupsOf(sum.groups.length - vmeGroups)}.`,
         ];
         if (a.addonName && !addons.some((ad) => ad.name.toLowerCase() === a.addonName!.toLowerCase())) {
           out.push(`Note: no addon "${a.addonName}" with a .gproj under ${config.projectPath}, so no group is marked own.`);
