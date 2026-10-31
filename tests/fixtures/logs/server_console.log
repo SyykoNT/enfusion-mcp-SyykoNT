@@ -1,0 +1,9 @@
+---------------------------------------------
+Log C:\TestKit\runs\h1\logs\logs_2026-10-26_11-35-20\console.log started at 2026-10-26 11:35:20 (2026-10-26 15:35:20 UTC)
+
+11:35:20.673 ENGINE       : CLI Params: -server worlds/MP/MpTest/MpTest.ent -addonsDir C:\TestKit -profile C:\TestKit\runs\h1
+11:35:26.394     SCRIPT       : [CRF_DEV] Harness armed: plan=allrounds_t1_addon origin=<128,0,90>
+11:35:26.447 NETWORK      : Starting RPL server, listening on address 127.0.0.1:2461, fastValidation=false
+11:35:27.495   SCRIPT       : SCR_BaseGameMode::OnGameStateChanged = GAME
+11:35:35.353 SCRIPT       : [CRF_DEV] Harness start: 45 cases, ground <128,1,90>, pistol rules override 1
+11:40:14.085 SCRIPT       : [CRF_DEV] Harness done: $profile:PLT_DamageLog/allrounds_t1_addon_0

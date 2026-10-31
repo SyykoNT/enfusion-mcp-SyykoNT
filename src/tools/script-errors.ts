@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 import { basename, dirname, join } from "node:path";
 import type { Config } from "../config.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
-import { mergeSummaries, parseScriptErrors, type ScriptErrorGroup, type ScriptErrorSummary } from "../workbench/script-errors.js";
+import { formatLogTime, mergeSummaries, parseScriptErrors, type ScriptErrorGroup, type ScriptErrorSummary } from "../workbench/script-errors.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { serverLogsDir } from "./server.js";
 
@@ -59,12 +59,6 @@ function projectAddons(config: Config): { name: string; dir: string }[] {
   }
 }
 
-const fmtTime = (ms: number, withDate: boolean) => {
-  const d = new Date(ms);
-  const p = (n: number, w = 2) => String(n).padStart(w, "0");
-  const date = withDate ? `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` : "";
-  return `${date}${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
-};
 const n = (x: number) => x.toLocaleString("en-US");
 const groupsOf = (x: number) => `${n(x)} group${x === 1 ? "" : "s"}`;
 
@@ -127,7 +121,7 @@ export function registerScriptErrors(server: McpServer, config: Config): void {
         }
         groups.slice(0, a.limit).forEach(({ g, own }, i) => {
           const days = new Date(g.first).toDateString() !== new Date(g.last).toDateString();
-          const head = `${i + 1}. ${n(g.count)}x  ${fmtTime(g.first, days)} to ${fmtTime(g.last, days)}  `;
+          const head = `${i + 1}. ${n(g.count)}x  ${formatLogTime(g.first, days)} to ${formatLogTime(g.last, days)}  `;
           out.push("");
           if (g.kind === "error") {
             out.push(head + g.message);

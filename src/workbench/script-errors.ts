@@ -81,6 +81,14 @@ export function parseLogTime(header: number | undefined, line: string, prevMs?: 
   return t < ref - HALF_DAY ? at(1) : t > ref + HALF_DAY ? at(-1) : t;
 }
 
+/** `HH:MM:SS.mmm`, with `YYYY-MM-DD` and `sep` in front when withDate. */
+export function formatLogTime(ms: number, withDate = false, sep = " "): string {
+  const d = new Date(ms);
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  const date = withDate ? `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}${sep}` : "";
+  return `${date}${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+}
+
 /** Mask the variable parts of a runtime error so repeats group: resource names (paths may hold spaces, so up to the extension) and numbers. */
 export const maskMessage = (msg: string) =>
   msg.replace(/\{[0-9A-Fa-f]{16}\}(?:[^'"\n]*?\.[A-Za-z]{1,8}\b)?/g, "<resource>").replace(/\b\d+(\.\d+)?\b/g, "<n>").trim();
