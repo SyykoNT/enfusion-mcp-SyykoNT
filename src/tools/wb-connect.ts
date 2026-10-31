@@ -26,7 +26,7 @@ export function registerWbConnect(server: McpServer, client: WorkbenchClient): v
         }
 
         // Get detailed state — Ping returns: status, mode, message
-        const details = await client.call<Record<string, unknown>>("EMCP_WB_Ping");
+        const details = await client.call<Record<string, unknown>>("EMCP_WB_Ping", {}, { skipAutoLaunch: true });
 
         const lines: string[] = [];
         lines.push("**Workbench Connected**\n");

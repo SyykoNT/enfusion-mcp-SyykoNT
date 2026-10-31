@@ -44,7 +44,7 @@ export function registerWbReadProps(server: McpServer, client: WorkbenchClient):
         const result = await client.call<ReadPropsResult>("EMCP_WB_ReadProps", {
           resource,
           path: path ?? "",
-        });
+        }, { skipAutoLaunch: true });
 
         if (result.status !== "ok") {
           return {

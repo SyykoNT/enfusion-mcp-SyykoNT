@@ -12,7 +12,7 @@ export function registerWbState(server: McpServer, client: WorkbenchClient): voi
     },
     async () => {
       try {
-        const result = await client.call<Record<string, unknown>>("EMCP_WB_GetState");
+        const result = await client.call<Record<string, unknown>>("EMCP_WB_GetState", {}, { skipAutoLaunch: true });
 
         const lines: string[] = ["**Workbench State**\n"];
 

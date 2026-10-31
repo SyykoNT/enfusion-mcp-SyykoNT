@@ -136,6 +136,13 @@ export class WorkbenchClient {
             "API_ERROR"
           );
         }
+        if (options.skipAutoLaunch && err.code === "CONNECTION_REFUSED") {
+          throw new WorkbenchError(
+            `Workbench is not running on ${this.endpoint}. This call does not start Workbench; start it with ` +
+              `wb_launch after checking that nobody else is using Workbench.`,
+            "CONNECTION_REFUSED"
+          );
+        }
         if (!options.skipAutoLaunch && this.config && err.code === "CONNECTION_REFUSED") {
           // Workbench not running: install handlers, launch, retry
           logger.info(`Workbench not running, auto-launching...`);

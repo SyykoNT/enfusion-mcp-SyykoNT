@@ -43,7 +43,7 @@ export function registerWbTerrain(server: McpServer, client: WorkbenchClient): v
         if (x !== undefined) params.x = String(x);
         if (zCoord !== undefined) params.z = String(zCoord);
 
-        const result = await client.call<Record<string, unknown>>("EMCP_WB_Terrain", params);
+        const result = await client.call<Record<string, unknown>>("EMCP_WB_Terrain", params, { skipAutoLaunch: true });
 
         if (action === "getHeight") {
           const height = result.height ?? result.y ?? "unknown";
