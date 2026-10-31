@@ -50,7 +50,7 @@ function loadSchema(config: Config): Record<string, any> | null {
   return t ? JSON.parse(t) : null;
 }
 
-function serverLogsDir(config: Config): string {
+export function serverLogsDir(config: Config): string {
   return join(config.serverProfilePath, "logs");
 }
 

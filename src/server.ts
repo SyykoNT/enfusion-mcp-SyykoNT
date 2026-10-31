@@ -61,6 +61,7 @@ import { registerConfigOverride } from "./tools/config-override.js";
 import { registerEconomy } from "./tools/economy.js";
 import { registerServer } from "./tools/server.js";
 import { registerGame } from "./tools/game.js";
+import { registerScriptErrors } from "./tools/script-errors.js";
 import { registerEnvCheck } from "./tools/env-check.js";
 import type { Config } from "./config.js";
 
@@ -135,6 +136,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerEconomy(server, config);
   registerServer(server, config);
   registerGame(server, config);
+  registerScriptErrors(server, config);
   registerEnvCheck(server, config, wbClient);
 
   // MCP Prompts
