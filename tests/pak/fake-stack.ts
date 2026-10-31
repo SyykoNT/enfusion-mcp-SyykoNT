@@ -59,6 +59,11 @@ export function makeFakeStack(): { root: string; config: Config } {
     // Its parent reference names an old path; only the GUID still points at Pants_BDU.et
     "Prefabs/Moved_Child.et": `GenericEntity : "{${G.pantsBdu}}Prefabs/Old/Pants_BDU.et" {\n m_Child 1\n}\n`,
   }, { "Prefabs/Guerilla_Pants.et": G.guerilla, "Prefabs/Character_Base.et": G.character });
+  // As the Workshop writes them: UTF-8 BOM, gameVersion only in the meta
+  put(join(workshop, "ModB_BBBBBBBBBBBBBBBB"), {
+    "ServerData.json": '﻿{"id":"BBBBBBBBBBBBBBBB","name":"Mod B","revision":{"version":"1.2.0","gameVersion":""}}',
+    meta: '﻿{"meta":{"versions":[{"version":"1.2.0","gameVersion":"1.7.0.54","dependencies":[{"assetId":"58d0fb3206b6f859","assetName":"Arma Reforger","version":"1.8"}]},{"version":"1.1.0","gameVersion":"1.6.0.1"}]}}',
+  });
   packed(join(workshop, "ModC_CCCCCCCCCCCCCCCC"), {
     "dev.gproj": gproj("ModC", "CCCCCCCCCCCCCCCC", ["58D0FB3206B6F859"]),
   }, {});
