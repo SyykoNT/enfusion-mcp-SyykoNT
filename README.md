@@ -45,6 +45,9 @@ agent or client that can launch an MCP server can use it.
 | Run a dedicated server with your addon | Write `server.json`, build the command line | `server config` validates against the game's own `backend/DSConfigSchema.json`; `server start` loads your packed addons |
 | Join that server | Start the client with matching addons and flags | `game launch` with `connect` |
 | Place and edit entities in a world | World Editor, by hand | `wb_entity_*`, `wb_layers`, `wb_component` through Workbench's NET API |
+| See what a prefab or config really contains across your mods | Load the stack in Workbench, or unpack every mod and compare by hand | `resource_resolve` merges the inheritance chain and every same-path override from the base game, the Workshop cache and your projects, and names the addon and file behind each value |
+| Notice that Workbench is stuck | Switch to Workbench and look for a dialog | `wb_watch` reports a blocking dialog, a hang, an unfinished script reload or a crash, in its own status and in the footer of every live tool |
+| Run COALITION CRF's mission checks before a pull request | Push and wait for CI | `mission_validate` runs CRF's own check scripts locally and returns failures, warnings and the synopsis |
 
 ## Lineage
 
@@ -77,7 +80,23 @@ Fixes made in the process:
 - Generated overrides of non-void methods return the `super` call, so the scaffold compiles.
 - `asset_search` no longer shows an all-zero GUID for scripts.
 
-Test suite: 777 passed, 12 skipped.
+Added since that test pass:
+
+- One write guard for every file-writing tool, and launch and stop rules that leave other people's Workbench,
+  servers and game clients alone (see [Safety notes](#safety-notes)).
+- A rewritten Enfusion text parser and writer that keep the original text. `config_override set` and
+  `economy set` keep `+` appends, quoting, line endings and the final newline of an existing file. A read-only
+  run over 29,863 base-game and addon text files found no token changes.
+- Paged results for long files: `game_read` by lines, `wiki_read`, `wb_knowledge` and `resource_resolve` in
+  parts. `game_read` also reads one addon's own files, and answers `X.meta` from the resource database, since
+  packed addons ship no `.meta` files.
+- `mod pack` and `mod build` check the addon and the output folder before Workbench starts, and list the
+  resulting `data.pak`.
+- `server install` and `server update` leave Steam's own server install to Steam.
+- New tools: `resource_resolve`, `wb_watch`, `addon_git_guard`, and two read-only tools for COALITION CRF
+  missions, `mission_validate` and `gearscript_inspect`.
+
+Test suite: 1005 passed, 13 skipped.
 
 ## Requirements
 
@@ -87,8 +106,9 @@ Test suite: 777 passed, 12 skipped.
 | Node.js 20 or later | Tested with Node.js 24.22.1 and npm 11.19.1. |
 | Arma Reforger (Steam) | Read for game data, and launched for tests. 1.8 stable. |
 | Arma Reforger Tools (Steam) | Workbench (`ArmaReforgerWorkbenchSteamDiag.exe`) compiles, packs and runs the `wb_*` tools. 1.8 stable. |
-| Arma Reforger Server (optional) | The Steam install is used when present; `server install` can download it through SteamCMD. |
+| Arma Reforger Server (optional) | The Steam install is used when present; update it from Steam (`server install` and `update` refuse a folder under `steamapps\common`). To install it with SteamCMD instead, set `ENFUSION_SERVER_PATH` to a folder of its own. |
 | Workbench NET API (for `wb_*` tools) | Enable it in Workbench: File > Options > General > Net API. |
+| Python 3.11 or later (optional) | Only for `mission_validate`, which runs CRF's Python check scripts. |
 
 ## Installation
 
@@ -129,7 +149,7 @@ variables from [Configuration](#configuration). For Claude Code, in a project's 
 Other MCP clients use the same command, argument and environment in their own configuration format.
 
 Once connected, ask the agent to run `env_check`. It reports the game, Tools, server and folder paths it
-found, and what to set for anything missing. `env_check configure` saves paths to `~/.enfusion-mcp/config.json`.
+found, and what to set for anything missing.
 
 ## Configuration
 
@@ -144,32 +164,37 @@ defaults.
 | `ENFUSION_PROJECT_PATH` | `projectPath` | `Documents\My Games\ArmaReforgerWorkbench\addons` (OneDrive Documents detected) |
 | `ENFUSION_PACKED_PATH` | `packedPath` | `Documents\My Games\ArmaReforgerWorkbench\packed` |
 | `ENFUSION_ADDONS_DIR` | `addonsDir` | None. Passed to Workbench as `-addonsDir` (comma-separated) |
+| `ENFUSION_WORKSHOP_PATH` | `workshopPath` | `Documents\My Games\ArmaReforger\addons`, the game's Workshop download cache. Read, never written |
 | `ENFUSION_DEFAULT_MOD` | `defaultMod` | None. Set at runtime to the addon `wb_launch` opens |
 | `ENFUSION_PROTECTED_ADDONS` | `protectedAddons` | None. Addons no tool writes into, by `.gproj` GUID, ID or folder name (comma-separated) |
 | `ENFUSION_SERVER_PATH` | `serverPath` | Steam's `Arma Reforger Server` folder if installed, else `~/.enfusion-mcp/server` |
 | `ENFUSION_SERVER_PROFILE` | `serverProfilePath` | `~/.enfusion-mcp/server-profile` |
+| `ENFUSION_CLIENT_PROFILES` | `clientProfilesRoot` | `~/.enfusion-mcp/client-profiles`, where `game launch` records the clients it started |
 | `ENFUSION_STEAMCMD_PATH` | `steamcmdPath` | `~/.enfusion-mcp/steamcmd` |
 | `ENFUSION_WORKBENCH_HOST` | `workbenchHost` | `127.0.0.1` |
 | `ENFUSION_WORKBENCH_PORT` | `workbenchPort` | `5775` |
 | `ENFUSION_EXTRACTED_PATH` | `extractedPath` | An `extracted` folder next to the addons folder, if one exists |
 | `ENFUSION_MCP_DATA_DIR` | `dataDir` | The bundled `data/` folder |
-| `ENFUSION_FORBIDDEN_DIRS` | | None. Extra folders no tool writes into (comma-separated) |
+| `ENFUSION_FORBIDDEN_DIRS` | | None. Extra folders no tool writes into (comma-separated). The game and Tools installs and the Workshop caches are always refused |
 | `ENFUSION_WORKBENCH_PROFILE` | | Workbench profile folder used to find its `logs/`; detected when not set |
+| `ENFUSION_WORKBENCH_LOCK` | | None. A shared lock file for Workbench; `mod compile`, `pack` and `build` name its `owner:` line when they refuse because Workbench is open |
+| `ENFUSION_PYTHON` | | None. The `python.exe` for `mission_validate`; otherwise `py -3`, then `python`, then `python3`, the first that is 3.11 or later |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
 
 ## Tool reference
 
-60 tools, 3 guided prompts and 3 resource templates.
+65 tools, 3 guided prompts and 3 resource templates.
 
 ### Knowledge (offline)
 | Tool | Purpose |
 |---|---|
 | `api_search` | Classes, methods and enums of the 1.8 script API, with inherited methods |
 | `component_search` | Script components by category or event handler |
-| `wiki_search` / `wiki_read` | Bundled Bohemia wiki pages and tutorials |
-| `wb_knowledge` | Bundled modding knowledge base |
+| `wiki_search` / `wiki_read` | Bundled Bohemia wiki pages and tutorials; `wiki_read` takes a title or the page URL and returns long pages in parts |
+| `wb_knowledge` | Bundled modding knowledge base; long topics continue with `title` and `offset` |
 | `asset_search` | Game assets by name, with `{GUID}path` |
-| `game_browse` / `game_read` | Browse and read game files, including inside `.pak` archives |
+| `game_browse` / `game_read` | Browse and read game files, including inside `.pak` archives; `game_read` pages long files, shows the GUID, and with `addon` reads one Workshop mod or project |
+| `resource_resolve` | Effective prefab or config values across an addon's dependency stack, with the source of each value; also `providers`, `diff` and `stack` |
 | `workshop_info` | Workshop metadata from an addon's `.gproj` |
 
 ### Files and generators (offline)
@@ -196,13 +221,23 @@ defaults.
 | `server` | Dedicated server: `install`, `update`, `config`, `validate`, `start`, `stop`, `status`, `logs`, `scenarios` |
 | `server_config` | Generate a `server.json` |
 | `game` | Game client: `launch` (addons, connect, world), `stop`, `status`, `logs` |
-| `env_check` | Check the setup (`check`) or save paths (`configure`) |
+| `env_check` | Check the setup and say what to set for anything missing |
+| `addon_git_guard` | Local git commit guard for addon repos: `status`, `check` (both read-only) and `install` |
+
+### COALITION CRF missions (offline, read-only)
+Both tools read a CRF clone, and `gearscript_inspect` also a COALITION-Lobby clone, inside the project path.
+
+| Tool | Purpose |
+|---|---|
+| `mission_validate` | Runs CRF's own mission checks (`validate_mission.py`, `mission_synopsis.py`, `validate_resources.py`) on one mission world or on the worlds a branch changes; returns failures, warnings, the pull request title and check ticks CI would set, and the synopsis |
+| `gearscript_inspect` | What each role in a gearscript spawns with, by the rules of COALITION-Lobby's gear manager: weapons, magazines, clothing, items and radios; lists what the gear manager skips, and with `usedBy` which missions use the gearscript |
 
 ### Workbench session (NET API)
 | Tool | Purpose |
 |---|---|
-| `wb_launch` | Install the handler scripts into an addon and start Workbench |
-| `wb_connect` / `wb_diagnose` | Test the connection; full diagnostic without launching |
+| `wb_launch` | Install the handler scripts into an addon, start Workbench and watch it |
+| `wb_connect` / `wb_diagnose` | Test the connection; full diagnostic without launching, watchdog reports included |
+| `wb_watch` | Watchdog for Workbench: `status`, `start` (attach to a running Workbench) and `stop` |
 | `wb_state` | Mode, entity counts, selection, terrain bounds |
 | `wb_close` | Save the open world and exit Workbench |
 | `wb_cleanup` | Remove the handler scripts from an addon |
@@ -211,7 +246,7 @@ defaults.
 | `wb_undo_redo` | Undo or redo in the World Editor |
 | `wb_open_resource` | Open a resource in its Workbench editor |
 | `wb_execute_action` | Run a Workbench menu action by path |
-| `wb_reload` | Request a script or plugin reload (see Known limitations) |
+| `wb_reload` | Request a script or plugin reload through menu actions (see Known limitations) |
 | `wb_projects` | List, locate or open loaded projects |
 
 ### World Editor (NET API)
@@ -251,21 +286,41 @@ defaults.
 ## Safety notes
 
 - `wb_launch` copies the server's handler scripts into the addon it opens, under
-  `Scripts/WorkbenchGame/EnfusionMCP/`. `mod pack` warns when they are present. Run `wb_cleanup` before you
-  publish, and keep that folder out of version control.
+  `Scripts/WorkbenchGame/EnfusionMCP/`. `mod pack` and `mod build` refuse while they are present
+  (`allowHandlers=true` for a local test pack). Run `wb_cleanup` before you publish, and keep that folder out of
+  version control. `addon_git_guard install` adds a local pre-commit hook that refuses commits of those files,
+  their folder `.meta`, `resourceDatabase.rdb`, and `.c` files that start with a UTF-8 BOM.
+- `wb_launch` refuses a `gprojPath` in `ENFUSION_PROTECTED_ADDONS`, in the game or Tools install or in a
+  Workshop cache. Without `gprojPath` it falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project
+  path, skipping those.
 - Only `wb_launch` starts Workbench. `wb_cleanup`, `wb_diagnose` and `wb_knowledge` work without it, and
   `wb_close` reports that it is not running. Every other `wb_*` tool returns an error when Workbench is not
-  running.
+  running. Tools that need edit or play mode read the mode right before they act, and a refusal names the mode
+  they saw.
 - `wb_close` closes only a Workbench this server started. `server stop` and `game stop` act only on servers and
   game clients this server started.
 - These file-writing tools write only into an addon named with `modName` or `projectPath`, never into
   `ENFUSION_DEFAULT_MOD` by default: `script_create`, `prefab`, `config_create`, `layout_create`,
-  `layout_recipe`, `menu_create`, `game_duplicate`, `config_override` and `economy`. They refuse the game and
-  Tools installs, the Workshop caches, `ENFUSION_FORBIDDEN_DIRS`, the projects folder itself, folders without a
-  `.gproj` and the addons in `ENFUSION_PROTECTED_ADDONS`.
-- `gamemode_scaffold`, `building_setup` and `server_config` still write without this guard. A fix is planned.
-- `wb_entity_duplicate`, and `wb_launch` without `gprojPath`, still fall back to `ENFUSION_DEFAULT_MOD` or the
-  first addon in the project path. Name the target addon.
+  `layout_recipe`, `menu_create`, `game_duplicate`, `config_override`, `economy`, `gamemode_scaffold` and
+  `building_setup`. `server_config` takes its target from `projectPath` only (its `modName` is the addon ID to
+  load). They refuse the game and Tools installs, the Workshop caches, `ENFUSION_FORBIDDEN_DIRS`, the projects
+  folder itself, folders without a `.gproj` and the addons in `ENFUSION_PROTECTED_ADDONS`. Without a valid
+  target they write nothing.
+- `wb_entity_duplicate` still falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project path. Name
+  the target addon.
+- `server config` and `server start` replace only the server's own `<serverProfilePath>/server.json`; any other
+  `configPath` must be a new file. A server started with local addons binds `127.0.0.1`. The generated
+  `server.json` binds `0.0.0.0`.
+- `wb_launch` starts a watcher for each Workbench it starts, and `wb_watch start` attaches one to another
+  Workbench. A watcher never closes, kills or focuses a Workbench this server did not start. Its only automatic
+  click is Ignore on the diag build's "Resources are leaking!" assert, in any Workbench it watches,
+  and every click is reported. `wb_watch start` with `dismissLeakAssert=never` turns the click off.
+- `mission_validate` runs the Python scripts of the CRF clone in place (`python -I -B -X utf8`). It writes
+  nothing, but it executes that clone's code.
+- `addon_git_guard install` writes only into the `.git/hooks` folder of one named addon under the project path
+  or `ENFUSION_ADDONS_DIR`. It refuses protected addons, installs and Workshop caches, a repo with
+  `core.hooksPath` set, an existing pre-commit hook it did not write, and a repo whose `origin` is not under
+  `github.com/SyykoNT` unless `sharedRepoOk=true`.
 - Workbench's NET API listens on all network interfaces (`0.0.0.0:5775`). Block inbound TCP 5775 in the
   Windows firewall unless you need remote access.
 - The server does not publish to the Workshop. Publishing stays a manual step in Workbench.
@@ -273,19 +328,25 @@ defaults.
 ## Known limitations
 
 - `wb_reload` does not reload scripts on 1.8: the menu paths it tries do not exist there. It says so
-  ("Reload not confirmed") instead of reporting success. Use `mod compile` to check scripts.
+  ("Reload not confirmed") instead of reporting success. Workbench's built-in NET API call `ReloadScripts` does
+  reload, but no tool sends it yet. Saving a `.c` file of the loaded project also makes Workbench reload game
+  scripts. `mod compile` refuses while a Workbench is open (`force=true` runs it anyway).
 - The console server ignores the close request, so `server stop` kills it after `graceSec` (default 10 seconds).
-- `config_override set` and `economy set` can lose `+` appends and quotes when rewriting an existing override file.
 - `prefab create` from a recipe resolves the parent's components only when `parentPrefab` is given. Without
   it, the parent's components are added a second time.
 - Loading a generated config override or recipe prefab inside Workbench has not been tested yet.
-- Tools that need edit or play mode refuse while the mode is unknown. Call `wb_state` once at the start of a
-  session.
-- While Workbench shows a modal dialog, NET API calls time out after 10 seconds.
+- While Workbench shows a modal dialog, NET API calls time out after 10 seconds. The watchdog recognizes
+  standard Windows dialog boxes, and other dialogs only by the titles "Opening world" and "Script Authorization
+  Required".
+- `wb_watch` with `autoRecover` does not act yet: recovery needs a lock file entry naming the session, and no
+  tool writes one.
+- `wb_launch` with `unattended` passes `-noThrow`, which Bohemia documents as disabling error dialogs. It is
+  untested on a GUI Workbench and on Script Authorization prompts.
 - `wb_resources register` reports "Registered" even when Workbench returns false (for example, a file that is
   already registered).
 - `economy set` for ranks changes every faction's rank file that contains the rank.
-- `game_read` returns a whole file in one result, with no paging. Some clients truncate very large results.
+- `resource_resolve` assumes dependencies load depth first in `Dependencies` order; the engine's real order
+  among sibling dependencies is not verified yet.
 
 ## Development
 
@@ -302,7 +363,9 @@ npm run tuning-server   # local web UI for vehicle engine values (port 5790)
 src/
   tools/        one file per tool or tool family
   workbench/    NET API client and headless Workbench runner
-  pak/          .pak reader and resourceDatabase.rdb reader
+  watchdog/     Workbench watcher process and its signals
+  release/      git helpers and commit guard hooks
+  pak/          .pak reader, resourceDatabase.rdb reader and the addon stack
   formats/      Enfusion text format parser and override engine
   scraper/      API docs scraper
   templates/    generators for scripts, prefabs, layouts, server.json
@@ -315,9 +378,9 @@ tests/          vitest
 
 ## Status
 
-Version 0.13.1. The write guards and launch rules under [Safety notes](#safety-notes) are merged. Under
-review and not yet merged: a rewrite of the Enfusion text writer so that `config_override` and `economy` keep
-`+` appends and quoting.
+Version 0.13.1, 65 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
+Workbench are still open for the newest work: loading files written by the new text writer, and the watchdog
+against live dialogs.
 
 ## Credits and license
 
