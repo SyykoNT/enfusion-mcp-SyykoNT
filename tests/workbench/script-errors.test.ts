@@ -104,6 +104,15 @@ describe("scriptErrorParser", () => {
     expect(after.errors).toBe(2); // 00:00 is the day after the 23:50 start, so both 23:59 lines are before it
   });
 
+  it("keeps times on the start day when lines or since are more than 12 h after the start", () => {
+    const head = HEADER.map((l) => l.replace("2026-10-24 15:00:36", "2026-10-24 08:00:00"));
+    const lines = [...head, "08:00:01.000 SCRIPT    (E): early", "09:00:00.000 SCRIPT    (E): nine", "21:30:00.000 SCRIPT    (E): late"];
+    const s = parse(lines);
+    expect(new Date(s.groups.find((g) => g.message === "late")!.first)).toEqual(new Date(2026, 9, 24, 21, 30));
+    expect(parse(lines, { since: "21:00" }).groups.map((g) => g.message)).toEqual(["late"]);
+    expect(parse(lines, { since: "07:00" }).errors).toBe(0); // before the start, so 07:00 the next day
+  });
+
   it("counts a block cut off at the end of the log", () => {
     const s = parse(CLASS_BLOCK("15:04:01.964").slice(0, 5));
     expect(s.vme).toBe(1);

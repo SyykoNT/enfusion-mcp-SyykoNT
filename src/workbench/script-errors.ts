@@ -58,7 +58,9 @@ const HEADER = /^Log .* started at (\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/;
 const VME_START = /^\d\d:\d\d:\d\d\.\d{3}\s+SCRIPT\s+\(E\): Virtual Machine Exception$/;
 const SCRIPT_ERROR = /^\d\d:\d\d:\d\d\.\d{3}\s+SCRIPT\s+\(E\): (.+)$/;
 const FRAME = /^(\S.*\.c):(\d+) Function (\S+)$/;
-const HALF_DAY = 12 * 3600_000;
+const DAY = 24 * 3600_000;
+/** Lines can be a few ms out of order (around midnight too), so only a time this far before the previous one is the next day. */
+const REORDER_MS = 60_000;
 
 /** Start time of a log from its header line `Log <path> started at YYYY-MM-DD HH:MM:SS`, local epoch ms. */
 export function parseLogHeader(line: string): number | undefined {
@@ -67,8 +69,8 @@ export function parseLogHeader(line: string): number | undefined {
 }
 
 /**
- * Local epoch ms of a line's leading `HH:MM:SS.mmm`, on the day of `prevMs` (else the header, else 1970-01-01).
- * The nearest day wins: runs cross midnight, and lines can be a few ms out of order around it.
+ * Local epoch ms of a line's leading `HH:MM:SS.mmm`: the first such time at or after `prevMs` (else the header,
+ * else 1970-01-01), less a minute for lines logged slightly out of order. Time only moves forward, so runs cross midnight.
  */
 export function parseLogTime(header: number | undefined, line: string, prevMs?: number): number | undefined {
   const m = TIME.exec(line);
@@ -78,7 +80,7 @@ export function parseLogTime(header: number | undefined, line: string, prevMs?: 
   const at = (days: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, +m[1], +m[2], +m[3], +m[4]).getTime();
   const t = at(0);
   if (ref === undefined) return t;
-  return t < ref - HALF_DAY ? at(1) : t > ref + HALF_DAY ? at(-1) : t;
+  return t < ref - REORDER_MS ? at(1) : t >= ref - REORDER_MS + DAY ? at(-1) : t;
 }
 
 /** `HH:MM:SS.mmm`, with `YYYY-MM-DD` and `sep` in front when withDate. */
