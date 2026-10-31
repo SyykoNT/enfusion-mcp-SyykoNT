@@ -6,6 +6,7 @@ import type { Config } from "../config.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 import { findPids, killPids, sleep } from "../utils/process.js";
+import { isOwned } from "../utils/instances.js";
 
 export function registerWbLaunch(
   server: McpServer,
@@ -87,9 +88,9 @@ export function registerWbLaunch(
     "wb_close",
     {
       description:
-        "Acts on every running Workbench process (not just one project) until per-instance close exists: it asks " +
-        "all of them to close and, with force=true, kills all of them. Never close a Workbench you did not start. " +
-        "By default saves the open world first and exits cleanly through the NET API.",
+        "Close a Workbench this MCP session started (recorded at launch); any other Workbench is refused and left running. " +
+        "By default saves the open world first and exits cleanly through the NET API (skipped while another Workbench runs, " +
+        "because that one may own the NET API port); force=true kills the owned process if it does not exit.",
       inputSchema: {
         save: z.boolean().default(true).describe("Save the open world before exiting (default true)"),
         force: z.boolean().default(false).describe("Kill the process if it does not exit on its own (unsaved work is lost)"),
@@ -97,36 +98,51 @@ export function registerWbLaunch(
     },
     async ({ save, force }) => {
       const image = "ArmaReforgerWorkbenchSteamDiag.exe";
-      if (findPids(image).length === 0) {
+      const pids = findPids(image);
+      if (pids.length === 0) {
         return { content: [{ type: "text" as const, text: "Workbench is not running." }] };
       }
-      const notes: string[] = [];
-      try {
-        const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { skipAutoLaunch: true, timeout: 20_000 });
-        notes.push(save ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : "Closed without saving.");
-      } catch (e) {
-        // In edit mode the handler exits at once, so the connection drops before it answers.
-        await sleep(1500);
-        if (findPids(image).length) notes.push(`NET API exit failed (${e instanceof Error ? e.message : String(e)}).`);
+      const owned = pids.filter((pid) => isOwned(pid));
+      const others = pids.filter((pid) => !owned.includes(pid));
+      const untouched = others.length
+        ? ` Not touched: Workbench pid ${others.join(", ")}, not started by this MCP session; close it in Workbench or ask whoever uses it.`
+        : "";
+      if (!owned.length) {
+        return { content: [{ type: "text" as const, text: `**Not closed.**${untouched}` }], isError: true };
       }
-      for (let i = 0; i < 10 && findPids(image).length; i++) await sleep(500);
+      const alive = () => findPids(image).filter((pid) => owned.includes(pid));
+      const notes: string[] = [];
+      if (others.length) {
+        notes.push("NET API exit skipped (another Workbench may be the one answering on the NET API port).");
+      } else {
+        try {
+          const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { skipAutoLaunch: true, timeout: 20_000 });
+          notes.push(save ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : "Closed without saving.");
+        } catch (e) {
+          // In edit mode the handler exits at once, so the connection drops before it answers.
+          await sleep(1500);
+          if (alive().length) notes.push(`NET API exit failed (${e instanceof Error ? e.message : String(e)}).`);
+        }
+        for (let i = 0; i < 10 && alive().length; i++) await sleep(500);
+      }
       // Each polite close shuts one top-level window, so repeat it while waiting.
-      for (let i = 0; i < 20 && findPids(image).length; i++) {
-        if (i % 4 === 0) killPids(findPids(image));
+      for (let i = 0; i < 20 && alive().length; i++) {
+        if (i % 4 === 0) killPids(alive());
         await sleep(500);
       }
-      if (findPids(image).length && force) {
-        killPids(findPids(image), true);
+      if (alive().length && force) {
+        // Re-check ownership right before the kill: a PID can be reused while we waited.
+        killPids(alive().filter((pid) => isOwned(pid)), true);
         await sleep(1000);
         notes.push("Process killed (force).");
       }
-      const still = findPids(image).length > 0;
+      const still = alive().length > 0;
       return {
         content: [{
           type: "text" as const,
           text: still
-            ? `**Workbench is still running** — it may be showing a dialog. ${notes.join(" ")} Retry with force=true to kill it.`
-            : `**Workbench closed.** ${notes.join(" ")}`,
+            ? `**Workbench is still running**: it may be showing a dialog. ${notes.join(" ")} Retry with force=true to kill it.${untouched}`
+            : `**Workbench closed.** ${notes.join(" ")}${untouched}`,
         }],
         ...(still ? { isError: true as const } : {}),
       };

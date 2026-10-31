@@ -82,15 +82,15 @@ async function stopServer(e: Entry, force: boolean, graceSec: number): Promise<{
   };
   let method: string;
   if (force) {
-    killPids([pid], true);
+    killPids([pid], true, true);
     method = (await waitGone(10_000)) ? "forced (force=true)" : "still running";
   } else {
-    killPids([pid]);
+    killPids([pid], false, true);
     if (await waitGone(graceSec * 1000)) method = "closed on request";
     // Re-check identity before the kill: the PID may have been reused while we waited.
     else if (processInfo(pid)?.created !== e.proc.created) method = "exited (PID reused)";
     else {
-      killPids([pid], true);
+      killPids([pid], true, true);
       method = (await waitGone(10_000)) ? `forced after ${graceSec} s grace` : "still running";
     }
   }

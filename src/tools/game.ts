@@ -6,7 +6,7 @@ import { myGamesDir } from "../utils/game-paths.js";
 import type { Config } from "../config.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive } from "../utils/process.js";
-import { OWNER, clientInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
+import { OWNER, pidInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
 
 const GAME_EXE = "ArmaReforgerSteam.exe";
 const GAME_DIAG_EXE = "ArmaReforgerSteamDiag.exe"; // needed for -client / -world
@@ -59,7 +59,7 @@ export function registerGame(server: McpServer, config: Config): void {
           args.push(...(a.extraArgs ?? []));
           const started = Date.now();
           const pid = spawnDetached(exe, args, config.gamePath);
-          writeInstance(clientInstanceFile(config.clientProfilesRoot, pid), {
+          writeInstance(pidInstanceFile(config.clientProfilesRoot, pid), {
             kind: "client", name: "default", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe,
           });
           await sleep(3000);
@@ -74,7 +74,7 @@ export function registerGame(server: McpServer, config: Config): void {
             ? `\nNot touched: ${others.length} game client(s) not started by this MCP session (pid ${others.map((e) => e.proc.pid).join(", ")}).`
             : "";
           if (!stop.length) return text("No game client started by this MCP is running." + untouched);
-          killPids(stop.map((e) => e.proc.pid), a.force);
+          killPids(stop.map((e) => e.proc.pid), a.force, true);
           for (let i = 0; i < 20 && stop.some((e) => isAlive(e.proc.pid)); i++) await sleep(500);
           for (const e of stop) if (!isAlive(e.proc.pid)) rmSync(e.file!, { force: true });
           const still = stop.filter((e) => isAlive(e.proc.pid));

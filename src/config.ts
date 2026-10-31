@@ -46,7 +46,7 @@ export interface Config {
 const DEFAULT_WORKBENCH_PATH =
   "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools";
 
-const MCP_HOME = join(homedir(), ".enfusion-mcp");
+export const MCP_HOME = join(homedir(), ".enfusion-mcp");
 
 const STEAM_SERVER_PATH = resolve(DEFAULT_WORKBENCH_PATH, "..", "Arma Reforger Server");
 

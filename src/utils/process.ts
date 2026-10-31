@@ -24,13 +24,13 @@ export function findPids(image: string): number[] {
 
 /**
  * Stop processes. Without `force`, ask them to close (WM_CLOSE / SIGTERM) so they can
- * save; with `force`, kill the whole tree.
+ * save; with `force`, kill them. `tree` also ends their child processes (Windows only).
  */
-export function killPids(pids: number[], force = false): void {
+export function killPids(pids: number[], force = false, tree = false): void {
   for (const pid of pids) {
     try {
       if (IS_WIN) {
-        execFileSync("taskkill", ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])], { windowsHide: true, stdio: "ignore" });
+        execFileSync("taskkill", ["/PID", String(pid), ...(tree ? ["/T"] : []), ...(force ? ["/F"] : [])], { windowsHide: true, stdio: "ignore" });
       } else {
         process.kill(pid, force ? "SIGKILL" : "SIGTERM");
       }

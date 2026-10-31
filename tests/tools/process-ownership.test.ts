@@ -20,7 +20,7 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
 }));
 
 const { killPids } = await import("../../src/utils/process.js");
-const { INSTANCE_FILE, OWNER, clientInstanceFile, writeInstance } = await import("../../src/utils/instances.js");
+const { INSTANCE_FILE, OWNER, pidInstanceFile, writeInstance } = await import("../../src/utils/instances.js");
 const { registerServer } = await import("../../src/tools/server.js");
 const { registerGame } = await import("../../src/tools/game.js");
 const { loadConfig } = await import("../../src/config.js");
@@ -67,7 +67,7 @@ describe("server stop", () => {
     const result = await tool(registerServer, config)({ action: "stop", graceSec: 0 });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("forced after 0 s grace");
-    expect(vi.mocked(killPids).mock.calls).toEqual([[[100]], [[100], true]]);
+    expect(vi.mocked(killPids).mock.calls).toEqual([[[100], false, true], [[100], true, true]]);
   });
 
   it("with only foreign servers running, kills nothing even with force", async () => {
@@ -83,7 +83,7 @@ describe("server stop", () => {
 describe("game stop", () => {
   it("closes the MCP's client and leaves the user's own game alone", async () => {
     const config = { ...loadConfig(), clientProfilesRoot: mkdtempSync(join(tmpdir(), "emcp-cli-")) };
-    writeInstance(clientInstanceFile(config.clientProfilesRoot, 300), { kind: "client", pid: 300, ...own });
+    writeInstance(pidInstanceFile(config.clientProfilesRoot, 300), { kind: "client", pid: 300, ...own });
     procs.clients = [
       { pid: 300, ppid: 1, cmd: "ArmaReforgerSteamDiag.exe -client 127.0.0.1", created: now },
       { pid: 400, ppid: 1, cmd: "ArmaReforgerSteam.exe", created: now },

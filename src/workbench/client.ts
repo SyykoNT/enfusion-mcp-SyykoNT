@@ -18,6 +18,7 @@ import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
 import { findWorkbenchExe } from "../utils/game-paths.js";
 import { findPids } from "../utils/process.js";
+import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 
@@ -472,7 +473,7 @@ export class WorkbenchClient {
       throw new WorkbenchError(
         `Workbench is already running (PID ${running.join(", ")}) but its NET API does not answer. ` +
           `It may still be loading, showing a dialog, or hung. Not starting another copy; ` +
-          `check the Workbench window, or close it with wb_close (force=true if it is hung).`,
+          `check the Workbench window (wb_close closes it only if this MCP session started it).`,
         "LAUNCH_FAILED"
       );
     }
@@ -527,12 +528,24 @@ export class WorkbenchClient {
     const cwd = this.findGameDir() || dirname(exePath);
 
     logger.info(`Launching Workbench: ${exePath}${args.length ? ` ${args.join(" ")}` : ""} (cwd: ${cwd})`);
+    const launchedAt = Date.now();
     const proc = spawn(exePath, args, {
       detached: true,
       stdio: "ignore",
       cwd,
     });
     proc.unref();
+    // wb_close acts only on Workbench processes recorded here.
+    if (proc.pid) {
+      try {
+        writeInstance(pidInstanceFile(WORKBENCH_INSTANCES, proc.pid), {
+          kind: "workbench", name: resolvedGproj ?? "workbench", pid: proc.pid,
+          ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: launchedAt, exe: exePath,
+        });
+      } catch (e) {
+        logger.warn(`Could not record Workbench PID ${proc.pid}; wb_close will not close it: ${e}`);
+      }
+    }
 
     // 5. Wait for NET API — track the last error type so the timeout message is actionable
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;

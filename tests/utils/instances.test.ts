@@ -6,7 +6,8 @@ import {
   INSTANCE_FILE,
   OWNER,
   classify,
-  clientInstanceFile,
+  pidInstanceFile,
+  isOwned,
   planStop,
   scan,
   writeInstance,
@@ -53,7 +54,7 @@ describe("scan", () => {
 
   it("finds client files by PID; the user's own game (no file) is foreign", () => {
     const root = mkdtempSync(join(tmpdir(), "emcp-cli-"));
-    writeInstance(clientInstanceFile(root, 20), inst(20, { kind: "client" }));
+    writeInstance(pidInstanceFile(root, 20), inst(20, { kind: "client" }));
     const entries = scan([proc(20, "ArmaReforgerSteamDiag.exe -client 127.0.0.1"), proc(21, "ArmaReforgerSteam.exe")], { clientRoot: root });
     expect(entries.map((e) => e.cls)).toEqual(["own", "foreign"]);
   });
@@ -61,12 +62,31 @@ describe("scan", () => {
   it("looks up each other owner once", () => {
     const root = mkdtempSync(join(tmpdir(), "emcp-cli-"));
     const other = { kind: "client" as const, ownerPid: 999_999, ownerStartedAt: T - 1000 };
-    writeInstance(clientInstanceFile(root, 30), inst(30, other));
-    writeInstance(clientInstanceFile(root, 31), inst(31, other));
+    writeInstance(pidInstanceFile(root, 30), inst(30, other));
+    writeInstance(pidInstanceFile(root, 31), inst(31, other));
     let lookups = 0;
     const entries = scan([proc(30), proc(31)], { clientRoot: root, ownerCreated: () => (lookups++, T - 1200) });
     expect(entries.map((e) => e.cls)).toEqual(["foreign", "foreign"]);
     expect(lookups).toBe(1);
+  });
+});
+
+describe("isOwned (Workbench registry)", () => {
+  const root = mkdtempSync(join(tmpdir(), "emcp-wb-"));
+  writeInstance(pidInstanceFile(root, 70), inst(70, { kind: "workbench" }));
+  writeInstance(pidInstanceFile(root, 72), inst(72, { kind: "workbench", ownerPid: 999_999, ownerStartedAt: T - 1000 }));
+
+  it("is true for a Workbench this MCP spawned", () => {
+    expect(isOwned(70, root, proc(70))).toBe(true);
+  });
+
+  it("is false when the process start time differs (PID reused)", () => {
+    expect(isOwned(70, root, proc(70, "", T + 60_000))).toBe(false);
+  });
+
+  it("is false with no record (the user's own Workbench) or another MCP's record", () => {
+    expect(isOwned(71, root, proc(71))).toBe(false);
+    expect(isOwned(72, root, proc(72))).toBe(false);
   });
 });
 

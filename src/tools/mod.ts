@@ -409,7 +409,7 @@ export function registerMod(
             content: [{
               type: "text",
               text: "Workbench is open. A second (headless) Workbench on the same addon can crash the open one. " +
-                "Ask the user to close it (wb_close closes every Workbench on this PC), or pass force=true.",
+                "Ask the user to close it (wb_close closes only a Workbench this MCP session started), or pass force=true.",
             }],
             isError: true,
           };

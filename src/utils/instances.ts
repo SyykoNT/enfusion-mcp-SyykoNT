@@ -9,9 +9,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { argValue, processInfo, type ProcInfo } from "./process.js";
+import { MCP_HOME } from "../config.js";
 
 export interface Instance {
-  kind: "server" | "client";
+  kind: "server" | "client" | "workbench";
   name: string;
   pid: number;
   ownerPid: number;
@@ -36,8 +37,16 @@ export const INSTANCE_FILE = "emcp-instance.json";
 /** This MCP process. The start time tells a reused owner PID from the real owner. */
 export const OWNER = { pid: process.pid, startedAt: Math.round(Date.now() - process.uptime() * 1000) };
 
-/** Clients started without a profile of their own keep their file in the client profiles root, by PID. */
-export const clientInstanceFile = (root: string, pid: number) => join(root, `${pid}.${INSTANCE_FILE}`);
+/** Processes without a profile dir of their own (clients, Workbench) keep their file in a root folder, by PID. */
+export const pidInstanceFile = (root: string, pid: number) => join(root, `${pid}.${INSTANCE_FILE}`);
+
+/** Where the Workbench processes this MCP spawns are recorded. */
+export const WORKBENCH_INSTANCES = join(MCP_HOME, "instances");
+
+/** True only for a Workbench this MCP process spawned: recorded PID, same process start time (within 10 s), same owner. */
+export function isOwned(pid: number, root = WORKBENCH_INSTANCES, proc = processInfo(pid)): boolean {
+  return !!proc && classify(readInstance(pidInstanceFile(root, pid)), proc) === "own";
+}
 
 export function writeInstance(file: string, inst: Instance): void {
   mkdirSync(dirname(file), { recursive: true });
@@ -77,7 +86,7 @@ export function scan(
   const owners = new Map<number, number | undefined>();
   return procs.map((proc) => {
     const profile = argValue(proc.cmd, "-profile");
-    const file = opts.clientRoot ? clientInstanceFile(opts.clientRoot, proc.pid) : profile ? join(profile, INSTANCE_FILE) : undefined;
+    const file = opts.clientRoot ? pidInstanceFile(opts.clientRoot, proc.pid) : profile ? join(profile, INSTANCE_FILE) : undefined;
     const inst = file ? readInstance(file) : undefined;
     const isOwn = inst?.ownerPid === OWNER.pid && inst.ownerStartedAt === OWNER.startedAt;
     if (inst && !isOwn && !owners.has(inst.ownerPid)) owners.set(inst.ownerPid, lookup(inst.ownerPid));
