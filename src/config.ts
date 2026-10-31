@@ -34,6 +34,8 @@ export interface Config {
   steamcmdPath: string;
   /** Server profile dir (saves, logs, downloaded workshop mods). */
   serverProfilePath: string;
+  /** Where `game launch` records the clients it started. Set via ENFUSION_CLIENT_PROFILES. */
+  clientProfilesRoot: string;
   /** Where `mod build` writes packed addons (each in <dir>/<AddonName>). */
   packedPath: string;
   /** Passed to Workbench as -addonsDir (comma-separated) on GUI and headless launches, so
@@ -53,6 +55,7 @@ const DEFAULTS: Config = {
   serverPath: existsSync(join(STEAM_SERVER_PATH, "ArmaReforgerServer.exe")) ? STEAM_SERVER_PATH : join(MCP_HOME, "server"),
   steamcmdPath: join(MCP_HOME, "steamcmd"),
   serverProfilePath: join(MCP_HOME, "server-profile"),
+  clientProfilesRoot: join(MCP_HOME, "client-profiles"),
   packedPath: join(myGamesDir(), "ArmaReforgerWorkbench", "packed"),
   projectPath: join(myGamesDir(), "ArmaReforgerWorkbench", "addons"),
   gamePath: resolve(DEFAULT_WORKBENCH_PATH, "..", "Arma Reforger"),
@@ -132,6 +135,7 @@ export function loadConfig(): Config {
   if (process.env.ENFUSION_SERVER_PATH) config.serverPath = process.env.ENFUSION_SERVER_PATH;
   if (process.env.ENFUSION_STEAMCMD_PATH) config.steamcmdPath = process.env.ENFUSION_STEAMCMD_PATH;
   if (process.env.ENFUSION_SERVER_PROFILE) config.serverProfilePath = process.env.ENFUSION_SERVER_PROFILE;
+  if (process.env.ENFUSION_CLIENT_PROFILES) config.clientProfilesRoot = process.env.ENFUSION_CLIENT_PROFILES;
   if (process.env.ENFUSION_PACKED_PATH) config.packedPath = process.env.ENFUSION_PACKED_PATH;
   if (process.env.ENFUSION_ADDONS_DIR) config.addonsDir = process.env.ENFUSION_ADDONS_DIR;
   if (process.env.ENFUSION_DEFAULT_MOD) {
