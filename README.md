@@ -179,7 +179,7 @@ never into Workshop downloads there (folders with `ServerData.json`) or into the
 | `ENFUSION_WORKBENCH_PORT` | `workbenchPort` | `5775` |
 | `ENFUSION_EXTRACTED_PATH` | `extractedPath` | An `extracted` folder next to the addons folder, if one exists |
 | `ENFUSION_MCP_DATA_DIR` | `dataDir` | The bundled `data/` folder |
-| `ENFUSION_FORBIDDEN_DIRS` | | None. Extra folders no tool writes into (comma-separated). The game and Tools installs and the Workshop caches are always refused |
+| `ENFUSION_FORBIDDEN_DIRS` | | None. Extra folders no tool writes into (comma-separated). The game and Tools installs, the game's Workshop cache and Workshop downloads (folders with `ServerData.json`) are always refused |
 | `ENFUSION_WORKBENCH_PROFILE` | | Workbench profile folder used to find its `logs/`; detected when not set |
 | `ENFUSION_WORKBENCH_LOCK` | | None. A shared lock file for Workbench; `mod compile`, `pack` and `build` name its `owner:` line when they refuse because Workbench is open |
 | `ENFUSION_PYTHON` | | None. The `python.exe` for `mission_validate`; otherwise `py -3`, then `python`, then `python3`, the first that is 3.11 or later |
@@ -308,8 +308,9 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
   `ENFUSION_DEFAULT_MOD` by default: `script_create`, `prefab`, `config_create`, `layout_create`,
   `layout_recipe`, `menu_create`, `game_duplicate`, `config_override`, `economy`, `gamemode_scaffold` and
   `building_setup`. `server_config` takes its target from `projectPath` only (its `modName` is the addon ID to
-  load). They refuse the game and Tools installs, the Workshop caches, `ENFUSION_FORBIDDEN_DIRS`, the projects
-  folder itself, folders without a `.gproj` and the addons in `ENFUSION_PROTECTED_ADDONS`. Without a valid
+  load). They refuse the game and Tools installs, the game's Workshop cache, Workshop downloads (folders with
+  `ServerData.json`), `ENFUSION_FORBIDDEN_DIRS`, the projects folder itself, folders without a `.gproj` and the
+  addons in `ENFUSION_PROTECTED_ADDONS`. Without a valid
   target they write nothing.
 - `wb_entity_duplicate` still falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project path. Name
   the target addon.
@@ -323,7 +324,7 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
 - `mission_validate` runs the Python scripts of the CRF clone in place (`python -I -B -X utf8`). It writes
   nothing, but it executes that clone's code.
 - `addon_git_guard install` writes only into the `.git/hooks` folder of one named addon under the project path
-  or `ENFUSION_ADDONS_DIR`. It refuses protected addons, installs and Workshop caches, a repo with
+  or `ENFUSION_ADDONS_DIR`. It refuses protected addons, installs, the game's Workshop cache and Workshop downloads, a repo with
   `core.hooksPath` set, an existing pre-commit hook it did not write, and a repo whose `origin` is not under
   `github.com/SyykoNT` unless `sharedRepoOk=true`.
 - Workbench's NET API listens on all network interfaces (`0.0.0.0:5775`). Block inbound TCP 5775 in the
