@@ -1,4 +1,4 @@
-/** Most characters one page may hold: Claude Code saves results over 50,000 chars to a file instead (code.claude.com/docs/en/mcp). */
+/** Most characters one page may hold: many MCP clients truncate results above about 50,000 characters. */
 export const MAX_PAGE_CHARS = 45_000;
 
 const fmt = (n: number) => n.toLocaleString("en-US");

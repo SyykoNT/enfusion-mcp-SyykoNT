@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { searchKb, getIndexSummary, getKbEntry } from "./kb-loader.js";
 import { takePart } from "../utils/paging.js";
 
-/** Characters of KB text per answer, across all files: under Claude Code's 50,000-char inline limit. */
+/** Characters of KB text per answer, across all files: many MCP clients truncate results above about 50,000 characters. */
 const BUDGET = 30_000;
 
 const KB_DIR = resolve(
