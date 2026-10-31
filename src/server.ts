@@ -9,6 +9,7 @@ import { registerPrefab } from "./tools/prefab.js";
 import { registerMod } from "./tools/mod.js";
 import { registerConfigCreate } from "./tools/config-create.js";
 import { registerServerConfig } from "./tools/server-config.js";
+import { registerMissionValidate } from "./tools/mission-validate.js";
 import { registerLayoutCreate } from "./tools/layout-create.js";
 import { registerLayoutRecipe } from "./tools/layout-recipe.js";
 import { registerMenuCreate } from "./tools/menu-create.js";
@@ -78,6 +79,7 @@ export function registerTools(server: McpServer, config: Config): void {
   // Phase 3 tools
   registerConfigCreate(server, config);
   registerServerConfig(server, config);
+  registerMissionValidate(server, config);
   registerLayoutCreate(server, config);
   registerLayoutRecipe(server, config);
   registerMenuCreate(server, config);

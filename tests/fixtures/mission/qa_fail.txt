@@ -1,0 +1,20 @@
+Scanned: FixtureFramework, FixtureLobby
+
+# Worlds/Testland/Fixture_TVT_Hill.ent  (entity in Worlds/Testland/Fixture_TVT_Hill_Layers/default.layer)
+
+## Slots - Red
+[OK] Red has a leader slot
+[OK] Red slot count is even
+
+## Kit - Red
+[OK] Red kit file found
+[-] Red magazine lookup skipped offline
+
+## Settings
+[X] Setting Alpha is off while Beta is on
+[X] Briefing "Red Notes" is still empty
+[OK] Side ratio is within range
+[X] Briefing "Blue Notes" is still empty
+a line with no known prefix
+
+3 failure(s), 0 warning(s) across 1 world(s).
