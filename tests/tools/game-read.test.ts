@@ -14,8 +14,10 @@ const root = mkdtempSync(join(tmpdir(), "emcp-gr-"));
 const data = join(root, "game", "addons", "data");
 mkdirSync(join(data, "Prefabs"), { recursive: true });
 const big = Array.from({ length: 20_000 }, (_, i) => `// line ${i}`).join("\n") + "\n";
+const noEol = Array.from({ length: 900 }, (_, i) => `k${i} "v"`).join("\n"); // no newline at the end
 writeFileSync(join(data, "data.pak"), buildTestPak([
   { path: "Scripts/Game/Big.c", content: big, compress: true },
+  { path: "Language/NoEol.conf", content: noEol, compress: true },
   { path: "Configs/Hit.ct", content: "SCR_HitZone {\n m_fHealth 100\n}\n", compress: false },
   { path: "Prefabs/Char.et", content: "GenericEntity {\n}\n", compress: false },
   { path: "worlds/Arland.ent", content: "EBIN\u0001\u0002binary", compress: false },
@@ -35,26 +37,36 @@ let read!: Handler;
 registerGameRead({ registerTool: (_n: string, _d: unknown, h: Handler) => { read = h; } } as unknown as McpServer,
   { gamePath: join(root, "game"), projectPath: fake.config.projectPath, workshopPath: fake.config.workshopPath } as Config);
 const text = async (a: Record<string, unknown>) => (await read(a)).content[0].text;
+/** All pages of a file put together: each body runs from the blank line to the continue line, or to the end. */
+const reassemble = async (path: string) => {
+  let all = "", offset = 0;
+  for (;;) {
+    const t = await text({ path, offset, limit: 2000 });
+    const next = t.match(/\/\/ lines [^\n]*continue with offset=(\d+)$/);
+    all += t.slice(t.indexOf("\n\n") + 2, next ? next.index : undefined);
+    if (!next) return all;
+    offset = Number(next[1]);
+  }
+};
 
 describe("game_read", () => {
   it("pages a large pak file, and the pages put together give the file back", async () => {
     const first = await text({ path: "Scripts/Game/Big.c" });
-    expect(first).toMatch(/^\/\/ Scripts\/Game\/Big\.c \(from \.pak\) \| 20000 lines, \d+ bytes/);
+    expect(first).toMatch(/^\/\/ Scripts\/Game\/Big\.c \(from \.pak\) \| \d+ bytes \| lines 1-400 of 20,000; continue with offset=400\n/);
     expect(first).toMatch(/\/\/ lines 1-400 of 20,000; continue with offset=400$/);
-    let all = "", offset = 0;
-    for (;;) {
-      const t = await text({ path: "Scripts/Game/Big.c", offset, limit: 2000 });
-      all += t.slice(t.indexOf("\n\n") + 2, t.lastIndexOf("// lines"));
-      const next = t.match(/offset=(\d+)$/);
-      if (!next) break;
-      offset = Number(next[1]);
-    }
-    expect(all).toBe(big);
+    expect(await reassemble("Scripts/Game/Big.c")).toBe(big);
     expect((await read({ path: "Scripts/Game/Big.c", offset: 20_000 })).isError).toBe(true);
   });
 
+  it("adds nothing after a last page that has no newline, so the pages give the file back byte for byte", async () => {
+    const last = await text({ path: "Language/NoEol.conf", offset: 800 });
+    expect(last).toMatch(/\| lines 801-900 of 900 \(end\)\n\n/);
+    expect(last.endsWith('k899 "v"')).toBe(true);
+    expect(await reassemble("Language/NoEol.conf")).toBe(noEol);
+  });
+
   it("accepts a {GUID} prefix, shows the GUID, reads .ct as text and refuses EBIN", async () => {
-    expect(await text({ path: "{37578B1666981FCE}Prefabs/Char.et" })).toContain("(from .pak) {37578B1666981FCE}Prefabs/Char.et | 2 lines");
+    expect(await text({ path: "{37578B1666981FCE}Prefabs/Char.et" })).toContain("(from .pak) {37578B1666981FCE}Prefabs/Char.et | 18 bytes | lines 1-2 of 2 (end)");
     expect(await text({ path: "Configs/Hit.ct" })).toContain("m_fHealth 100");
     expect(await text({ path: "worlds/Arland.ent" })).toMatch(/^Binary file: worlds\/Arland\.ent \(\.ent, \d+ bytes\)/);
     expect(await text({ path: "Scripts/Game" })).toBe('"Scripts/Game" is a directory. Use game_browse to list its contents.');

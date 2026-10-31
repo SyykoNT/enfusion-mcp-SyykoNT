@@ -113,7 +113,9 @@ export function registerGameRead(server: McpServer, config: Config): void {
         return {
           content: [{
             type: "text",
-            text: `// ${subPath} (from ${src.from})${name} | ${page.total} lines, ${buf.length} bytes\n\n${page.body.replace(/\n?$/, "\n")}// ${page.footer}`,
+            // The body is verbatim: a continue line follows only pages that end in a newline (all but the last)
+            text: `// ${subPath} (from ${src.from})${name} | ${buf.length} bytes | ${page.footer}\n\n${page.body}` +
+              (page.footer.endsWith("(end)") ? "" : `// ${page.footer}`),
           }],
         };
       } catch (e) {
