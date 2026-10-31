@@ -61,7 +61,9 @@ export function resolve(layers: Layer[], path: string, warnings: string[] = [], 
   let chain: string[] = [], applied = 0;
   if (def?.inheritance) {
     const ref = def.inheritance;
-    const parent = stripGuid(ref) || pathOfGuid(layers, ref.replace(/[{}]/g, ""));
+    const guid = ref.match(/^\{([0-9A-Fa-f]{16})\}/)?.[1].toUpperCase();
+    // GUID first, as the engine follows it when a parent moved; the path covers parents no rdb knows
+    const parent = (guid && pathOfGuid(layers, guid)) || stripGuid(ref);
     if (!parent) warnings.push(`${files[0].label}: parent ${ref} is in no layer`);
     else if (seen.has(parent.toLowerCase()) || seen.size >= MAX_DEPTH) warnings.push(`${files[0].label}: inheritance cycle or deeper than ${MAX_DEPTH} at ${parent}; chain cut`);
     else {

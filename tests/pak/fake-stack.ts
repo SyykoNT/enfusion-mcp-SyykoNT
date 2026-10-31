@@ -56,6 +56,8 @@ export function makeFakeStack(): { root: string; config: Config } {
     "dev.gproj": gproj("ModB", "BBBBBBBBBBBBBBBB", ["58D0FB3206B6F859"]),
     "Prefabs/Guerilla_Pants.et": `GenericEntity : "{${G.pantsBdu}}Prefabs/Pants_BDU.et" {\n components {\n  InventoryItemComponent "{5222CB01D5B9A306}" {\n   Attributes SCR_ItemAttributeCollection "{CCCC000000000001}" {\n    ItemVolume 2000\n   }\n  }\n }\n}\n`,
     "Prefabs/Character_Base.et": 'GenericEntity {\n m_Value 2\n Tags + {\n  "b"\n }\n}\n',
+    // Its parent reference names an old path; only the GUID still points at Pants_BDU.et
+    "Prefabs/Moved_Child.et": `GenericEntity : "{${G.pantsBdu}}Prefabs/Old/Pants_BDU.et" {\n m_Child 1\n}\n`,
   }, { "Prefabs/Guerilla_Pants.et": G.guerilla, "Prefabs/Character_Base.et": G.character });
   packed(join(workshop, "ModC_CCCCCCCCCCCCCCCC"), {
     "dev.gproj": gproj("ModC", "CCCCCCCCCCCCCCCC", ["58D0FB3206B6F859"]),

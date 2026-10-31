@@ -31,6 +31,12 @@ describe("resource_resolve", () => {
     expect(props["components/MeshObject{AAAA000000000001}/Object"].origin).toBe("ArmaReforger:Prefabs/Pants_Base.et");
   });
 
+  it("finds a parent by GUID when its path in the reference is stale", () => {
+    const { eff } = byLabel("Prefabs/Moved_Child.et");
+    expect(eff.chain).toEqual(["ArmaReforger:Prefabs/Pants_Base.et", "ArmaReforger:Prefabs/Pants_BDU.et", "ModB:Prefabs/Moved_Child.et"]);
+    expect(eff.warnings).toEqual([]);
+  });
+
   it("tells overrides (same GUID) from shadows (another GUID)", () => {
     expect(providers(layers, "Prefabs/Character_Base.et").map((p) => [p.layer.id, p.role])).toEqual([
       ["ArmaReforger", "defines"], ["ModB", "overrides"], ["AddonA", "overrides"],
