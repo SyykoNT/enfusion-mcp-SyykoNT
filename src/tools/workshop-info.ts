@@ -6,6 +6,7 @@ import type { Config } from "../config.js";
 import { parse, type EnfusionNode } from "../formats/enfusion-text.js";
 import { findGproj, resolveAddonDir } from "../utils/game-paths.js";
 import { buildStack, type LayerKind } from "../pak/stack.js";
+import { readPngJpegSize } from "../release/scan.js";
 import { CHANGE_NOTES_MAX, DESCRIPTION_MAX, NAME_MAX, SUMMARY_MAX, workshopNameIssues, workshopTextIssues } from "../release/workshop-rules.js";
 
 export function registerWorkshopInfo(server: McpServer, config: Config): void {
@@ -36,9 +37,10 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
           .object({ summary: z.string().optional(), description: z.string().optional(), changeNotes: z.string().optional() })
           .optional()
           .describe("Paths of UTF-8 text files to lint instead of passing the text"),
+        previewImage: z.string().optional().describe("Preview image to check: PNG or JPG, at most 2 MB, 1920x1080 recommended"),
       },
     },
-    async ({ projectPath, modName, name, summary, description, changeNotes, textFiles }) => {
+    async ({ projectPath, modName, name, summary, description, changeNotes, textFiles, previewImage }) => {
       try {
         const basePath = projectPath || config.projectPath;
         if (!basePath) {
@@ -114,6 +116,8 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
         lines.push("\n### Workshop text");
         lines.push(...lintLines(dirname(gprojPath), title, name ?? title, { summary, description, changeNotes }, textFiles ?? {}));
 
+        if (previewImage) lines.push("\n### Preview", previewLine(previewImage));
+
         lines.push("\nPublishing is done by Don in Workbench > Publish Project (first publish in the GUI). This tool does not publish.");
 
         return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -158,6 +162,24 @@ function lintLines(addonDir: string, title: string, name: string, text: Partial<
     .map((e) => e.name);
   if (credits.length) lines.push(`- reminder: ${credits.join(", ")} mention credits or a licence; these files are not packed, so put that text in the description`);
   return lines;
+}
+
+const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+
+function previewLine(path: string): string {
+  let buf: Buffer;
+  try {
+    buf = readFileSync(path);
+  } catch (e) {
+    return `- cannot read ${path}: ${(e as Error).message}`;
+  }
+  const img = readPngJpegSize(buf);
+  if (!img) return `- ${path}: not a PNG or JPG`;
+  const issues = [
+    ...(buf.length > PREVIEW_MAX_BYTES ? [`${buf.length} bytes, over the 2 MB limit`] : []),
+    ...(img.width !== 1920 || img.height !== 1080 ? [`info: ${img.width}x${img.height}, 1920x1080 recommended`] : []),
+  ];
+  return `- ${img.format.toUpperCase()} ${img.width}x${img.height}, ${buf.length} bytes: ${issues.length ? issues.join("; ") : "ok"}`;
 }
 
 const SOURCE: Record<LayerKind, string> = { loose: "local", workshop: "workshop", vanilla: "game" };

@@ -97,3 +97,23 @@ describe("workshop_info: Workshop text lint", () => {
     expect(await text({ modName: "Texts", summary: "s".repeat(201) })).toContain("- summary: 201/200 characters");
   });
 });
+
+describe("workshop_info: preview image", () => {
+  const png = (w: number, h: number, size = 33) => {
+    const b = Buffer.alloc(size);
+    b.writeUInt32BE(0x89504e47, 0);
+    b.write("IHDR", 12, "latin1");
+    b.writeUInt32BE(w, 16);
+    b.writeUInt32BE(h, 20);
+    return b;
+  };
+
+  it("checks format, pixels and the 2 MB limit", async () => {
+    writeFileSync(join(root, "ok.png"), png(1920, 1080));
+    writeFileSync(join(root, "big.png"), png(1280, 720, 2 * 1024 * 1024 + 1));
+    writeFileSync(join(root, "x.gif"), "GIF89a");
+    expect(await text({ modName: "Alpha", previewImage: join(root, "ok.png") })).toContain("- PNG 1920x1080, 33 bytes: ok");
+    expect(await text({ modName: "Alpha", previewImage: join(root, "big.png") })).toContain("2097153 bytes, over the 2 MB limit; info: 1280x720, 1920x1080 recommended");
+    expect(await text({ modName: "Alpha", previewImage: join(root, "x.gif") })).toContain("not a PNG or JPG");
+  });
+});
