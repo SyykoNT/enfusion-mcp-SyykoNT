@@ -6,13 +6,14 @@ import {
   mkdirSync,
   existsSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, relative } from "node:path";
 import type { Config } from "../config.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { validateProjectPath } from "../utils/safe-path.js";
 import { resolveGameDataPath, findLooseFile, resolveWriteAddon } from "../utils/game-paths.js";
 import { generateGuid } from "../formats/guid.js";
 import { PakVirtualFS } from "../pak/vfs.js";
+import { gameGuidMap } from "../pak/rdb.js";
 import { findPids } from "../utils/process.js";
 import {
   walkChain,
@@ -142,6 +143,15 @@ export function registerGameDuplicate(
       } catch {
         return {
           content: [{ type: "text", text: `Invalid destination path: ${destPath}` }],
+          isError: true,
+        };
+      }
+
+      // A copy at a base-game path with a fresh GUID is neither an override nor a separate resource.
+      const rel = relative(addonDir, absDestPath).replace(/\\/g, "/");
+      if (gameGuidMap(config.gamePath).has(rel.toLowerCase())) {
+        return {
+          content: [{ type: "text", text: `Refused: ${rel} is a base-game path. Pick another destPath, or use config_override to override the base resource.` }],
           isError: true,
         };
       }
