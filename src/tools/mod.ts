@@ -454,8 +454,8 @@ export function registerMod(
             content: [{
               type: "text",
               text: `Workbench is open${open.length ? `: ${open.join(", ")}` : ""}. Lock owner: ${lockOwner()}. ` +
-                "A second headless Workbench on the same addon can crash the open one. If that Workbench is yours, close it with wb_close; " +
-                "if it belongs to another session, wait or ask the lock owner. force=true runs anyway.",
+                "A second headless Workbench on the same addon can crash the open one. If this MCP session started it, close it with wb_close; " +
+                "otherwise ask the user or the lock owner, or wait. force=true runs anyway.",
             }],
             isError: true,
           };

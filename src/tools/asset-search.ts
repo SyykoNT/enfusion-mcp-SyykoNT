@@ -156,7 +156,7 @@ export function registerAssetSearch(server: McpServer, config: Config): void {
       inputSchema: {
         query: z
           .string()
-          .describe("Search term to match against file names (e.g., 'AK47', 'BarrelGreen', 'soldier')"),
+          .describe("Search term to match against file names (e.g., 'AK47', 'Barrel', 'soldier')"),
         type: z
           .enum(["prefab", "model", "texture", "script", "config", "material", "layout", "any"])
           .default("any")

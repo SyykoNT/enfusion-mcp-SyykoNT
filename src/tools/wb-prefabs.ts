@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatConnectionStatus, requireEditMode } from "../workbench/status.js";
+import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 const MUTATING_PREFAB_ACTIONS = new Set(["createTemplate", "save"]);
 
@@ -33,9 +33,9 @@ export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): v
     },
     async ({ action, entityName, templatePath, searchPath }) => {
       if (MUTATING_PREFAB_ACTIONS.has(action)) {
-        const modeErr = requireEditMode(client, `${action === "createTemplate" ? "create template" : "save prefab"}`);
+        const modeErr = await ensureMode(client, "edit", `${action === "createTemplate" ? "create template" : "save prefab"}`);
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
       }
       try {

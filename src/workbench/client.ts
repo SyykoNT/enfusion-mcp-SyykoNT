@@ -4,9 +4,7 @@
  * Each rawCall() opens a fresh TCP connection, sends one request, reads the
  * response, and closes the socket (protocol requirement).
  *
- * call() wraps rawCall() with auto-launch: if Workbench isn't running,
- * it installs handler scripts, launches the exe, waits for the NET API,
- * and retries the original call.
+ * call() never starts Workbench: only wb_launch does, through ensureRunning().
  */
 
 import { Socket } from "node:net";
@@ -18,6 +16,7 @@ import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
 import { findWorkbenchExe } from "../utils/game-paths.js";
 import { findPids } from "../utils/process.js";
+import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 
@@ -30,10 +29,6 @@ const WORKBENCH_SUBDIR = "Workbench";
 const HANDLER_FOLDER = "EnfusionMCP";
 const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
-/** How long to wait for Workbench to recompile handler scripts after installation. */
-const HANDLER_RECOMPILE_TIMEOUT_MS = 30_000;
-/** Interval between polls while waiting for handler script recompilation. */
-const HANDLER_RECOMPILE_POLL_MS = 2_000;
 
 export type WorkbenchMode = "edit" | "play" | "no_world" | "unknown";
 
@@ -60,8 +55,6 @@ export interface WorkbenchState {
 export interface WorkbenchCallOptions {
   /** Timeout in milliseconds (default 10 000). */
   timeout?: number;
-  /** Skip auto-launch on connection failure (used internally by ping). */
-  skipAutoLaunch?: boolean;
   /**
    * Return a `status: "error"` response instead of throwing.
    *
@@ -88,6 +81,15 @@ export class WorkbenchError extends Error {
   }
 }
 
+/** Workbench answered, but the requested NET API handler is not registered. */
+function isUndefinedHandler(err: unknown): boolean {
+  return (
+    err instanceof WorkbenchError &&
+    err.code === "API_ERROR" &&
+    (err.message.includes("Undefined API func") || err.message.includes("not existing Net API function"))
+  );
+}
+
 export class WorkbenchClient {
   private launchPromise: Promise<void> | null = null;
   private _state: WorkbenchState = { connected: false, mode: "unknown", lastUpdated: 0 };
@@ -106,7 +108,7 @@ export class WorkbenchClient {
 
   /**
    * Call a Workbench NET API function.
-   * Auto-launches Workbench if not running.
+   * Never starts Workbench; a refused connection says to run wb_launch.
    */
   async call<T = Record<string, unknown>>(
     apiFunc: string,
@@ -120,50 +122,23 @@ export class WorkbenchClient {
         if (err.code === "CONNECTION_REFUSED" || err.code === "TIMEOUT" || err.code === "PROTOCOL_ERROR") {
           this._state = { connected: false, mode: "unknown", lastUpdated: Date.now() };
         }
-        if (!options.skipAutoLaunch && this.config) {
-          if (err.code === "CONNECTION_REFUSED") {
-            // Workbench not running — install handlers, launch, retry
-            logger.info(`Workbench not running, auto-launching...`);
-            await this.ensureRunning();
-            return this.finishCall(await this.rawCall<T>(apiFunc, params, options), options);
-          }
-          if (
-            err.code === "API_ERROR" &&
-            (err.message.includes("Undefined API func") ||
-              err.message.includes("not existing Net API function"))
-          ) {
-            // Workbench is running but our custom handler scripts aren't compiled.
-            // This happens when the user opened Workbench manually, or when handlers
-            // were cleaned up but Workbench kept running.
-            logger.info(`Handler scripts not loaded in Workbench, recovering...`);
-            await this.recoverMissingHandlers();
-            try {
-              return this.finishCall(await this.rawCall<T>(apiFunc, params, options), options);
-            } catch (retryErr) {
-              // Still unknown after a successful reinstall + recompile. Empirically
-              // this means the handler class is new since Workbench started:
-              // Workbench builds its NET API dispatch table at process start, so a
-              // live recompile updates existing handler bodies but never registers a
-              // new class. It is easy to misdiagnose because the file compiles
-              // cleanly and every previously-registered handler keeps working.
-              if (
-                retryErr instanceof WorkbenchError &&
-                (retryErr.message.includes("Undefined API func") ||
-                  retryErr.message.includes("not existing Net API function"))
-              ) {
-                throw new WorkbenchError(
-                  `Workbench does not expose "${apiFunc}" even after reinstalling and ` +
-                    `recompiling the handler scripts. Workbench registers NET API handlers ` +
-                    `when the process starts, so a handler class that is new since Workbench ` +
-                    `launched will not appear until Workbench is restarted — the script ` +
-                    `compiles cleanly and the other handlers keep working, so this does not ` +
-                    `look like a registration problem. Restart Workbench, then retry.`,
-                  "API_ERROR"
-                );
-              }
-              throw retryErr;
-            }
-          }
+        // Handlers register only at Workbench start, so copying files into a running one cannot help.
+        if (isUndefinedHandler(err)) {
+          throw new WorkbenchError(
+            `Workbench is running but does not expose "${apiFunc}": the MCP handlers are not loaded. ` +
+              `Workbench registers NET API handlers only when it starts, so nothing is installed into a ` +
+              `running Workbench. Restart Workbench (ask whoever uses it first); wb_launch installs the ` +
+              `handlers before it starts Workbench.`,
+            "API_ERROR"
+          );
+        }
+        // Only wb_launch starts Workbench (D-025): a shared PC may have someone else's session waiting on it.
+        if (err.code === "CONNECTION_REFUSED") {
+          throw new WorkbenchError(
+            `Workbench is not running on ${this.endpoint}. Tools do not start Workbench; start it with ` +
+              `wb_launch after checking that nobody else is using Workbench.`,
+            "CONNECTION_REFUSED"
+          );
         }
       }
       throw err;
@@ -216,6 +191,32 @@ export class WorkbenchClient {
   }
 
   /**
+   * Read the live mode for a mode gate. Never launches Workbench.
+   * Reads EMCP_WB_GetState, not Ping: every installed Ping still answers "edit" during Play.
+   */
+  async probeMode(): Promise<WorkbenchMode | "not_running" | "no_handlers" | "timeout"> {
+    try {
+      const result = await this.rawCall<Record<string, unknown>>("EMCP_WB_GetState", {}, { timeout: 3000 });
+      // Reset first: extractMode keeps the old value on a reply it does not recognise.
+      this._state = { connected: true, mode: "unknown", lastUpdated: Date.now() };
+      this.extractMode(result?.mode === "no_world_editor" ? { mode: "no_world" } : result);
+      return this._state.mode;
+    } catch (err) {
+      const code = err instanceof WorkbenchError ? err.code : undefined;
+      this._state = { connected: code === "API_ERROR", mode: "unknown", lastUpdated: Date.now() };
+      if (isUndefinedHandler(err)) return "no_handlers";
+      if (code === "CONNECTION_REFUSED") return "not_running";
+      if (code === "TIMEOUT") return "timeout";
+      return "unknown";
+    }
+  }
+
+  /** Record a mode change this server just made (wb_play, wb_stop). */
+  setMode(mode: WorkbenchMode): void {
+    this._state.mode = mode;
+  }
+
+  /**
    * Ensure Workbench is running. Installs handler scripts, launches exe,
    * and waits for NET API. Safe to call concurrently — deduplicates launches.
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
@@ -252,7 +253,7 @@ export class WorkbenchClient {
    */
   async ping(): Promise<boolean> {
     try {
-      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000, skipAutoLaunch: true });
+      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
       return true;
     } catch {
       return false;
@@ -377,7 +378,7 @@ export class WorkbenchClient {
     let netApi: DiagnosticReport["netApi"] = "refused";
     let netApiError: string | undefined;
     try {
-      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000, skipAutoLaunch: true });
+      await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
       netApi = "up_with_handlers";
     } catch (err) {
       if (err instanceof WorkbenchError) {
@@ -433,6 +434,10 @@ export class WorkbenchClient {
     return `WorkbenchClient(${this.host}:${this.port})`;
   }
 
+  get endpoint(): string {
+    return `${this.host}:${this.port}`;
+  }
+
   // ---------------------------------------------------------------------------
   // Private
   // ---------------------------------------------------------------------------
@@ -453,57 +458,6 @@ export class WorkbenchClient {
     }
   }
 
-  /**
-   * Recover from "not existing Net API function" errors.
-   * Workbench is running but our custom handler scripts aren't compiled.
-   * Installs handlers into the mod directory and waits for Workbench to
-   * auto-recompile them — without killing the running Workbench process.
-   *
-   * Previous behaviour killed Workbench with taskkill, which broke other
-   * tools (e.g. the Enfusion Blender plugin) that share the same NET API.
-   */
-  private async recoverMissingHandlers(): Promise<void> {
-    if (!this.config) {
-      throw new WorkbenchError("No config provided — cannot recover handlers.", "LAUNCH_FAILED");
-    }
-
-    // Inject into the currently-open mod (same logic as launchWorkbench).
-    const recoveryGproj = this.findFallbackGproj();
-    if (recoveryGproj) {
-      this.installHandlerScripts(dirname(recoveryGproj), true);
-      this.cleanupStandaloneAddon();
-    } else {
-      this.installHandlerScripts(undefined, true);
-    }
-
-    // Wait for Workbench to detect the new files and recompile scripts.
-    // Workbench watches its script directories and recompiles automatically.
-    //
-    // The probe is EMCP_WB_Ping, which proves only that SOME handler responds.
-    // That is the right signal for the case this recovery exists for — handlers
-    // missing entirely, so Ping is missing too. It is NOT proof that the handler
-    // the caller wanted is registered: if Ping was already registered and only a
-    // NEWLY ADDED handler class is missing, this returns success on the first poll
-    // and the caller's retry then fails anyway. call() detects that and explains it
-    // rather than surfacing a bare "Undefined API func".
-    logger.info("Handler scripts installed. Waiting for Workbench to recompile...");
-    const deadline = Date.now() + HANDLER_RECOMPILE_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, HANDLER_RECOMPILE_POLL_MS));
-      if (await this.ping()) {
-        logger.info("Handler scripts compiled and loaded.");
-        return;
-      }
-    }
-
-    throw new WorkbenchError(
-      `Handler scripts were installed but Workbench did not recompile them within ` +
-        `${HANDLER_RECOMPILE_TIMEOUT_MS / 1000}s. Try recompiling scripts manually in ` +
-        `Workbench (Plugins > Reload Scripts) or restart Workbench.`,
-      "LAUNCH_FAILED"
-    );
-  }
-
   private async launchWorkbench(gprojPath?: string): Promise<void> {
     // 1. Check if already running (maybe it came up between the failed call and now)
     if (await this.ping()) {
@@ -517,7 +471,7 @@ export class WorkbenchClient {
       throw new WorkbenchError(
         `Workbench is already running (PID ${running.join(", ")}) but its NET API does not answer. ` +
           `It may still be loading, showing a dialog, or hung. Not starting another copy; ` +
-          `check the Workbench window, or close it with wb_close (force=true if it is hung).`,
+          `check the Workbench window (wb_close closes it only if this MCP session started it).`,
         "LAUNCH_FAILED"
       );
     }
@@ -572,19 +526,31 @@ export class WorkbenchClient {
     const cwd = this.findGameDir() || dirname(exePath);
 
     logger.info(`Launching Workbench: ${exePath}${args.length ? ` ${args.join(" ")}` : ""} (cwd: ${cwd})`);
+    const launchedAt = Date.now();
     const proc = spawn(exePath, args, {
       detached: true,
       stdio: "ignore",
       cwd,
     });
     proc.unref();
+    // wb_close acts only on Workbench processes recorded here.
+    if (proc.pid) {
+      try {
+        writeInstance(pidInstanceFile(WORKBENCH_INSTANCES, proc.pid), {
+          kind: "workbench", name: resolvedGproj ?? "workbench", pid: proc.pid,
+          ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: launchedAt, exe: exePath,
+        });
+      } catch (e) {
+        logger.warn(`Could not record Workbench PID ${proc.pid}; wb_close will not close it: ${e}`);
+      }
+    }
 
     // 5. Wait for NET API — track the last error type so the timeout message is actionable
     const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
     let lastErrorCode: WorkbenchError["code"] | undefined;
     while (Date.now() < deadline) {
       try {
-        await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000, skipAutoLaunch: true });
+        await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
         this._state.connected = true;
         this._state.lastUpdated = Date.now();
         logger.info("Workbench NET API is responding.");
@@ -701,7 +667,7 @@ export class WorkbenchClient {
    * Copy handler scripts into a mod directory so they compile as part of that mod.
    * If no modDir given, installs to default project path (standalone, less useful).
    */
-  private installHandlerScripts(modDir?: string, force = false): void {
+  private installHandlerScripts(modDir?: string): void {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const bundledDir = join(packageRoot, "mod", "Scripts", "WorkbenchGame", HANDLER_FOLDER);
     if (!existsSync(bundledDir)) {
@@ -718,8 +684,8 @@ export class WorkbenchClient {
     const targetBase = modDir || join(fallbackBase!, HANDLER_FOLDER);
     const targetScriptsDir = join(targetBase, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
 
-    // Already installed? Skip unless force-reinstalling (e.g. recovery after missing handlers)
-    if (!force && existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {
+    // Already installed? Skip (stale handlers stay until they are cleaned up)
+    if (existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {
       return;
     }
 

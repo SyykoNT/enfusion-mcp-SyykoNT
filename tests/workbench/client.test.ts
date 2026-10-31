@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
+import type { Config } from "../../src/config.js";
 import {
   decodePascalString,
   decodeInt32LE,
@@ -129,10 +130,10 @@ describe("WorkbenchClient", () => {
   it("throws CONNECTION_REFUSED on bad port", async () => {
     const badClient = new WorkbenchClient("127.0.0.1", 1);
     await expect(
-      badClient.call("ReloadScripts", {}, { skipAutoLaunch: true })
+      badClient.call("ReloadScripts", {})
     ).rejects.toThrow(WorkbenchError);
     try {
-      await badClient.call("ReloadScripts", {}, { skipAutoLaunch: true });
+      await badClient.call("ReloadScripts", {});
     } catch (e) {
       expect(e).toBeInstanceOf(WorkbenchError);
       expect((e as WorkbenchError).code).toBe("CONNECTION_REFUSED");
@@ -153,7 +154,7 @@ describe("WorkbenchClient", () => {
     const slowClient = new WorkbenchClient("127.0.0.1", port);
 
     await expect(
-      slowClient.call("ReloadScripts", {}, { timeout: 200, skipAutoLaunch: true })
+      slowClient.call("ReloadScripts", {}, { timeout: 200 })
     ).rejects.toThrow("timed out");
 
     // Destroy all held sockets so server.close() doesn't hang
@@ -204,7 +205,7 @@ describe("WorkbenchClient", () => {
     // Now try a dead client
     const badClient = new WorkbenchClient("127.0.0.1", 1);
     try {
-      await badClient.call("ReloadScripts", {}, { skipAutoLaunch: true });
+      await badClient.call("ReloadScripts", {});
     } catch { /* expected */ }
     expect(badClient.state.connected).toBe(false);
     expect(badClient.state.mode).toBe("unknown");
@@ -278,7 +279,7 @@ describe("WorkbenchClient in-band error status", () => {
     const client = new WorkbenchClient("127.0.0.1", mock.port);
 
     await expect(
-      client.call("EMCP_WB_ModifyEntity", { name: "Foo" }, { skipAutoLaunch: true })
+      client.call("EMCP_WB_ModifyEntity", { name: "Foo" })
     ).rejects.toThrow("Entity not found: Foo");
   });
 
@@ -287,7 +288,7 @@ describe("WorkbenchClient in-band error status", () => {
     const client = new WorkbenchClient("127.0.0.1", mock.port);
 
     await expect(
-      client.call("EMCP_WB_Anything", {}, { skipAutoLaunch: true })
+      client.call("EMCP_WB_Anything", {})
     ).rejects.toBeInstanceOf(WorkbenchError);
   });
 
@@ -296,7 +297,7 @@ describe("WorkbenchClient in-band error status", () => {
     const client = new WorkbenchClient("127.0.0.1", mock.port);
 
     await expect(
-      client.call("EMCP_WB_Anything", {}, { skipAutoLaunch: true })
+      client.call("EMCP_WB_Anything", {})
     ).rejects.toThrow(/without a message/);
   });
 
@@ -307,7 +308,7 @@ describe("WorkbenchClient in-band error status", () => {
     const result = await client.call<{ status: string; message: string }>(
       "EMCP_WB_Resources",
       { action: "register" },
-      { skipAutoLaunch: true, tolerateErrorStatus: true }
+      { tolerateErrorStatus: true }
     );
     expect(result.status).toBe("error");
     expect(result.message).toBe("registration failed");
@@ -319,8 +320,7 @@ describe("WorkbenchClient in-band error status", () => {
 
     const result = await client.call<{ status: string; value: number }>(
       "EMCP_WB_GetState",
-      {},
-      { skipAutoLaunch: true }
+      {}
     );
     expect(result.status).toBe("ok");
     expect(result.value).toBe(42);
@@ -333,8 +333,7 @@ describe("WorkbenchClient in-band error status", () => {
 
     const result = await client.call<{ entityCount: number }>(
       "EMCP_WB_ListEntities",
-      {},
-      { skipAutoLaunch: true }
+      {}
     );
     expect(result.entityCount).toBe(0);
   });
@@ -359,5 +358,68 @@ describe("cleanupHandlerScripts", () => {
     expect(new WorkbenchClient("127.0.0.1", 1).cleanupHandlerScripts(mod)).toBe(true);
     expect(existsSync(join(handlers, "EMCP_WB_Ping.c"))).toBe(false);
     expect(existsSync(join(handlers, "MY_Probe.c"))).toBe(true);
+  });
+});
+
+describe("probeMode", () => {
+  let mock: ReturnType<typeof createMockWorkbench> | undefined;
+  afterEach(async () => {
+    await mock?.close();
+    mock = undefined;
+  });
+
+  it.each([
+    ["edit", "edit"],
+    ["game", "play"],
+    ["no_world", "no_world"],
+    ["no_world_editor", "no_world"],
+  ])("maps GetState mode %s to %s", async (reply, want) => {
+    mock = createMockWorkbench((apiFunc) => (apiFunc === "EMCP_WB_GetState" ? { status: "ok", mode: reply } : {}));
+    const client = new WorkbenchClient("127.0.0.1", mock.port);
+    expect(await client.probeMode()).toBe(want);
+    expect(client.state.connected).toBe(true);
+  });
+
+  it("reports no_handlers when Workbench does not know the handler", async () => {
+    mock = createMockWorkbench(() => { throw new Error("Undefined API func"); });
+    expect(await new WorkbenchClient("127.0.0.1", mock.port).probeMode()).toBe("no_handlers");
+  });
+
+  it("reports not_running on a refused port and never launches", async () => {
+    const client = new WorkbenchClient("127.0.0.1", 1, {} as Config);
+    const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
+    expect(await client.probeMode()).toBe("not_running");
+    expect(launch).not.toHaveBeenCalled();
+    expect(client.state.connected).toBe(false);
+  });
+
+  it("reports timeout when Workbench does not answer within 3 s", async () => {
+    const openSockets: Socket[] = [];
+    const slow = createServer({ allowHalfOpen: true }, (socket) => {
+      openSockets.push(socket);
+      socket.on("data", () => {});
+    });
+    slow.listen(0);
+    const addr = slow.address();
+    const client = new WorkbenchClient("127.0.0.1", addr && typeof addr !== "string" ? addr.port : 0);
+    expect(await client.probeMode()).toBe("timeout");
+    for (const s of openSockets) s.destroy();
+    await new Promise<void>((res) => slow.close(() => res()));
+  }, 6000);
+});
+
+describe("missing handlers in a running Workbench", () => {
+  it("fails at once and writes no handler files", async () => {
+    const project = mkdtempSync(join(tmpdir(), "emcp-"));
+    mkdirSync(join(project, "MCPParity"));
+    writeFileSync(join(project, "MCPParity", "addon.gproj"), 'GameProject {\n ID "MCPParity"\n}\n');
+    const mock = createMockWorkbench(() => { throw new Error("Undefined API func"); });
+    const client = new WorkbenchClient("127.0.0.1", mock.port, { projectPath: project, defaultMod: "MCPParity" } as Config);
+    const started = Date.now();
+    await expect(client.call("EMCP_WB_ListEntities")).rejects.toThrow("registers NET API handlers only when it starts");
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(existsSync(join(project, "MCPParity", "Scripts"))).toBe(false);
+    expect(existsSync(join(project, "EnfusionMCP"))).toBe(false);
+    await mock.close();
   });
 });

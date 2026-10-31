@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { requireEditMode, formatConnectionStatus } from "../workbench/status.js";
+import { ensureMode, formatConnectionStatus } from "../workbench/status.js";
 
 const SF = "Prefabs/Systems/ScenarioFramework/Components";
 
@@ -199,9 +199,9 @@ export function registerScenarioTools(server: McpServer, client: WorkbenchClient
       if (type === "objective") {
         const { taskType, taskName, description, position, targetPrefab, aiGroupPrefab, triggerRadius, faction } = args;
 
-        const modeErr = requireEditMode(client, "create scenario objective");
+        const modeErr = await ensureMode(client, "edit", "create scenario objective");
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
 
         if (!taskType || !taskName || !description || !targetPrefab || !aiGroupPrefab) {
@@ -339,9 +339,9 @@ export function registerScenarioTools(server: McpServer, client: WorkbenchClient
       if (type === "base") {
         const { baseName, position, baseFaction, baseType, patrolCount } = args;
 
-        const modeErr = requireEditMode(client, "create conflict base");
+        const modeErr = await ensureMode(client, "edit", "create conflict base");
         if (modeErr) {
-          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }] };
+          return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
 
         if (!baseName || !baseFaction) {

@@ -80,7 +80,7 @@ describe("mod pack refusals", () => {
     try {
       const r = await mod({ action: "compile", addonName: "Clean" });
       expect(r.isError).toBe(true);
-      expect(r.content[0].text).toMatch(/PID 123 \(C:\\Other\\addon\.gproj\)\. Lock owner: Session A \(test\)\..*If that Workbench is yours, close it with wb_close; if it belongs to another session, wait or ask the lock owner/);
+      expect(r.content[0].text).toMatch(/PID 123 \(C:\\Other\\addon\.gproj\)\. Lock owner: Session A \(test\)\..*If this MCP session started it, close it with wb_close; otherwise ask the user or the lock owner, or wait/);
       expect(cli.compileAddon).not.toHaveBeenCalled();
     } finally {
       delete process.env.ENFUSION_WORKBENCH_LOCK;

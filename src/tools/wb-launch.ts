@@ -6,6 +6,7 @@ import type { Config } from "../config.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 import { findPids, killPids, sleep } from "../utils/process.js";
+import { isOwned } from "../utils/instances.js";
 
 export function registerWbLaunch(
   server: McpServer,
@@ -16,11 +17,11 @@ export function registerWbLaunch(
     "wb_launch",
     {
       description:
-        "Launch Arma Reforger Workbench (Arma Reforger Tools). Automatically copies handler scripts " +
-        "into the target mod's Scripts/WorkbenchGame/ directory (so NET API handlers compile as part " +
-        "of the mod), starts the Workbench executable, and waits for the NET API to become available. " +
-        "All other wb_* tools call this automatically if Workbench is not running, so you rarely need to " +
-        "call this directly. IMPORTANT: When done working with Workbench, call wb_cleanup to remove the " +
+        "Start Workbench on one project and install the MCP handler scripts into that addon " +
+        "(Scripts/WorkbenchGame/EnfusionMCP/), then wait for the NET API. Pass gprojPath; without it the server " +
+        "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path. If a Workbench already answers on " +
+        "the NET API it reports that and starts nothing; if one is running but not answering it refuses to start " +
+        "another. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
       inputSchema: {
         gprojPath: z
@@ -29,7 +30,7 @@ export function registerWbLaunch(
           .describe(
             "Path to a .gproj file to open directly. Skips the Workbench launcher screen and goes straight " +
             "into the World Editor. Handler scripts are copied into the mod so all wb_* tools work. " +
-            "If omitted, Workbench opens to its launcher."
+            "If omitted, the server falls back to ENFUSION_DEFAULT_MOD or the first .gproj it finds."
           ),
       },
     },
@@ -87,9 +88,9 @@ export function registerWbLaunch(
     "wb_close",
     {
       description:
-        "Close Arma Reforger Workbench. By default saves the open world first and exits cleanly through the " +
-        "NET API; if Workbench does not answer it is asked to close, and with force=true it is killed. " +
-        "Close Workbench before `mod compile/pack/build` on the same addon (two instances on one project can crash the GUI one).",
+        "Close a Workbench this MCP session started (recorded at launch); any other Workbench is refused and left running. " +
+        "By default saves the open world first and exits cleanly through the NET API (skipped while another Workbench runs, " +
+        "because that one may own the NET API port); force=true kills the owned process if it does not exit.",
       inputSchema: {
         save: z.boolean().default(true).describe("Save the open world before exiting (default true)"),
         force: z.boolean().default(false).describe("Kill the process if it does not exit on its own (unsaved work is lost)"),
@@ -97,36 +98,51 @@ export function registerWbLaunch(
     },
     async ({ save, force }) => {
       const image = "ArmaReforgerWorkbenchSteamDiag.exe";
-      if (findPids(image).length === 0) {
+      const pids = findPids(image);
+      if (pids.length === 0) {
         return { content: [{ type: "text" as const, text: "Workbench is not running." }] };
       }
-      const notes: string[] = [];
-      try {
-        const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { skipAutoLaunch: true, timeout: 20_000 });
-        notes.push(save ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : "Closed without saving.");
-      } catch (e) {
-        // In edit mode the handler exits at once, so the connection drops before it answers.
-        await sleep(1500);
-        if (findPids(image).length) notes.push(`NET API exit failed (${e instanceof Error ? e.message : String(e)}).`);
+      const owned = pids.filter((pid) => isOwned(pid));
+      const others = pids.filter((pid) => !owned.includes(pid));
+      const untouched = others.length
+        ? ` Not touched: Workbench pid ${others.join(", ")}, not started by this MCP session; close it in Workbench or ask whoever uses it.`
+        : "";
+      if (!owned.length) {
+        return { content: [{ type: "text" as const, text: `**Not closed.**${untouched}` }], isError: true };
       }
-      for (let i = 0; i < 10 && findPids(image).length; i++) await sleep(500);
+      const alive = () => findPids(image).filter((pid) => owned.includes(pid));
+      const notes: string[] = [];
+      if (others.length) {
+        notes.push("NET API exit skipped (another Workbench may be the one answering on the NET API port).");
+      } else {
+        try {
+          const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { timeout: 20_000 });
+          notes.push(save ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : "Closed without saving.");
+        } catch (e) {
+          // In edit mode the handler exits at once, so the connection drops before it answers.
+          await sleep(1500);
+          if (alive().length) notes.push(`NET API exit failed (${e instanceof Error ? e.message : String(e)}).`);
+        }
+        for (let i = 0; i < 10 && alive().length; i++) await sleep(500);
+      }
       // Each polite close shuts one top-level window, so repeat it while waiting.
-      for (let i = 0; i < 20 && findPids(image).length; i++) {
-        if (i % 4 === 0) killPids(findPids(image));
+      for (let i = 0; i < 20 && alive().length; i++) {
+        if (i % 4 === 0) killPids(alive());
         await sleep(500);
       }
-      if (findPids(image).length && force) {
-        killPids(findPids(image), true);
+      if (alive().length && force) {
+        // Re-check ownership right before the kill: a PID can be reused while we waited.
+        killPids(alive().filter((pid) => isOwned(pid)), true);
         await sleep(1000);
         notes.push("Process killed (force).");
       }
-      const still = findPids(image).length > 0;
+      const still = alive().length > 0;
       return {
         content: [{
           type: "text" as const,
           text: still
-            ? `**Workbench is still running** — it may be showing a dialog. ${notes.join(" ")} Retry with force=true to kill it.`
-            : `**Workbench closed.** ${notes.join(" ")}`,
+            ? `**Workbench is still running**: it may be showing a dialog. ${notes.join(" ")} Retry with force=true to kill it.${untouched}`
+            : `**Workbench closed.** ${notes.join(" ")}${untouched}`,
         }],
         ...(still ? { isError: true as const } : {}),
       };
@@ -139,7 +155,7 @@ export function registerWbLaunch(
     {
       description:
         "Remove the temporary EnfusionMCP handler scripts from mod directories. " +
-        "Deletes Scripts/WorkbenchGame/EnfusionMCP/ from the mod. " +
+        "Removes the MCP's own EMCP_* handler files from addons; other scripts in that folder stay. " +
         "Call this after finishing Workbench work and before the user publishes their mod. " +
         "Handlers are injected into whichever mod is open at the time, so they accumulate across " +
         "unrelated addons over many sessions — call with NO arguments to list every addon that " +

@@ -1,11 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { myGamesDir } from "../utils/game-paths.js";
 import type { Config } from "../config.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep } from "../utils/process.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive } from "../utils/process.js";
+import { OWNER, pidInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
 
 const GAME_EXE = "ArmaReforgerSteam.exe";
 const GAME_DIAG_EXE = "ArmaReforgerSteamDiag.exe"; // needed for -client / -world
@@ -26,7 +27,8 @@ export function registerGame(server: McpServer, config: Config): void {
         world: z.string().optional().describe("(launch) World to load on start, e.g. 'worlds/MP/MPTest.ent' (uses the Diag exe)"),
         windowed: z.boolean().optional().describe("(launch) Windowed mode"),
         extraArgs: z.array(z.string()).optional().describe("(launch) Extra CLI args"),
-        force: z.boolean().optional().describe("(stop) Kill instead of asking to close"),
+        force: z.boolean().optional().describe("(stop) Kill instead of asking to close. Still only clients this MCP started"),
+        adoptOrphans: z.boolean().optional().describe("(stop) Also stop clients left by an ended MCP session"),
         lines: z.number().int().min(1).max(2000).default(80),
         errorsOnly: z.boolean().optional().describe("(logs) Only (E)/(W)/(F) lines"),
       },
@@ -55,22 +57,38 @@ export function registerGame(server: McpServer, config: Config): void {
           if (a.world) args.push("-world", a.world);
           if (a.windowed) args.push("-window");
           args.push(...(a.extraArgs ?? []));
+          const started = Date.now();
           const pid = spawnDetached(exe, args, config.gamePath);
+          writeInstance(pidInstanceFile(config.clientProfilesRoot, pid), {
+            kind: "client", name: "default", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe,
+          });
           await sleep(3000);
           return text(`**Game launched** (pid ${pid})\n\n${diag ? GAME_DIAG_EXE : GAME_EXE} ${args.join(" ")}`);
         }
 
         if (a.action === "stop") {
-          const pids = running();
-          if (!pids.length) return text("The game is not running.");
-          killPids(pids, a.force);
-          for (let i = 0; i < 20 && running().length; i++) await sleep(500);
-          return running().length ? text("Game still running — retry with force=true.", true) : text("**Game closed.**");
+          const entries = scan(clientProcesses(), { clientRoot: config.clientProfilesRoot });
+          const { stop } = planStop(entries, { adoptOrphans: a.adoptOrphans, roots: [config.clientProfilesRoot] });
+          const others = entries.filter((e) => !stop.includes(e));
+          const untouched = others.length
+            ? `\nNot touched: ${others.length} game client(s) not started by this MCP session (pid ${others.map((e) => e.proc.pid).join(", ")}).`
+            : "";
+          if (!stop.length) return text("No game client started by this MCP is running." + untouched);
+          killPids(stop.map((e) => e.proc.pid), a.force, true);
+          for (let i = 0; i < 20 && stop.some((e) => isAlive(e.proc.pid)); i++) await sleep(500);
+          for (const e of stop) if (!isAlive(e.proc.pid)) rmSync(e.file!, { force: true });
+          const still = stop.filter((e) => isAlive(e.proc.pid));
+          return still.length
+            ? text(`Game client still running (pid ${still.map((e) => e.proc.pid).join(", ")}): retry with force=true.${untouched}`, true)
+            : text(`**Game closed** (pid ${stop.map((e) => e.proc.pid).join(", ")}).${untouched}`);
         }
 
         if (a.action === "status") {
-          const pids = running();
-          return text(`Game: ${pids.length ? `running (pid ${pids.join(", ")})` : "not running"}\nInstall: ${config.gamePath}\nLogs: ${newestDir(logsDir) ?? logsDir}`);
+          const entries = scan(clientProcesses(), { clientRoot: config.clientProfilesRoot });
+          return text(
+            `Game: ${entries.length ? `${entries.length} client(s) running, ${entries.filter((e) => e.cls === "own").length} started by this MCP` : "not running"}\n` +
+            `Install: ${config.gamePath}\nLogs: ${newestDir(logsDir) ?? logsDir}${entries.length ? `\n\n${instanceTable(entries)}` : ""}`
+          );
         }
 
         // logs

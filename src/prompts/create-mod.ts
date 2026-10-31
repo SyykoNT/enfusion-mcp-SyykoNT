@@ -25,7 +25,7 @@ export function registerCreateModPrompt(server: McpServer, patterns: PatternLibr
             type: "text" as const,
             text: `I want to create an Arma Reforger mod: ${description}
 
-YOU ARE FULLY AUTONOMOUS. You have all the tools needed. The user should never need to do anything manually. Do not tell them to "open Workbench", "build with Ctrl+F7", or perform any manual steps. You do everything.
+Work step by step. Ask the user when information is missing or before anything that affects shared resources (closing Workbench, starting servers, downloads, deleting files). End with what was done, what was not verified, and any step the user must do in the GUI.
 
 ## STEP 0: ASSESS COMPLEXITY
 
@@ -74,18 +74,14 @@ Before writing any code, assess the scope of what the user is asking for. Think 
 
 This file is the handoff document. A future Claude instance with zero context will read this file and know exactly what the mod is, what's done, and what to build next. Be specific — list actual file names, class names, and system relationships. The user can then use \`/modify-mod\` to continue with subsequent phases.
 
-## CRITICAL: USE MCP TOOLS FOR ALL RESEARCH
+## RESEARCH
 
-**NEVER try to browse the game installation directory directly or access the Bohemia Interactive Wiki (biki) via the web.** Both will fail and waste time.
-
-- **Do NOT use filesystem tools** (ls, find, cat, etc.) on the Arma Reforger install directory. Use the MCP tools instead — they read .pak archives transparently:
-  - Use **asset_search** to find prefabs, models, textures, scripts, and configs by name
-  - Use **game_browse** to list game directories (merges loose files and .pak contents)
-  - Use **game_read** to read any game file — scripts, prefabs, configs — directly from .pak archives
-  - Use **api_search** to look up class definitions, methods, and properties
-  - Use **component_search** to find components to attach to entities — filter by category (character, vehicle, weapon, damage, inventory, ai, ui) or by event handlers they implement
-
-- **Wiki content is pre-downloaded** and available via the **wiki_search** tool. Do NOT try to fetch wiki pages from the web or reference URLs on the Bohemia Interactive Wiki. Use **wiki_search** for all tutorial and guide content about Enfusion engine concepts, scripting patterns, and Arma Reforger modding topics. When you need the full page content (especially code examples), use **wiki_read** with the page title from the search results.
+Use the MCP tools first (they read .pak files and an offline wiki snapshot). If they disagree with the local Workbench API docs, the docs win.
+- **asset_search**: prefabs, models, textures, scripts and configs by name
+- **game_browse** / **game_read**: list and read game files (loose files and .pak contents)
+- **api_search**: class definitions, methods and properties
+- **component_search**: components by category (character, vehicle, weapon, damage, inventory, ai, ui) or event handler
+- **wiki_search** / **wiki_read**: tutorials and guides from the wiki snapshot
 
 ## CRITICAL: API VERIFICATION RULE
 
@@ -106,13 +102,8 @@ If you cannot find a method via api_search, it probably does not exist. Do NOT w
 
 Any entity that should be visible in the game world MUST have a **MeshObject** component with its \`Object\` property set to an actual 3D model (\`.xob\` file) from the base game. Without this, the entity will be **completely invisible** — no model, no collision, nothing.
 
-You don't need to create custom models. Just borrow one from the base game that looks reasonable:
-- Use **api_search** or **project** (action='browse') on the base Arma Reforger data to find \`.xob\` paths
-- Example paths (format: \`{GUID}path/to/model.xob\`):
-  - Military barrel: \`{5F4C4181F065B447}Assets/Props/Military/Barrels/BarrelGreen_01.xob\`
-  - Ammo crate: \`{1E648E8B6B28E837}Assets/Props/Military/AmmoBoxes/AmmoBox_545x39_60rnd.xob\`
-  - Medical box: \`{D26ABAE8B017EC4E}Assets/Props/Military/CasualtyBag/CasualtyBag_01.xob\`
-- Pick something that vaguely fits the purpose — a healing station could use a medical box, a terminal could use a radio, etc.
+You don't need to create custom models. Borrow one from the base game that roughly fits the purpose:
+- Find a model with **asset_search** (type 'model'), copy its {GUID}path from the result.
 - After creating a prefab with **prefab** (action='create'), use **project** (action='read') + **project** (action='write') to set the MeshObject \`Object\` property to a real model path
 
 This applies to ALL physical in-game objects: interactive props, spawn points with markers, placed items, vehicles, weapons, etc.
@@ -142,7 +133,7 @@ This applies to ALL physical in-game objects: interactive props, spawn points wi
 
 9. **Compile** (MANDATORY): **mod** (action='compile'). It runs Workbench headless and lists script errors as
    \`file:line message\`. Fix them with **project** (action='write') and compile again until it reports OK.
-   If Workbench is open, close it first with **wb_close** (two Workbench instances on one addon can crash).
+   mod compile refuses while a Workbench GUI is open unless force is set (two instances on one addon can crash the GUI one). Ask the user to close that Workbench, or wait.
 
 10. Optional in-editor work (placing entities, worlds, live inspection): **wb_launch** with \`gprojPath\`, then the
     wb_* tools; **wb_resources** (action "register") for files that need a GUID; **wb_close** when done and
@@ -166,23 +157,11 @@ Enfusion rules:
 - Always call super.MethodName() in overrides unless intentionally replacing
 - Prefab files use Enfusion text serialization, not JSON
 
-YOUR FINAL SUMMARY MUST ONLY contain:
-- A table/list of files created and what each one does
-- A brief explanation of how the mod works
-- Any tuning values the user can adjust
-- For complex mods: what was built in this phase and what the next phase covers
+The final summary lists the files created and what each does, how the mod works, tuning values, what was not verified, and any step the user must do in the GUI. For complex mods, say what this phase built and what the next one covers.
 
-YOUR FINAL SUMMARY MUST NEVER contain:
-- "Next steps" or "To get started" or any manual instructions
-- "Open in Workbench" / "Build with Ctrl+F7" / "Load the project"
-- Any instruction telling the user to do something you already did or should have done
-- References to manual Workbench operations
+Pick a pattern that fits; say which one you picked and why in one line. If no pattern fits, use no pattern.
 
-If Workbench integration failed (e.g., Workbench not installed), say so explicitly — do not silently fall back to giving manual instructions.
-
-IMPORTANT: Do NOT ask the user to choose a mod pattern and do NOT show them a list of patterns. Just interpret their description and pick the best pattern silently. If no pattern fits, use no pattern.
-
-Available patterns for internal reference (NEVER show this to the user):
+Available patterns:
 ${patternList}`,
           },
         },

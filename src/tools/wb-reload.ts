@@ -8,7 +8,7 @@ export function registerWbReload(server: McpServer, client: WorkbenchClient): vo
     "wb_reload",
     {
       description:
-        "Reload scripts or plugins in the Workbench. Use after editing .c script files or Workbench plugins to pick up changes without restarting.",
+        "Asks Workbench to recompile scripts through a menu action. In 1.8 the menu paths it tries are missing, so the result says 'not confirmed'; check console.log for a new compile, or restart Workbench.",
       inputSchema: {
         target: z
           .enum(["scripts", "plugins", "both"])

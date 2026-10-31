@@ -24,13 +24,13 @@ export function findPids(image: string): number[] {
 
 /**
  * Stop processes. Without `force`, ask them to close (WM_CLOSE / SIGTERM) so they can
- * save; with `force`, kill the whole tree.
+ * save; with `force`, kill them. `tree` also ends their child processes (Windows only).
  */
-export function killPids(pids: number[], force = false): void {
+export function killPids(pids: number[], force = false, tree = false): void {
   for (const pid of pids) {
     try {
       if (IS_WIN) {
-        execFileSync("taskkill", ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])], { windowsHide: true, stdio: "ignore" });
+        execFileSync("taskkill", ["/PID", String(pid), ...(tree ? ["/T"] : []), ...(force ? ["/F"] : [])], { windowsHide: true, stdio: "ignore" });
       } else {
         process.kill(pid, force ? "SIGKILL" : "SIGTERM");
       }
@@ -38,6 +38,65 @@ export function killPids(pids: number[], force = false): void {
       // already gone
     }
   }
+}
+
+export interface ProcInfo {
+  pid: number;
+  ppid: number;
+  cmd: string;
+  /** Process creation time, epoch ms. */
+  created: number;
+}
+
+/** Parse the ConvertTo-Json output of the Win32_Process query below: one object, an array, or nothing. */
+export function parseProcJson(out: string): ProcInfo[] {
+  const t = out.trim();
+  if (!t) return [];
+  const raw = JSON.parse(t);
+  return (Array.isArray(raw) ? raw : [raw]).map((r) => ({
+    pid: r.ProcessId,
+    ppid: r.ParentProcessId,
+    cmd: r.CommandLine ?? "",
+    created: r.Created,
+  }));
+}
+
+// shortcut: CIM is Windows only, so elsewhere no process is found and stop/status touch nothing; add a /proc reader if Linux servers matter.
+function cimQuery(filter: string): ProcInfo[] {
+  if (!IS_WIN) return [];
+  // Creation time converted to epoch ms in PowerShell; -EncodedCommand keeps the WQL quotes off the command line.
+  const ps =
+    `Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId,ParentProcessId,CommandLine,` +
+    `@{n='Created';e={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress`;
+  try {
+    const out = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], {
+      encoding: "utf-8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"], // PowerShell writes progress records to stderr
+    });
+    return parseProcJson(out);
+  } catch {
+    return []; // fails safe: a process that is not found is never stopped
+  }
+}
+
+export const processInfo = (pid: number): ProcInfo | undefined => cimQuery(`ProcessId=${Math.trunc(pid)}`)[0];
+export const serverProcesses = () => cimQuery("Name='ArmaReforgerServerDiag.exe' OR Name='ArmaReforgerServer.exe'");
+export const clientProcesses = () => cimQuery("Name='ArmaReforgerSteamDiag.exe' OR Name='ArmaReforgerSteam.exe'");
+
+export function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Value of `flag` (e.g. "-profile") in a command line, quoted or bare. */
+export function argValue(cmd: string, flag: string): string | undefined {
+  const m = cmd.match(new RegExp(`(?:^|\\s)${flag}\\s+(?:"([^"]*)"|(\\S+))`, "i"));
+  return m ? (m[1] ?? m[2]) : undefined;
 }
 
 /**
