@@ -77,6 +77,7 @@ describe("launchWorkbench and protected addons", () => {
     const inWb = { ...config, projectPath: cache, defaultMod: "CacheMod" } as Config;
     await expect(new WorkbenchClient("127.0.0.1", 1, inWb).ensureRunning()).rejects.toThrow(/Cannot find/);
     expect(handlers(cacheMod)).toBe(false);
+    expect(handlers(join(cache, "EnfusionMCP"))).toBe(true); // the standalone fallback addon, in the project root
   });
 
   it("names a missing gprojPath plainly and creates nothing", async () => {
