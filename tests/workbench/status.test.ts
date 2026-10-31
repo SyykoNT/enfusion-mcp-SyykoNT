@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
 import { WorkbenchClient } from "../../src/workbench/client.js";
-import { formatConnectionStatus, requireEditMode, requirePlayMode } from "../../src/workbench/status.js";
+import { formatConnectionStatus, ensureMode, requireEditMode, requirePlayMode } from "../../src/workbench/status.js";
+import type { Config } from "../../src/config.js";
 import { encodePascalString, decodePascalString, decodeInt32LE } from "../../src/workbench/protocol.js";
 
 function createMockWorkbench(
@@ -148,5 +149,44 @@ describe("requirePlayMode", () => {
     expect(result).not.toBeNull();
     expect(result).toContain("edit mode");
     expect(result).toContain("wb_play");
+  });
+});
+
+describe("ensureMode", () => {
+  let mock: ReturnType<typeof createMockWorkbench> | undefined;
+  afterEach(async () => {
+    await mock?.close();
+    mock = undefined;
+  });
+
+  function clientInMode(mode: string): WorkbenchClient {
+    mock = createMockWorkbench((apiFunc) => (apiFunc === "EMCP_WB_GetState" ? { status: "ok", mode } : {}));
+    return new WorkbenchClient("127.0.0.1", mock.port);
+  }
+
+  it("passes in edit mode without a prior wb_state", async () => {
+    expect(await ensureMode(clientInMode("edit"), "edit", "create entity")).toBeNull();
+  });
+
+  it("refuses edit actions during play and names wb_stop", async () => {
+    const result = await ensureMode(clientInMode("game"), "edit", "create entity");
+    expect(result).toContain("play mode");
+    expect(result).toContain("wb_stop");
+  });
+
+  it("refuses edit actions with no world open and names wb_open_resource", async () => {
+    expect(await ensureMode(clientInMode("no_world"), "edit", "save")).toContain("wb_open_resource");
+  });
+
+  it("passes a play action during play", async () => {
+    expect(await ensureMode(clientInMode("game"), "play", "stop play mode")).toBeNull();
+  });
+
+  it("refuses when Workbench is not running and never launches it", async () => {
+    const client = new WorkbenchClient("127.0.0.1", 1, {} as Config);
+    const launch = vi.spyOn(client, "ensureRunning");
+    const result = await ensureMode(client, "edit", "save");
+    expect(result).toContain("not running on 127.0.0.1:1");
+    expect(launch).not.toHaveBeenCalled();
   });
 });

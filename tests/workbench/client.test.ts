@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
+import type { Config } from "../../src/config.js";
 import {
   decodePascalString,
   decodeInt32LE,
@@ -360,4 +361,51 @@ describe("cleanupHandlerScripts", () => {
     expect(existsSync(join(handlers, "EMCP_WB_Ping.c"))).toBe(false);
     expect(existsSync(join(handlers, "MY_Probe.c"))).toBe(true);
   });
+});
+
+describe("probeMode", () => {
+  let mock: ReturnType<typeof createMockWorkbench> | undefined;
+  afterEach(async () => {
+    await mock?.close();
+    mock = undefined;
+  });
+
+  it.each([
+    ["edit", "edit"],
+    ["game", "play"],
+    ["no_world", "no_world"],
+    ["no_world_editor", "no_world"],
+  ])("maps GetState mode %s to %s", async (reply, want) => {
+    mock = createMockWorkbench((apiFunc) => (apiFunc === "EMCP_WB_GetState" ? { status: "ok", mode: reply } : {}));
+    const client = new WorkbenchClient("127.0.0.1", mock.port);
+    expect(await client.probeMode()).toBe(want);
+    expect(client.state.connected).toBe(true);
+  });
+
+  it("reports no_handlers when Workbench does not know the handler", async () => {
+    mock = createMockWorkbench(() => { throw new Error("Undefined API func"); });
+    expect(await new WorkbenchClient("127.0.0.1", mock.port).probeMode()).toBe("no_handlers");
+  });
+
+  it("reports not_running on a refused port and never launches", async () => {
+    const client = new WorkbenchClient("127.0.0.1", 1, {} as Config);
+    const launch = vi.spyOn(client, "ensureRunning");
+    expect(await client.probeMode()).toBe("not_running");
+    expect(launch).not.toHaveBeenCalled();
+    expect(client.state.connected).toBe(false);
+  });
+
+  it("reports timeout when Workbench does not answer within 3 s", async () => {
+    const openSockets: Socket[] = [];
+    const slow = createServer({ allowHalfOpen: true }, (socket) => {
+      openSockets.push(socket);
+      socket.on("data", () => {});
+    });
+    slow.listen(0);
+    const addr = slow.address();
+    const client = new WorkbenchClient("127.0.0.1", addr && typeof addr !== "string" ? addr.port : 0);
+    expect(await client.probeMode()).toBe("timeout");
+    for (const s of openSockets) s.destroy();
+    await new Promise<void>((res) => slow.close(() => res()));
+  }, 6000);
 });

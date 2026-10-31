@@ -88,6 +88,15 @@ export class WorkbenchError extends Error {
   }
 }
 
+/** Workbench answered, but the requested NET API handler is not registered. */
+function isUndefinedHandler(err: unknown): boolean {
+  return (
+    err instanceof WorkbenchError &&
+    err.code === "API_ERROR" &&
+    (err.message.includes("Undefined API func") || err.message.includes("not existing Net API function"))
+  );
+}
+
 export class WorkbenchClient {
   private launchPromise: Promise<void> | null = null;
   private _state: WorkbenchState = { connected: false, mode: "unknown", lastUpdated: 0 };
@@ -213,6 +222,32 @@ export class WorkbenchClient {
       this._state = { connected: false, mode: "unknown", lastUpdated: Date.now() };
       return { ...this._state };
     }
+  }
+
+  /**
+   * Read the live mode for a mode gate. Never launches Workbench.
+   * Reads EMCP_WB_GetState, not Ping: every installed Ping still answers "edit" during Play.
+   */
+  async probeMode(): Promise<WorkbenchMode | "not_running" | "no_handlers" | "timeout"> {
+    try {
+      const result = await this.rawCall<Record<string, unknown>>("EMCP_WB_GetState", {}, { timeout: 3000, skipAutoLaunch: true });
+      // Reset first: extractMode keeps the old value on a reply it does not recognise.
+      this._state = { connected: true, mode: "unknown", lastUpdated: Date.now() };
+      this.extractMode(result?.mode === "no_world_editor" ? { mode: "no_world" } : result);
+      return this._state.mode;
+    } catch (err) {
+      const code = err instanceof WorkbenchError ? err.code : undefined;
+      this._state = { connected: code === "API_ERROR", mode: "unknown", lastUpdated: Date.now() };
+      if (isUndefinedHandler(err)) return "no_handlers";
+      if (code === "CONNECTION_REFUSED") return "not_running";
+      if (code === "TIMEOUT") return "timeout";
+      return "unknown";
+    }
+  }
+
+  /** Record a mode change this server just made (wb_play, wb_stop). */
+  setMode(mode: WorkbenchMode): void {
+    this._state.mode = mode;
   }
 
   /**
@@ -431,6 +466,10 @@ export class WorkbenchClient {
 
   toString(): string {
     return `WorkbenchClient(${this.host}:${this.port})`;
+  }
+
+  get endpoint(): string {
+    return `${this.host}:${this.port}`;
   }
 
   // ---------------------------------------------------------------------------
