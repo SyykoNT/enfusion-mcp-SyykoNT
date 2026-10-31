@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
-import { findWorkbenchExe } from "../utils/game-paths.js";
+import { findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
 import { findPids } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import type { Config } from "../config.js";
@@ -481,6 +481,13 @@ export class WorkbenchClient {
     //    only compiles the active project and its declared dependencies, NOT every
     //    addon folder in the project directory.  A standalone sibling addon will
     //    never be compiled unless the user's project explicitly depends on it.
+    if (gprojPath && isProtectedAddon(this.config!, gprojPath)) {
+      throw new WorkbenchError(
+        `Refused: ${gprojPath} is a protected addon (ENFUSION_PROTECTED_ADDONS) and wb_launch would copy handler scripts into it. ` +
+          `Pass a test addon's .gproj, or open the protected addon in Workbench yourself.`,
+        "LAUNCH_FAILED"
+      );
+    }
     let resolvedGproj = gprojPath || this.findFallbackGproj();
     if (resolvedGproj) {
       this.installHandlerScripts(dirname(resolvedGproj));
@@ -589,7 +596,7 @@ export class WorkbenchClient {
 
   /**
    * Find a .gproj to pass via -gproj so Workbench skips the launcher.
-   * Prefers config.defaultMod if set; otherwise picks first addon found.
+   * Prefers config.defaultMod if set; otherwise picks first addon found. Protected addons are skipped.
    * Scans for any .gproj in each addon folder (name need not match folder).
    */
   private findFallbackGproj(): string | null {
@@ -597,7 +604,8 @@ export class WorkbenchClient {
       try {
         for (const f of readdirSync(dir, { withFileTypes: true })) {
           if (!f.isDirectory() && f.name.endsWith(".gproj")) {
-            return join(dir, f.name);
+            // Never a protected addon: the handler scripts would be copied into it.
+            return isProtectedAddon(this.config!, join(dir, f.name)) ? null : join(dir, f.name);
           }
         }
       } catch { /* ignore */ }
