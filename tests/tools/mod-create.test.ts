@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -40,6 +40,18 @@ describe("mod create refusals", () => {
     const r = await mod({ action: "create", name: "Taken" });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toMatch(/already exists/);
+  });
+
+  it("refuses to create an addon inside an existing addon, at any depth", async () => {
+    const outer = join(root, "Outer");
+    mkdirSync(join(outer, "Scripts"), { recursive: true });
+    writeFileSync(join(outer, "addon.gproj"), "GameProject {\n}\n");
+    for (const projectPath of [outer, join(outer, "Scripts")]) {
+      const r = await mod({ action: "create", name: "Inner", projectPath });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/is inside the addon .*Outer \(addon\.gproj\)/);
+      expect(existsSync(join(projectPath, "Inner"))).toBe(false);
+    }
   });
 
   it("refuses a parent folder inside a forbidden root and creates nothing", async () => {

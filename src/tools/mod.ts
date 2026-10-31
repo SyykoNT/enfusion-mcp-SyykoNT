@@ -7,6 +7,7 @@ import { generateGproj } from "../templates/gproj.js";
 import { generateScript } from "../templates/script.js";
 import type { PatternLibrary } from "../patterns/loader.js";
 import { forbiddenRoot, validateFilename, validateProjectPath } from "../utils/safe-path.js";
+import { findGproj } from "../utils/game-paths.js";
 import type { SearchEngine } from "../index/search-engine.js";
 import { parse, getProperty } from "../formats/enfusion-text.js";
 
@@ -600,6 +601,18 @@ export function registerMod(
             }],
             isError: true,
           };
+        }
+
+        // A new addon never goes inside another addon (protected ones like CRF included)
+        for (let d = resolve(basePath); ; d = dirname(d)) {
+          const outer = findGproj(d);
+          if (outer) {
+            return {
+              content: [{ type: "text", text: `Refused: ${basePath} is inside the addon ${d} (${basename(outer)}). Pass the folder that holds addons as projectPath.` }],
+              isError: true,
+            };
+          }
+          if (dirname(d) === d) break;
         }
 
         // Check for filename collisions after prefix replacement, before anything is written
