@@ -1,0 +1,19 @@
+Title: New Mission | Tester TVT20 Fixture Hill
+
+<!-- CRF_CHECKS_START -->
+- [x] First fixture check
+- [x] Second fixture check
+- [x] Third fixture check
+- [x] Fourth fixture check
+- [x] Fifth fixture check
+
+_Fixture footer line._
+<!-- CRF_CHECKS_END -->
+
+<!-- CRF_SYNOPSIS_START -->
+# Fixture Hill
+
+**Mode:** TVT, 20 players
+- Red holds the hill
+- Blue attacks at dawn
+<!-- CRF_SYNOPSIS_END -->

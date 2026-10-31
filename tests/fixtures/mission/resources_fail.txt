@@ -1,0 +1,13 @@
+Scanned: FixtureFramework, FixtureLobby
+Owned prefixes: FIX_
+
+[FAIL] fixture-dangling - references that point nowhere
+         Prefabs/Fixture/A.et -> Missing/Thing.et
+         Prefabs/Fixture/B.et -> Missing/Other.et
+
+[  ok] fixture-unattached - components nobody uses
+
+[FAIL] fixture-duplicate - components attached twice
+         Prefabs/Fixture/C.et has FixtureComponent twice
+
+3 problem(s) found.
