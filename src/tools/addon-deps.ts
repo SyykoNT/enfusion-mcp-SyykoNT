@@ -32,6 +32,8 @@ interface DepRow {
   version: string;
   source: string;
   refs: number;
+  /** Resource GUIDs of this dependency that the target ships again (overrides) */
+  overrides: number;
   scriptNames: string[] | null;
   gameVersion: string;
   notes: string[];
@@ -129,7 +131,9 @@ export function addonDepsReport(config: Config, args: DepsArgs): { text: string;
 
   // Direct dependencies: refs into each, script use, D4, D5, D7, D8, D10, D11
   const gameVersion = workbenchVersion(config);
-  const doScripts = args.scripts !== false;
+  // A file subset (one mission) need not use every dependency of the whole addon
+  const whole = !args.files;
+  const doScripts = args.scripts !== false && whole;
   let targetScripts: string[] | undefined;
   let base: Set<string> | undefined;
   const reach = (g: string, seen = new Set<string>()): Set<string> => {
@@ -141,21 +145,22 @@ export function addonDepsReport(config: Config, args: DepsArgs): { text: string;
   for (const g of target.deps) {
     const a = byGuid.get(g);
     if (!a || a === target) {
-      rows.push({ guid: g, name: a?.name ?? names[g] ?? "", version: "", source: a ? "itself" : "MISSING", refs: 0, scriptNames: null, gameVersion: "", notes: [a ? "D6" : "D1"] });
+      rows.push({ guid: g, name: a?.name ?? names[g] ?? "", version: "", source: a ? "itself" : "MISSING", refs: 0, overrides: 0, scriptNames: null, gameVersion: "", notes: [a ? "D6" : "D1"] });
       continue;
     }
     const notes: string[] = [];
     const n = of("closure").filter((x) => x.owner === g).length;
+    const overrides = [...ownGuids].filter((x) => owners.get(x)?.includes(g)).length;
     let scriptNames: string[] | null = null;
-    // Script use can only clear D4, so it is read only where resource refs found no use (CRF: 4 s saved)
-    if (doScripts && a.source !== "vanilla" && n === 0) {
+    // Script use can only clear D4, so it is read only where refs and overrides found no use (CRF: 4 s saved)
+    if (doScripts && a.source !== "vanilla" && n + overrides === 0) {
       const s = addonScripts(a);
       if (s.unreadable) notes.push(`scripts unreadable (${s.unreadable})`);
       else scriptNames = usedNames((targetScripts ??= addonScripts(target).sources), declaredNames(s.sources), (base ??= baseGameNames(config.gamePath)));
     }
-    if (a.source !== "vanilla" && n === 0 && scriptNames?.length === 0) {
+    if (whole && a.source !== "vanilla" && n + overrides === 0 && scriptNames?.length === 0) {
       notes.push("D4");
-      add("D4", "info", `${label(a)}: no resource refs and no script names used ("no use found"); it may still be needed for behaviour or for its own dependencies`);
+      add("D4", "info", `${label(a)}: no resource refs, overrides or script names used ("no use found"); it may still be needed for behaviour or for its own dependencies`);
     }
     // Every addon reaches the base game, so its direct line is not worth a note
     const via = a.source === "vanilla" ? undefined : target.deps.find((o) => o !== g && o !== target.guid && reach(o).has(g));
@@ -163,7 +168,7 @@ export function addonDepsReport(config: Config, args: DepsArgs): { text: string;
       notes.push("D5");
       add("D5", "info", `${label(a)} is also reached through ${byGuid.get(via)?.name ?? via}; the direct line is redundant (harmless)`);
     }
-    rows.push({ guid: g, name: a.name, version: a.version, source: a.source, refs: n, scriptNames, gameVersion: a.gameVersion, notes });
+    rows.push({ guid: g, name: a.name, version: a.version, source: a.source, refs: n, overrides, scriptNames, gameVersion: a.gameVersion, notes });
   }
   for (const a of deps) {
     const tag = (id: string) => rows.find((r) => r.guid === a.guid)?.notes.push(id);
@@ -226,12 +231,13 @@ export function addonDepsReport(config: Config, args: DepsArgs): { text: string;
     `addon_deps ${label(target)}  ${target.gproj}${args.files ? `  files: ${args.files.join(", ")}` : ""}`,
     `refs: ${counts.total} to ${counts.guids} GUIDs (own ${counts.own}, dependencies ${counts.closure}, undeclared ${counts.undeclared}, dangling ${counts.dangling} to ${counts.danglingGuids} GUIDs); ` +
       `closure ${c.order.length} addons; game ${gameVersion || "unknown"}`,
+    ...(whole ? [] : ["files set: script use and D4 skipped (they describe the whole addon)"]),
     "",
     "Direct dependencies",
-    "GUID | name | version | source | refs | script names used | gameVersion | notes",
+    "GUID | name | version | source | refs | overrides | script names used | gameVersion | notes",
     ...rows.map((r) => [
-      r.guid, r.name || "?", r.version || "-", r.source, r.refs,
-      r.scriptNames === null ? (r.refs ? "not checked" : "-") : r.scriptNames.length ? `${r.scriptNames.length}, e.g. ${r.scriptNames.slice(0, 3).join(", ")}` : "0",
+      r.guid, r.name || "?", r.version || "-", r.source, r.refs, r.overrides,
+      r.scriptNames === null ? (r.refs + r.overrides ? "not checked" : "-") : r.scriptNames.length ? `${r.scriptNames.length}, e.g. ${r.scriptNames.slice(0, 3).join(", ")}` : "0",
       r.gameVersion || "-", r.notes.join(" ") || "-",
     ].join(" | ")),
     "",

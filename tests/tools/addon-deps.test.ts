@@ -39,15 +39,18 @@ packed(join(ws, "ModE_EEEEEEEEEEEEEEEE"), gproj("ModE", "EEEEEEEEEEEEEEEE", [V, 
 // Mod F: no use found (its name is used only by an MCP handler); ships Shared.et too; temp holds a download stub
 packed(join(ws, "ModF_FFFFFFFFFFFFFFFF"), gproj("ModF", "FFFFFFFFFFFFFFFF", [V]), { "scripts/Game/F.c": "class F_Only\n{\n}\n" }, { "Prefabs/Shared.et": "2000000000000002" }, sd("Mod F", "1.0", ""));
 mkdirSync(join(ws, "ModF_FFFFFFFFFFFFFFFF", "temp", "data.pak"), { recursive: true });
+// Mod O: used only because the target ships one of its GUIDs again (an override)
+packed(join(ws, "ModO_0A0A0A0A0A0A0A0A"), gproj("ModO", "0A0A0A0A0A0A0A0A", [V]), { "scripts/Game/O.c": "class O_Unused\n{\n}\n" }, { "Prefabs/O.et": "5000000000000001" }, sd("Mod O", "1.0", ""));
 // Mod U: installed but not a dependency; owns the boat
 packed(join(ws, "ModU_9999999999999999"), gproj("ModU", "9999999999999999", [V]), {}, { "Prefabs/Boat.et": "3000000000000001" }, sd("Mod U", "1.0", ""));
 // Mod C: a project shadowing its Workshop copy, in the project path only
 packed(join(ws, "ModC_CCCCCCCCCCCCCCCC"), gproj("ModC", "CCCCCCCCCCCCCCCC", [V]), {}, {}, sd("Mod C", "1.0", ""));
 put(join(projects, "ModC"), { "addon.gproj": gproj("ModC", "CCCCCCCCCCCCCCCC", [V]) });
 put(join(projects, "Target"), {
-  "addon.gproj": gproj("Target", "AAAAAAAAAAAAAAAA", [V, "BBBBBBBBBBBBBBBB", "EEEEEEEEEEEEEEEE", "FFFFFFFFFFFFFFFF", "CCCCCCCCCCCCCCCC", "DDDDDDDDDDDDDDDD", "AAAAAAAAAAAAAAAA"]),
+  "addon.gproj": gproj("Target", "AAAAAAAAAAAAAAAA", [V, "BBBBBBBBBBBBBBBB", "EEEEEEEEEEEEEEEE", "FFFFFFFFFFFFFFFF", "CCCCCCCCCCCCCCCC", "0A0A0A0A0A0A0A0A", "DDDDDDDDDDDDDDDD", "AAAAAAAAAAAAAAAA"]),
   "Prefabs/T.et": 'X : "{1000000000000001}Prefabs/V.et" {\n A "{2000000000000001}Prefabs/B.et"\n B "{3000000000000001}Prefabs/Boat.et"\n C "{7777777777777777}Prefabs/Gone.et"\n D "{4000000000000001}Prefabs/T2.et"\n E "{0000000000000000}Prefabs/Unset.et"\n}\n',
   "Prefabs/T2.et": "X {\n}\n",
+  "Prefabs/O.et.meta": 'MetaFileClass {\n Name "{5000000000000001}Prefabs/O.et"\n}\n',
   "Prefabs/T2.et.meta": 'MetaFileClass {\n Name "{4000000000000001}Prefabs/T2.et"\n}\n',
   "Scripts/Game/T.c": "class T : E_Used\n{\n\toverride void OnInit() {}\n}\n",
   "Scripts/Game/!Docs/Doc.c": 'string s = "{8888888888888888}Prefabs/DocOnly.et";\n',
@@ -93,8 +96,9 @@ describe("addonDepsReport", () => {
     // OnInit is a base game name; F_Only appears only in the MCP's handler
     expect(row("EEEEEEEEEEEEEEEE")).toMatchObject({ refs: 0, scriptNames: ["E_Used"], notes: [] });
     expect(row("FFFFFFFFFFFFFFFF")).toMatchObject({ scriptNames: [], notes: expect.arrayContaining(["D4"]) });
+    expect(row("0A0A0A0A0A0A0A0A")).toMatchObject({ refs: 0, overrides: 1, scriptNames: null, notes: [] });
     expect(row("AAAAAAAAAAAAAAAA")).toMatchObject({ source: "itself", notes: ["D6"] });
-    expect(json.loadOrder.map((a) => a.name)).toEqual(["ArmaReforger", "Mod B", "Mod E", "Mod F", "ModC", "Target"]);
+    expect(json.loadOrder.map((a) => a.name)).toEqual(["ArmaReforger", "Mod B", "Mod E", "Mod F", "ModC", "Mod O", "Target"]);
     expect(r.text).toMatch(/^addon_deps Target \{AAAAAAAAAAAAAAAA\}/);
     expect(r.text).toContain("Load order (dependencies first");
   });
@@ -104,6 +108,9 @@ describe("addonDepsReport", () => {
     const j = JSON.parse(sub.text);
     expect(j.refs.total).toBe(0);
     expect(j.findings.map((x: Finding) => x.id)).not.toContain("D2");
+    // D4 describes the whole addon, not one mission
+    expect(j.findings.map((x: Finding) => x.id)).not.toContain("D4");
+    expect(addonDepsReport(config, { addonName: "Target", files: ["Prefabs/T2.et"] }).text).toContain("files set: script use and D4 skipped");
     expect(snapshot(root)).toEqual(before);
   });
 
