@@ -72,3 +72,30 @@ export function newestDir(dir: string, since = 0): string | null {
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The -gproj value from a command line, quoted or bare ("" when absent). */
+export function parseGprojArg(cmd: string): string {
+  const m = /(?:^|\s)-gproj\s+(?:"([^"]*)"|(\S+))/i.exec(cmd);
+  return m ? (m[1] ?? m[2]) : "";
+}
+
+// shortcut: its own Win32_Process query until the shared CIM reader (TS-I1, Wave 0b) is merged; then call that.
+/** Running Workbench processes with the -gproj of each (Windows only; [] elsewhere or on error). */
+export function workbenchCommandLines(): { pid: number; gproj: string }[] {
+  if (!IS_WIN) return [];
+  const ps =
+    `Get-CimInstance Win32_Process -Filter "Name='ArmaReforgerWorkbenchSteamDiag.exe'" | ` +
+    `Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
+  try {
+    const out = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], {
+      encoding: "utf-8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (!out) return [];
+    const raw = JSON.parse(out);
+    return (Array.isArray(raw) ? raw : [raw]).map((r) => ({ pid: r.ProcessId, gproj: parseGprojArg(r.CommandLine ?? "") }));
+  } catch {
+    return [];
+  }
+}

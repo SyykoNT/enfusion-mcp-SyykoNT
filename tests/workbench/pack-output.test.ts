@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config.js";
 import { checkPackOutput, handlerFiles, pakSummary } from "../../src/workbench/cli.js";
+import { parseGprojArg } from "../../src/utils/process.js";
 import { buildTestPak } from "../pak/test-pak.js";
 
 const root = mkdtempSync(join(tmpdir(), "emcp-po-"));
@@ -56,6 +57,16 @@ describe("handlerFiles", () => {
     writeFileSync(join(a, "Scripts", "WorkbenchGame", "EnfusionMCP.meta"), "");
     expect(handlerFiles(a).sort()).toEqual(["Scripts/WorkbenchGame/EnfusionMCP.meta", "Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c"]);
     expect(handlerFiles(addon)).toEqual([]);
+  });
+});
+
+describe("parseGprojArg", () => {
+  it("reads quoted and bare -gproj values", () => {
+    const exe = `"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe"`;
+    expect(parseGprojArg(`${exe} -gproj "C:\\Arma Reforger Modding\\test-addons\\My Addon\\addon.gproj" -addonsDir "C:\\x"`))
+      .toBe("C:\\Arma Reforger Modding\\test-addons\\My Addon\\addon.gproj");
+    expect(parseGprojArg(`${exe} -GPROJ C:\\a\\addon.gproj -wbSilent`)).toBe("C:\\a\\addon.gproj");
+    expect(parseGprojArg(`${exe} -wbModule=ResourceManager`)).toBe("");
   });
 });
 
