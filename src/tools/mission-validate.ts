@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { z } from "zod";
@@ -177,6 +177,12 @@ async function missionValidate(config: Config, p: Params): Promise<{ text: strin
     target = ["--world", abs];
     label = relative(crf, abs).replaceAll("\\", "/");
   } else {
+    // validate_mission.py reports an unknown ref as "nothing changed", which reads as a PASS.
+    try {
+      execFileSync("git", ["-C", crf, "rev-parse", "--verify", "--quiet", `${p.baseRef}^{commit}`], { windowsHide: true, timeout: 10_000, stdio: "ignore" });
+    } catch {
+      throw new Error(`baseRef not found in the CRF clone: ${p.baseRef}. Fetch it first or pass an existing ref (e.g. origin/release). Nothing ran.`);
+    }
     target = ["--base-ref", p.baseRef!];
     label = `worlds changed against ${p.baseRef}`;
   }

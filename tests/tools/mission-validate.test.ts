@@ -15,7 +15,7 @@ vi.mock("../../src/utils/python.js", () => ({
   findPython: vi.fn(() => ({ cmd: "python", args: [], version: "3.14.2" })),
 }));
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { findPython } from "../../src/utils/python.js";
 import {
   parseQaReport,
@@ -193,6 +193,22 @@ describe("mission_validate", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("World must be inside the CRF clone");
     expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses a baseRef that does not exist instead of reporting PASS", async () => {
+    reply({ "validate_mission.py": { stdout: "" }, "mission_synopsis.py": { stdout: "" } });
+    const r = await call({ baseRef: "origin/nope" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("baseRef not found in the CRF clone: origin/nope");
+    expect(execFile).not.toHaveBeenCalled();
+    expect(vi.mocked(execFileSync).mock.calls.at(-1)?.[1]).toEqual(["-C", crf, "rev-parse", "--verify", "--quiet", "origin/nope^{commit}"]);
+  });
+
+  it("runs with an existing baseRef", async () => {
+    vi.mocked(execFileSync).mockReturnValueOnce("");
+    reply({ "validate_mission.py": { stdout: "" }, "mission_synopsis.py": { stdout: "" } });
+    await call({ baseRef: "origin/release", checks: ["qa"] });
+    expect(vi.mocked(execFile).mock.calls[0][1]).toContain("--base-ref");
   });
 
   it("says how to fix a missing Python", async () => {
