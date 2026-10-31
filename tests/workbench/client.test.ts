@@ -409,3 +409,19 @@ describe("probeMode", () => {
     await new Promise<void>((res) => slow.close(() => res()));
   }, 6000);
 });
+
+describe("missing handlers in a running Workbench", () => {
+  it("fails at once and writes no handler files", async () => {
+    const project = mkdtempSync(join(tmpdir(), "emcp-"));
+    mkdirSync(join(project, "MCPParity"));
+    writeFileSync(join(project, "MCPParity", "addon.gproj"), 'GameProject {\n ID "MCPParity"\n}\n');
+    const mock = createMockWorkbench(() => { throw new Error("Undefined API func"); });
+    const client = new WorkbenchClient("127.0.0.1", mock.port, { projectPath: project, defaultMod: "MCPParity" } as Config);
+    const started = Date.now();
+    await expect(client.call("EMCP_WB_ListEntities")).rejects.toThrow("registers NET API handlers only when it starts");
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(existsSync(join(project, "MCPParity", "Scripts"))).toBe(false);
+    expect(existsSync(join(project, "EnfusionMCP"))).toBe(false);
+    await mock.close();
+  });
+});

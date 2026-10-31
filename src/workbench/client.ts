@@ -30,10 +30,6 @@ const WORKBENCH_SUBDIR = "Workbench";
 const HANDLER_FOLDER = "EnfusionMCP";
 const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
-/** How long to wait for Workbench to recompile handler scripts after installation. */
-const HANDLER_RECOMPILE_TIMEOUT_MS = 30_000;
-/** Interval between polls while waiting for handler script recompilation. */
-const HANDLER_RECOMPILE_POLL_MS = 2_000;
 
 export type WorkbenchMode = "edit" | "play" | "no_world" | "unknown";
 
@@ -129,50 +125,21 @@ export class WorkbenchClient {
         if (err.code === "CONNECTION_REFUSED" || err.code === "TIMEOUT" || err.code === "PROTOCOL_ERROR") {
           this._state = { connected: false, mode: "unknown", lastUpdated: Date.now() };
         }
-        if (!options.skipAutoLaunch && this.config) {
-          if (err.code === "CONNECTION_REFUSED") {
-            // Workbench not running — install handlers, launch, retry
-            logger.info(`Workbench not running, auto-launching...`);
-            await this.ensureRunning();
-            return this.finishCall(await this.rawCall<T>(apiFunc, params, options), options);
-          }
-          if (
-            err.code === "API_ERROR" &&
-            (err.message.includes("Undefined API func") ||
-              err.message.includes("not existing Net API function"))
-          ) {
-            // Workbench is running but our custom handler scripts aren't compiled.
-            // This happens when the user opened Workbench manually, or when handlers
-            // were cleaned up but Workbench kept running.
-            logger.info(`Handler scripts not loaded in Workbench, recovering...`);
-            await this.recoverMissingHandlers();
-            try {
-              return this.finishCall(await this.rawCall<T>(apiFunc, params, options), options);
-            } catch (retryErr) {
-              // Still unknown after a successful reinstall + recompile. Empirically
-              // this means the handler class is new since Workbench started:
-              // Workbench builds its NET API dispatch table at process start, so a
-              // live recompile updates existing handler bodies but never registers a
-              // new class. It is easy to misdiagnose because the file compiles
-              // cleanly and every previously-registered handler keeps working.
-              if (
-                retryErr instanceof WorkbenchError &&
-                (retryErr.message.includes("Undefined API func") ||
-                  retryErr.message.includes("not existing Net API function"))
-              ) {
-                throw new WorkbenchError(
-                  `Workbench does not expose "${apiFunc}" even after reinstalling and ` +
-                    `recompiling the handler scripts. Workbench registers NET API handlers ` +
-                    `when the process starts, so a handler class that is new since Workbench ` +
-                    `launched will not appear until Workbench is restarted — the script ` +
-                    `compiles cleanly and the other handlers keep working, so this does not ` +
-                    `look like a registration problem. Restart Workbench, then retry.`,
-                  "API_ERROR"
-                );
-              }
-              throw retryErr;
-            }
-          }
+        // Handlers register only at Workbench start, so copying files into a running one cannot help.
+        if (isUndefinedHandler(err)) {
+          throw new WorkbenchError(
+            `Workbench is running but does not expose "${apiFunc}": the MCP handlers are not loaded. ` +
+              `Workbench registers NET API handlers only when it starts, so nothing is installed into a ` +
+              `running Workbench. Restart Workbench (ask whoever uses it first); wb_launch installs the ` +
+              `handlers before it starts Workbench.`,
+            "API_ERROR"
+          );
+        }
+        if (!options.skipAutoLaunch && this.config && err.code === "CONNECTION_REFUSED") {
+          // Workbench not running: install handlers, launch, retry
+          logger.info(`Workbench not running, auto-launching...`);
+          await this.ensureRunning();
+          return this.finishCall(await this.rawCall<T>(apiFunc, params, options), options);
         }
       }
       throw err;
@@ -492,57 +459,6 @@ export class WorkbenchClient {
     }
   }
 
-  /**
-   * Recover from "not existing Net API function" errors.
-   * Workbench is running but our custom handler scripts aren't compiled.
-   * Installs handlers into the mod directory and waits for Workbench to
-   * auto-recompile them — without killing the running Workbench process.
-   *
-   * Previous behaviour killed Workbench with taskkill, which broke other
-   * tools (e.g. the Enfusion Blender plugin) that share the same NET API.
-   */
-  private async recoverMissingHandlers(): Promise<void> {
-    if (!this.config) {
-      throw new WorkbenchError("No config provided — cannot recover handlers.", "LAUNCH_FAILED");
-    }
-
-    // Inject into the currently-open mod (same logic as launchWorkbench).
-    const recoveryGproj = this.findFallbackGproj();
-    if (recoveryGproj) {
-      this.installHandlerScripts(dirname(recoveryGproj), true);
-      this.cleanupStandaloneAddon();
-    } else {
-      this.installHandlerScripts(undefined, true);
-    }
-
-    // Wait for Workbench to detect the new files and recompile scripts.
-    // Workbench watches its script directories and recompiles automatically.
-    //
-    // The probe is EMCP_WB_Ping, which proves only that SOME handler responds.
-    // That is the right signal for the case this recovery exists for — handlers
-    // missing entirely, so Ping is missing too. It is NOT proof that the handler
-    // the caller wanted is registered: if Ping was already registered and only a
-    // NEWLY ADDED handler class is missing, this returns success on the first poll
-    // and the caller's retry then fails anyway. call() detects that and explains it
-    // rather than surfacing a bare "Undefined API func".
-    logger.info("Handler scripts installed. Waiting for Workbench to recompile...");
-    const deadline = Date.now() + HANDLER_RECOMPILE_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, HANDLER_RECOMPILE_POLL_MS));
-      if (await this.ping()) {
-        logger.info("Handler scripts compiled and loaded.");
-        return;
-      }
-    }
-
-    throw new WorkbenchError(
-      `Handler scripts were installed but Workbench did not recompile them within ` +
-        `${HANDLER_RECOMPILE_TIMEOUT_MS / 1000}s. Try recompiling scripts manually in ` +
-        `Workbench (Plugins > Reload Scripts) or restart Workbench.`,
-      "LAUNCH_FAILED"
-    );
-  }
-
   private async launchWorkbench(gprojPath?: string): Promise<void> {
     // 1. Check if already running (maybe it came up between the failed call and now)
     if (await this.ping()) {
@@ -740,7 +656,7 @@ export class WorkbenchClient {
    * Copy handler scripts into a mod directory so they compile as part of that mod.
    * If no modDir given, installs to default project path (standalone, less useful).
    */
-  private installHandlerScripts(modDir?: string, force = false): void {
+  private installHandlerScripts(modDir?: string): void {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const bundledDir = join(packageRoot, "mod", "Scripts", "WorkbenchGame", HANDLER_FOLDER);
     if (!existsSync(bundledDir)) {
@@ -757,8 +673,8 @@ export class WorkbenchClient {
     const targetBase = modDir || join(fallbackBase!, HANDLER_FOLDER);
     const targetScriptsDir = join(targetBase, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
 
-    // Already installed? Skip unless force-reinstalling (e.g. recovery after missing handlers)
-    if (!force && existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {
+    // Already installed? Skip (stale handlers stay until they are cleaned up)
+    if (existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {
       return;
     }
 
