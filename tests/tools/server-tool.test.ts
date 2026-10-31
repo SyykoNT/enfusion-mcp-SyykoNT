@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Config } from "../../src/config.js";
+import { MCP_HOME, type Config } from "../../src/config.js";
 import { registerServer, unpack } from "../../src/tools/server.js";
 
 // No real process is started or queried: start "spawns" a fake PID that is already gone.
@@ -84,7 +84,7 @@ describe("server install/update", () => {
     for (const action of ["install", "update"]) {
       const r = await h({ action });
       expect(r.isError).toBe(true);
-      expect(r.content[0].text).toMatch(/Steam client install/);
+      expect(r.content[0].text).toContain(`set ENFUSION_SERVER_PATH to a folder of its own for SteamCMD, for example ${join(MCP_HOME, "server")}`);
     }
     expect(existsSync(steam.steamcmdPath)).toBe(false);
   });

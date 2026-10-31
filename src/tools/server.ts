@@ -3,7 +3,7 @@ import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type { Config } from "../config.js";
+import { MCP_HOME, type Config } from "../config.js";
 import { generateServerConfig, validateAgainstSchema } from "../templates/server-config.js";
 import { gameGuidMap } from "../pak/rdb.js";
 import { baseReader } from "./config-override.js";
@@ -157,7 +157,7 @@ export function registerServer(server: McpServer, config: Config): void {
         if (a.action === "install" || a.action === "update") {
           // The Steam client owns installs under steamapps\common; SteamCMD validate would rewrite them behind its back.
           if (/[\\/]steamapps[\\/]common[\\/]/i.test(resolve(config.serverPath) + "/")) {
-            return text(`Refused: ${config.serverPath} is a Steam client install. Update it from Steam, or set ENFUSION_SERVER_PATH to a folder of its own for SteamCMD.`, true);
+            return text(`Refused: ${config.serverPath} is a Steam client install. Update it from Steam, or set ENFUSION_SERVER_PATH to a folder of its own for SteamCMD, for example ${join(MCP_HOME, "server")}.`, true);
           }
           const steamcmd = await ensureSteamcmd(config);
           mkdirSync(config.serverPath, { recursive: true });
