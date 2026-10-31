@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WorkbenchClient } from "../../src/workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../../src/workbench/status.js";
 import type { Config } from "../../src/config.js";
@@ -50,9 +53,12 @@ function createMockWorkbench(
 }
 
 describe("formatConnectionStatus", () => {
+  // An empty temp watch dir: a real watcher reporting trouble on this PC must not change the footer text.
+  const noWatch = mkdtempSync(join(tmpdir(), "emcp-status-watch-"));
+
   it("shows disconnected for fresh client", () => {
     const client = new WorkbenchClient("127.0.0.1", 1);
-    const status = formatConnectionStatus(client);
+    const status = formatConnectionStatus(client, noWatch);
     expect(status).toContain("disconnected");
   });
 
@@ -60,7 +66,7 @@ describe("formatConnectionStatus", () => {
     const mock = createMockWorkbench(() => ({ mode: "edit" }));
     const client = new WorkbenchClient("127.0.0.1", mock.port);
     await client.call("EMCP_WB_Ping");
-    const status = formatConnectionStatus(client);
+    const status = formatConnectionStatus(client, noWatch);
     expect(status).toContain("edit mode");
     await mock.close();
   });
@@ -69,7 +75,7 @@ describe("formatConnectionStatus", () => {
     const mock = createMockWorkbench(() => ({ mode: "play" }));
     const client = new WorkbenchClient("127.0.0.1", mock.port);
     await client.call("EMCP_WB_Ping");
-    const status = formatConnectionStatus(client);
+    const status = formatConnectionStatus(client, noWatch);
     expect(status).toContain("play mode");
     await mock.close();
   });
@@ -78,7 +84,7 @@ describe("formatConnectionStatus", () => {
     const mock = createMockWorkbench(() => ({ status: "ok" }));
     const client = new WorkbenchClient("127.0.0.1", mock.port);
     await client.call("ReloadScripts");
-    const status = formatConnectionStatus(client);
+    const status = formatConnectionStatus(client, noWatch);
     expect(status).toContain("mode unknown");
     await mock.close();
   });
