@@ -45,6 +45,8 @@ export interface Config {
   protectedAddons?: string[];
   /** Workshop download cache the addon stack reads (read only). Set via ENFUSION_WORKSHOP_PATH. */
   workshopPath?: string;
+  /** Extra folders log_watch may read logs under. Set via ENFUSION_LOG_ROOTS (comma-separated). */
+  logRoots?: string[];
 }
 
 const DEFAULT_WORKBENCH_PATH =
@@ -146,6 +148,9 @@ export function loadConfig(): Config {
   if (process.env.ENFUSION_WORKSHOP_PATH) config.workshopPath = process.env.ENFUSION_WORKSHOP_PATH;
   if (process.env.ENFUSION_PROTECTED_ADDONS) {
     config.protectedAddons = process.env.ENFUSION_PROTECTED_ADDONS.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  if (process.env.ENFUSION_LOG_ROOTS) {
+    config.logRoots = process.env.ENFUSION_LOG_ROOTS.split(",").map((s) => s.trim()).filter(Boolean);
   }
   if (process.env.ENFUSION_DEFAULT_MOD) {
     config.defaultMod = process.env.ENFUSION_DEFAULT_MOD;

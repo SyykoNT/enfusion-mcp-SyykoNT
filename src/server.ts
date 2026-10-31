@@ -60,6 +60,7 @@ import { registerBuildingSetup } from "./tools/building-setup.js";
 import { registerConfigOverride } from "./tools/config-override.js";
 import { registerEconomy } from "./tools/economy.js";
 import { registerServer } from "./tools/server.js";
+import { registerLogWatch } from "./tools/log-watch.js";
 import { registerGame } from "./tools/game.js";
 import { registerScriptErrors } from "./tools/script-errors.js";
 import { registerEnvCheck } from "./tools/env-check.js";
@@ -135,6 +136,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerConfigOverride(server, config);
   registerEconomy(server, config);
   registerServer(server, config);
+  registerLogWatch(server, config);
   registerGame(server, config);
   registerScriptErrors(server, config);
   registerEnvCheck(server, config, wbClient);
