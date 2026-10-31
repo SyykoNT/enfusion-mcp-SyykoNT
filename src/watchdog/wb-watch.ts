@@ -507,7 +507,8 @@ async function main(argv: string[]): Promise<number> {
   const pid = Number(values.pid);
   const dismiss = (values.dismiss ?? "owned") as Dismiss;
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("--pid <workbench pid> is required");
-  if (!["owned", "watched", "never"].includes(dismiss)) throw new Error("--dismiss must be owned, watched or never");
+  // "watched" (clicking in a Workbench this MCP did not start) waits for the owner's decision.
+  if (!["owned", "never"].includes(dismiss)) throw new Error("--dismiss must be owned or never");
   return runWatcher({
     pid, stateDir, dismiss,
     startTime: values["start-time"] ? Number(values["start-time"]) : undefined,

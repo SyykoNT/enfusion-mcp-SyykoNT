@@ -1,10 +1,21 @@
 import type { WorkbenchClient } from "./client.js";
+import { WATCH_DIR, alertLine, isAlert, readStates } from "../watchdog/wb-watch.js";
 
 /**
  * Build a status footer line showing current Workbench connection state.
  * Appended to all wb_* tool responses so the LLM always knows the mode.
  */
-export function formatConnectionStatus(client: WorkbenchClient): string {
+export function formatConnectionStatus(client: WorkbenchClient, watchDir = WATCH_DIR): string {
+  return connectionLine(client) + watchAlerts(watchDir);
+}
+
+/** One footer line naming every watched Workbench in trouble, or "" when all are fine. */
+export function watchAlerts(dir = WATCH_DIR, now = Date.now()): string {
+  const lines = readStates(dir).states.filter((s) => isAlert(s, now)).map((s) => alertLine(s, now));
+  return lines.length ? `\n\`Watchdog: ${lines.join("; ")}. Run wb_watch status.\`` : "";
+}
+
+function connectionLine(client: WorkbenchClient): string {
   const { connected, mode } = client.state;
   if (!connected) return "\n\n---\n`Workbench: disconnected`";
   if (mode === "play") return "\n\n---\n`Workbench: play mode`";
