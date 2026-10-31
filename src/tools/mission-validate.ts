@@ -180,7 +180,8 @@ async function missionValidate(config: Config, p: Params): Promise<{ text: strin
     // validate_mission.py reports an unknown ref as "nothing changed", which reads as a PASS.
     try {
       execFileSync("git", ["-C", crf, "rev-parse", "--verify", "--quiet", `${p.baseRef}^{commit}`], { windowsHide: true, timeout: 10_000, stdio: "ignore" });
-    } catch {
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error("git not found. Install Git or add it to PATH to use baseRef. Nothing ran.");
       throw new Error(`baseRef not found in the CRF clone: ${p.baseRef}. Fetch it first or pass an existing ref (e.g. origin/release). Nothing ran.`);
     }
     target = ["--base-ref", p.baseRef!];

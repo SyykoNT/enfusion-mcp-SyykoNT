@@ -204,6 +204,16 @@ describe("mission_validate", () => {
     expect(vi.mocked(execFileSync).mock.calls.at(-1)?.[1]).toEqual(["-C", crf, "rev-parse", "--verify", "--quiet", "origin/nope^{commit}"]);
   });
 
+  it("says git not found when git is missing", async () => {
+    vi.mocked(execFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error("spawnSync git ENOENT"), { code: "ENOENT" });
+    });
+    const r = await call({ baseRef: "origin/release" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("git not found");
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
   it("runs with an existing baseRef", async () => {
     vi.mocked(execFileSync).mockReturnValueOnce("");
     reply({ "validate_mission.py": { stdout: "" }, "mission_synopsis.py": { stdout: "" } });
