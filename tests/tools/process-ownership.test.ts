@@ -6,12 +6,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ProcInfo } from "../../src/utils/process.js";
 
 // No real process is listed, signalled or killed: the process helpers are replaced.
-const procs = vi.hoisted(() => ({ servers: [] as ProcInfo[], clients: [] as ProcInfo[], alive: new Set<number>(), ignorePolite: false }));
+const procs = vi.hoisted(() => ({ servers: [] as ProcInfo[], clients: [] as ProcInfo[], alive: new Set<number>(), ignorePolite: false, cimFails: false }));
 vi.mock("../../src/utils/process.js", async (orig) => ({
   ...(await orig<typeof import("../../src/utils/process.js")>()),
   serverProcesses: () => procs.servers,
   clientProcesses: () => procs.clients,
-  processInfo: (pid: number) => [...procs.servers, ...procs.clients].find((p) => p.pid === pid),
+  processInfo: (pid: number) => (procs.cimFails ? undefined : [...procs.servers, ...procs.clients].find((p) => p.pid === pid)),
   isAlive: (pid: number) => procs.alive.has(pid),
   killPids: vi.fn((pids: number[], force?: boolean) => {
     if (force || !procs.ignorePolite) pids.forEach((p) => procs.alive.delete(p));
@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.mocked(killPids).mockClear();
   procs.alive = new Set();
   procs.ignorePolite = false;
+  procs.cimFails = false;
 });
 
 describe("server stop", () => {
@@ -68,6 +69,20 @@ describe("server stop", () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("forced after 0 s grace");
     expect(vi.mocked(killPids).mock.calls).toEqual([[[100], false, true], [[100], true, true]]);
+  });
+
+  it("keeps its instance file and kills nothing when the process query fails during stop", async () => {
+    const config = { ...loadConfig(), serverProfilePath: mkdtempSync(join(tmpdir(), "emcp-srv-")) };
+    writeInstance(join(config.serverProfilePath, INSTANCE_FILE), { kind: "server", pid: 100, ...own });
+    procs.servers = [{ pid: 100, ppid: 1, cmd: `ArmaReforgerServerDiag.exe -profile "${config.serverProfilePath}"`, created: now }];
+    procs.alive = new Set([100]);
+    procs.ignorePolite = true;
+    procs.cimFails = true;
+    const result = await tool(registerServer, config)({ action: "stop", graceSec: 0 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("still running");
+    expect(vi.mocked(killPids).mock.calls).toEqual([[[100], false, true]]);
+    expect(existsSync(join(config.serverProfilePath, INSTANCE_FILE))).toBe(true);
   });
 
   it("with only foreign servers running, kills nothing even with force", async () => {
