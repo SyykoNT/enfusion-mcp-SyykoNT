@@ -1,4 +1,4 @@
-# enfusion-mcp-syykont
+# enfusion-mcp-SyykoNT
 
 A maintained MCP server for Arma Reforger modding, ready for 1.8.
 
@@ -11,7 +11,7 @@ agent or client that can launch an MCP server can use it.
 - **For new and experienced modders.** If you build mods by describing them to an AI agent, the agent works
   from the real 1.8 API and the game's own files instead of guessing. If you write Enforce Script yourself,
   the repetitive Workbench steps become single tool calls.
-- **Built on enfusion-mcp-BK.** This fork extends steffenbk's enfusion-mcp-BK and has been improved and
+- **Built on enfusion-mcp-BK.** This is a direct fork of steffenbk's enfusion-mcp-BK, improved and
   optimized for 1.8, with the focus on stability: every tool call that worked under BK in real modding
   sessions, and every later addition, was re-tested on 1.8, and the failures found were fixed or documented.
 
@@ -51,8 +51,8 @@ agent or client that can launch an MCP server can use it.
 | Project | Contribution |
 |---|---|
 | [steffenbk/enfusion-mcp-BK](https://github.com/steffenbk/enfusion-mcp-BK) (steffenbk, Articulated7) | The server itself: API, wiki and knowledge-base search, game data access, file generators, and the Workbench NET API tools with their Enforce handlers. |
-| [MyckaelAutier/enfusion-mcp-ma](https://github.com/MyckaelAutier/enfusion-mcp-ma) | Seven commits on BK `0acfa88`: the API index rebuilt from the 1.8 docs; recipes, knowledge base and script templates aligned with 1.8; and the `mod` compile and pack, `server`, `game`, `economy`, `config_override`, `env_check` and `wb_close` tools. |
-| enfusion-mcp-syykont (this repository) | Re-testing on 1.8 and the fixes below. |
+| [MyckaelAutier/enfusion-mcp-ma](https://github.com/MyckaelAutier/enfusion-mcp-ma) (MyckaelAutier) | Three code commits on BK `0acfa88`, ported here as one commit credited to MyckaelAutier: the API index rebuilt from the 1.8 docs; recipes, knowledge base and script templates aligned with 1.8; and the `mod` compile and pack, `server`, `game`, `economy`, `config_override`, `env_check` and `wb_close` tools. Its README, npm package and plugin commits were not ported. |
+| enfusion-mcp-SyykoNT (this repository) | A direct fork of enfusion-mcp-BK: the ported 1.8 commit, re-testing on 1.8 and the fixes below. |
 
 ## What this fork changed
 
@@ -77,7 +77,7 @@ Fixes made in the process:
 - Generated overrides of non-void methods return the `super` call, so the scaffold compiles.
 - `asset_search` no longer shows an all-zero GUID for scripts.
 
-Test suite: 638 passed, 12 skipped.
+Test suite: 777 passed, 12 skipped.
 
 ## Requirements
 
@@ -95,8 +95,8 @@ Test suite: 638 passed, 12 skipped.
 The package is not published to npm under this name. Build it from source:
 
 ```bash
-git clone -b syyko/dev https://github.com/SyykoNT/enfusion-mcp-syykont.git
-cd enfusion-mcp-syykont
+git clone -b syyko/dev https://github.com/SyykoNT/enfusion-mcp-SyykoNT.git
+cd enfusion-mcp-SyykoNT
 npm ci
 npm run build
 ```
@@ -117,7 +117,7 @@ variables from [Configuration](#configuration). For Claude Code, in a project's 
   "mcpServers": {
     "enfusion-mcp-syykont": {
       "command": "node",
-      "args": ["C:\\path\\to\\enfusion-mcp-syykont\\dist\\index.js"],
+      "args": ["C:\\path\\to\\enfusion-mcp-SyykoNT\\dist\\index.js"],
       "env": {
         "ENFUSION_PROJECT_PATH": "C:\\path\\to\\your\\addons"
       }
@@ -145,6 +145,7 @@ defaults.
 | `ENFUSION_PACKED_PATH` | `packedPath` | `Documents\My Games\ArmaReforgerWorkbench\packed` |
 | `ENFUSION_ADDONS_DIR` | `addonsDir` | None. Passed to Workbench as `-addonsDir` (comma-separated) |
 | `ENFUSION_DEFAULT_MOD` | `defaultMod` | None. Set at runtime to the addon `wb_launch` opens |
+| `ENFUSION_PROTECTED_ADDONS` | `protectedAddons` | None. Addons no tool writes into, by `.gproj` GUID, ID or folder name (comma-separated) |
 | `ENFUSION_SERVER_PATH` | `serverPath` | Steam's `Arma Reforger Server` folder if installed, else `~/.enfusion-mcp/server` |
 | `ENFUSION_SERVER_PROFILE` | `serverProfilePath` | `~/.enfusion-mcp/server-profile` |
 | `ENFUSION_STEAMCMD_PATH` | `steamcmdPath` | `~/.enfusion-mcp/steamcmd` |
@@ -152,6 +153,7 @@ defaults.
 | `ENFUSION_WORKBENCH_PORT` | `workbenchPort` | `5775` |
 | `ENFUSION_EXTRACTED_PATH` | `extractedPath` | An `extracted` folder next to the addons folder, if one exists |
 | `ENFUSION_MCP_DATA_DIR` | `dataDir` | The bundled `data/` folder |
+| `ENFUSION_FORBIDDEN_DIRS` | | None. Extra folders no tool writes into (comma-separated) |
 | `ENFUSION_WORKBENCH_PROFILE` | | Workbench profile folder used to find its `logs/`; detected when not set |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
 
@@ -251,10 +253,16 @@ defaults.
 - `wb_launch` copies the server's handler scripts into the addon it opens, under
   `Scripts/WorkbenchGame/EnfusionMCP/`. `mod pack` warns when they are present. Run `wb_cleanup` before you
   publish, and keep that folder out of version control.
-- Most `wb_*` calls start Workbench when it is not running (`wb_connect` and `wb_diagnose` do not).
-- When no addon is named, `config_override`, `economy`, `game_duplicate`, `wb_entity_duplicate` and the
-  handler install use `ENFUSION_DEFAULT_MOD`, or the first addon in the project path. Name the target addon in
-  every write.
+- Only `wb_launch` starts Workbench. Every other `wb_*` tool returns an error when Workbench is not running.
+- `wb_close` closes only a Workbench this server started. `server stop` and `game stop` act only on servers and
+  game clients this server started.
+- The file-writing tools (`script_create`, `prefab`, `config_create`, `layout_create`, `layout_recipe`,
+  `menu_create`, `game_duplicate`, `config_override`, `economy`) write only into an addon named with `modName`
+  or `projectPath`, never into `ENFUSION_DEFAULT_MOD` by default. They refuse the game and Tools installs, the
+  Workshop caches, `ENFUSION_FORBIDDEN_DIRS`, the projects folder itself, folders without a `.gproj` and the
+  addons in `ENFUSION_PROTECTED_ADDONS`.
+- `wb_entity_duplicate`, and `wb_launch` without `gprojPath`, still fall back to `ENFUSION_DEFAULT_MOD` or the
+  first addon in the project path. Name the target addon.
 - Workbench's NET API listens on all network interfaces (`0.0.0.0:5775`). Block inbound TCP 5775 in the
   Windows firewall unless you need remote access.
 - The server does not publish to the Workshop. Publishing stays a manual step in Workbench.
@@ -263,7 +271,8 @@ defaults.
 
 - `wb_reload` does not reload scripts on 1.8: the menu paths it tries do not exist there. It says so
   ("Reload not confirmed") instead of reporting success. Use `mod compile` to check scripts.
-- `server stop` needs `force: true`; the console server ignores the close request.
+- The console server ignores the close request, so `server stop` kills it after `graceSec` (default 10 seconds).
+- `config_override set` and `economy set` can lose `+` appends and quotes when rewriting an existing override file.
 - `prefab create` from a recipe resolves the parent's components only when `parentPrefab` is given. Without
   it, the parent's components are added a second time.
 - Loading a generated config override or recipe prefab inside Workbench has not been tested yet.
@@ -303,8 +312,9 @@ tests/          vitest
 
 ## Status
 
-Version 0.13.1. Under review and not yet merged: refusing writes into protected addons, requiring a named
-target addon for writes, and no Workbench auto-launch from read-only tools.
+Version 0.13.1. The write guards and launch rules under [Safety notes](#safety-notes) are merged. Under
+review and not yet merged: a rewrite of the Enfusion text writer so that `config_override` and `economy` keep
+`+` appends and quoting.
 
 ## Credits and license
 
@@ -312,7 +322,7 @@ target addon for writes, and no Workbench auto-launch from read-only tools.
   original project.
 - [MyckaelAutier/enfusion-mcp-ma](https://github.com/MyckaelAutier/enfusion-mcp-ma), by MyckaelAutier: the 1.8
   update and the build, server and economy tools.
-- [SyykoNT](https://github.com/SyykoNT): this fork.
+- [SyykoNT](https://github.com/SyykoNT): this fork, enfusion-mcp-SyykoNT.
 
 This project is not affiliated with Bohemia Interactive.
 
