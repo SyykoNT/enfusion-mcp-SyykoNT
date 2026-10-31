@@ -39,7 +39,7 @@ export function resolveGuardRepo(config: Config, addonName?: string, gprojPath?:
 
 /** The guard rules on the staged index, exactly as the pre-commit hook applies them. */
 export function guardCheck(dir: string): GuardFinding[] {
-  const guarded = new RegExp(GUARDED_PATH);
+  const guarded = new RegExp(GUARDED_PATH, "i");
   const findings: GuardFinding[] = [];
   for (const p of stagedPaths(dir)) {
     if (guarded.test(p)) findings.push({ id: "G2", severity: "blocker", path: p, message: `${p} is staged (MCP handler file or resourceDatabase.rdb)` });

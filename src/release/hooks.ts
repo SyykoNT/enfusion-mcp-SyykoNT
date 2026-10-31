@@ -1,7 +1,7 @@
-/** Staged paths that must never be committed: the MCP's Workbench handlers, their folder .meta, and the rdb cache. */
+/** Staged paths that must never be committed: the MCP's Workbench handlers, their folder .meta, and the rdb cache. Matched ignoring case: Windows paths do. */
 export const GUARDED_PATH = String.raw`^Scripts/WorkbenchGame/EnfusionMCP(/|\.meta$)|(^|/)resourceDatabase\.rdb$`;
 
-export const HOOK_VERSION = 1;
+export const HOOK_VERSION = 2;
 const MARKER = `# enfusion-mcp-syykont commit guard v${HOOK_VERSION} (local hook, not tracked)`;
 
 // Only sh builtins, grep, head and git: GitHub Desktop's embedded Git has no od or mktemp.
@@ -10,7 +10,7 @@ ${MARKER}
 bom=$(printf '\357\273\277')
 fail=0
 staged=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
-hits=$(printf '%s\n' "$staged" | grep -E '${GUARDED_PATH}')
+hits=$(printf '%s\n' "$staged" | grep -iE '${GUARDED_PATH}')
 if [ -n "$hits" ]; then
   printf '%s\n' "$hits" >&2
   echo "commit guard: MCP handler files or resourceDatabase.rdb are staged (above). Local probes such as SYK_*.c in that folder are refused too: they never ship." >&2; fail=1

@@ -111,7 +111,7 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
     expect(pre.includes(0x0d)).toBe(false);
     expect(readFileSync(hook(syk, "commit-msg"), "utf-8")).toBe(COMMIT_MSG);
     const second = await call({ action: "install", addonName: "SYK-Test" });
-    expect(second.content[0].text).toBe("pre-commit already v1\ncommit-msg already v1");
+    expect(second.content[0].text).toBe("pre-commit already v2\ncommit-msg already v2");
   });
 
   it("leaves a foreign pre-commit alone and keeps Don's own commit-msg", () => {
@@ -148,9 +148,9 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
   it("status lists each repo with its hooks, ignore rule and handler count", async () => {
     const r = await call({ action: "status" });
     const text = r.content[0].text;
-    expect(text).toMatch(/^SYK-Test: pre-commit ours v1; commit-msg ours v1; handlers ignored no; handler files on disk 0$/m);
+    expect(text).toMatch(/^SYK-Test: pre-commit ours v2; commit-msg ours v2; handlers ignored no; handler files on disk 0$/m);
     expect(text).toMatch(/^Foreign: pre-commit foreign \(#!\/bin\/sh\); commit-msg none;/m);
-    expect(text).toMatch(/^DonHook: pre-commit ours v1; commit-msg Don's stripper;/m);
+    expect(text).toMatch(/^DonHook: pre-commit ours v2; commit-msg Don's stripper;/m);
     expect(text).not.toMatch(/^NoGit/m);
   });
 });
@@ -168,6 +168,18 @@ describe.skipIf(!hasGit || !hasSh)("generated hooks in a real git commit", () =>
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c");
     expect(r.stderr).toContain("commit guard: MCP handler files");
+  });
+
+  it("refuses a handler staged with a different path case, in check and in the hook", () => {
+    const lc = addon(projects, "LowerCase", "CCCCCCCCCCCCCCCC");
+    guardInstall(lc);
+    mkdirSync(join(lc, "scripts", "workbenchgame", "enfusionmcp"), { recursive: true });
+    writeFileSync(join(lc, "scripts", "workbenchgame", "enfusionmcp", "EMCP_WB_Ping.c"), "class X {}\n");
+    g(lc, "add", "-f", "scripts/workbenchgame/enfusionmcp/EMCP_WB_Ping.c");
+    expect(guardCheck(lc).map((f) => f.id)).toEqual(["G2"]);
+    const r = spawnSync("git", ["-C", lc, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "lc"], { encoding: "utf-8" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("scripts/workbenchgame/enfusionmcp/EMCP_WB_Ping.c");
   });
 
   it("lets --no-verify through (the documented bypass)", () => {

@@ -16,12 +16,12 @@ describe("hook templates", () => {
       expect(t.startsWith("#!/bin/sh\n")).toBe(true);
       expect(t).not.toMatch(/\bod\b|mktemp|TMPDIR/);
     }
-    expect(PRE_COMMIT).toContain(GUARDED_PATH);
+    expect(PRE_COMMIT).toContain(`grep -iE '${GUARDED_PATH}'`);
   });
 
   it("guards handler files, the folder .meta and the rdb, not look-alikes", () => {
-    const g = new RegExp(GUARDED_PATH);
-    expect(["Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c", "Scripts/WorkbenchGame/EnfusionMCP.meta", "resourceDatabase.rdb", "a/resourceDatabase.rdb"].every((p) => g.test(p))).toBe(true);
+    const g = new RegExp(GUARDED_PATH, "i");
+    expect(["Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c", "Scripts/WorkbenchGame/EnfusionMCP.meta", "resourceDatabase.rdb", "a/resourceDatabase.rdb", "scripts/workbenchgame/enfusionmcp/x.c", "SCRIPTS/WorkbenchGame/EnfusionMCP.META", "ResourceDatabase.RDB"].every((p) => g.test(p))).toBe(true);
     expect(["Scripts/WorkbenchGame/EnfusionMCPX/a.c", "Scripts/Game/EnfusionMCP/a.c", "x/Scripts/WorkbenchGame/EnfusionMCP/a.c"].some((p) => g.test(p))).toBe(false);
   });
 });
