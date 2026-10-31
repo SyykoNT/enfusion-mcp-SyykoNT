@@ -37,7 +37,7 @@ describe("server text", () => {
   it("tool descriptions drop the claims PX-I3 found wrong", async () => {
     // Stringifying covers top-level and every inputSchema property description.
     const text = JSON.stringify((await client.listTools()).tools);
-    expect(text).not.toMatch(/rarely need to call this directly|Tools,Reload Scripts|opens to its launcher|all wiki content is already available/);
+    expect(text).not.toMatch(/rarely need to call this directly|Tools,Reload Scripts|opens to its launcher|all wiki content is already available|on the server \(clients download it automatically\)/);
   });
 
   it("server text holds no literal GUID outside the verified allowlist", async () => {

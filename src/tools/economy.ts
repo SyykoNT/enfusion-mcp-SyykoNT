@@ -71,7 +71,7 @@ export function registerEconomy(server: McpServer, config: Config): void {
         "'set' writes overrides into an addon (multiplier and/or per-key values). Keys: xp = reward IDs " +
         "(ENEMY_KILL, BASE_SEIZED, …); ranks = rank IDs or names (PRIVATE, CORPORAL, SERGEANT…); arsenal/loadouts = " +
         "regex on the prefab path (e.g. 'M16|AK74', 'Sniper'). Then `mod` build and load the addon on the server " +
-        "(clients download it automatically). For anything else use `config_override`.",
+        "(for a public server, publish it on the Workshop and list it in server.json mods). For anything else use `config_override`.",
       inputSchema: {
         action: z.enum(["inspect", "set"]),
         category: z.enum(["xp", "ranks", "arsenal", "loadouts"]),
