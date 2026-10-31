@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { WorkbenchClient } from "../workbench/client.js";
+import { formatReport, readStates } from "../watchdog/wb-watch.js";
 
 export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
@@ -108,6 +109,13 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
           lines.push(`- ${p}`);
         }
       }
+
+      // --- Watchdog ---
+      const watch = readStates();
+      lines.push("\n### Watchdog");
+      if (!watch.states.length && !watch.errors.length) lines.push("- No Workbench is watched (wb_watch start pid=<n> attaches a watcher).");
+      for (const s of watch.states) lines.push("```", formatReport(s), "```");
+      for (const e of watch.errors) lines.push(`- ${e}`);
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     }

@@ -33,12 +33,19 @@ export function registerWbLaunch(
             "into the World Editor. Handler scripts are copied into the mod so all wb_* tools work. " +
             "If omitted, the server falls back to ENFUSION_DEFAULT_MOD or the first .gproj it finds that is not protected."
           ),
+        unattended: z
+          .boolean()
+          .optional()
+          .describe(
+            "Start Workbench with -noThrow, which Bohemia documents as disabling error message dialogs (asserts, crashes). " +
+            "Untested on a GUI Workbench and on Script Authorization prompts; use only for unattended runs."
+          ),
       },
     },
-    async ({ gprojPath }) => {
+    async ({ gprojPath, unattended }) => {
       try {
         const alreadyRunning = await client.ping();
-        if (!alreadyRunning) await client.ensureRunning(gprojPath);
+        if (!alreadyRunning) await client.ensureRunning(gprojPath, unattended);
 
         // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
