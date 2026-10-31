@@ -41,11 +41,14 @@ describe("workshop_info: finding the addon", () => {
   });
 
   it("refuses traversal and reports not found as an error", async () => {
-    for (const modName of ["..\\Outside", "../Outside", "Missing"]) {
+    for (const modName of ["..\\Outside", "../Outside"]) {
       const r = await call({ modName });
       expect(r.isError).toBe(true);
-      expect(r.content[0].text).toMatch(/No \.gproj found/);
+      expect(r.content[0].text).toMatch(/^Refused: modName ".*Outside" is outside /);
     }
+    const r = await call({ modName: "Missing" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/No \.gproj found/);
   });
 
   it("prints no publishing steps, only the neutral closing line", async () => {
@@ -135,6 +138,14 @@ describe("workshop_info: published state", () => {
     writeFileSync(join(d, "meta"), '\uFEFF{"meta":{"name":"Boat","summary":"Fast boat","license":"APL","versions":[{"version":"1.1.0"}]}}');
     expect(await text({ modName: "Boat" })).toContain('- Workshop cache Boat_EEEE000000000001: installed 1.1.0; name "Boat"; summary "Fast boat"; licence APL; versions 1.1.0');
     expect(await text({ modName: "Alpha" })).toMatch(/- Workshop cache: no folder for AAAA000000000001/);
+  });
+
+  it("online: refuses to follow redirects, and a redirect error is one line", async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => { inits.push(init); throw new TypeError("fetch failed: unexpected redirect"); });
+    const t = await text({ modName: "Boat", online: true });
+    expect(inits.map((i) => i?.redirect)).toEqual(["error"]);
+    expect(t).toContain("online check failed: fetch failed: unexpected redirect");
   });
 
   it("is offline unless online is true", async () => {

@@ -1,10 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import { parse, type EnfusionNode } from "../formats/enfusion-text.js";
 import { findGproj, resolveAddonDir } from "../utils/game-paths.js";
+import { isContained } from "../utils/safe-path.js";
 import { buildStack, type LayerKind } from "../pak/stack.js";
 import { readPngJpegSize } from "../release/scan.js";
 import { CHANGE_NOTES_MAX, DESCRIPTION_MAX, NAME_MAX, SUMMARY_MAX, workshopNameIssues, workshopTextIssues } from "../release/workshop-rules.js";
@@ -40,7 +41,7 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
           .optional()
           .describe("Paths of UTF-8 text files to lint instead of passing the text"),
         previewImage: z.string().optional().describe("Preview image to check: PNG or JPG, at most 2 MB, 1920x1080 recommended"),
-        online: z.boolean().optional().describe("Also read the public Workshop page for this GUID (one anonymous GET, no login). Default false"),
+        online: z.boolean().optional().describe("Also read the public Workshop page for this GUID (one anonymous GET, no login). Default false; set it only when the user asks for the published state"),
       },
     },
     async ({ projectPath, modName, name, summary, description, changeNotes, textFiles, previewImage, online }) => {
@@ -56,6 +57,9 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
         }
         // projectPath may be the addon folder itself; otherwise look under it by name (any .gproj name)
         const addonName = modName ?? config.defaultMod;
+        if (addonName && !isContained(resolve(basePath), resolve(basePath, addonName))) {
+          return { content: [{ type: "text", text: `Refused: modName "${addonName}" is outside ${basePath}.` }], isError: true };
+        }
         const gprojPath = (projectPath && findGproj(projectPath)) || findGproj(resolveAddonDir(basePath, addonName) ?? "");
 
         if (!gprojPath) {
@@ -241,7 +245,7 @@ async function onlineLines(guid: string, closure: string[]): Promise<string[]> {
   const url = `https://reforger.armaplatform.com/workshop/${id}`;
   let asset: PageAsset | undefined;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000), redirect: "error" }); // never follow the GET off the Workshop site
     if (res.status === 404) return [`- online (${url}): not published yet (HTTP 404)`];
     if (!res.ok) return [`- online check failed: HTTP ${res.status} from ${url}`];
     const m = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(await res.text());
