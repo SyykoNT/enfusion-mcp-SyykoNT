@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { parse } from "../../src/formats/enfusion-text.js";
+import { parse, createNode } from "../../src/formats/enfusion-text.js";
 import {
-  resolveEffective, buildDelta, mergeNode, mergeOverride, overrideMeta, flatten, lookup, scaleNumber,
+  resolveEffective, buildDelta, mergeNode, mergeOverride, overrideMeta, flatten, lookup, scaleNumber, type MergeEvent,
 } from "../../src/formats/config-override.js";
 
 // Trimmed from Configs/Campaign/XPRewards.conf and CampaignXPRewards.conf (Arma Reforger 1.8)
@@ -107,6 +107,31 @@ describe("config override engine", () => {
     expect(merged.map((s) => [s.id, s.properties[0].value])).toEqual([
       ["Driver", "Driver"], ["Passenger_1", "P1"], ["Passenger_2", "P2"], ["Passenger_3", "P3"], ["Passenger_4", "P4"], ["Passenger_5", "P5"],
     ]);
+  });
+
+  it("appends a `key + {` list to the inherited one and keeps the `+` in an override merge", () => {
+    const base = parse('E {\n ParentContextList {\n  "a" b\n }\n}');
+    const over = parse('E {\n ParentContextList + {\n  "c"\n }\n}');
+    const list = mergeNode(base, over).children[0];
+    expect([list.values, list.valuesQuoted]).toEqual([["a", "b", "c"], [true, false, true]]);
+    expect(mergeOverride('E {\n ParentContextList + {\n  "c"\n }\n}', createNode("E"))).toContain("ParentContextList + {");
+  });
+
+  it("reports set and type-change events with {ID} paths, including blocks only the override has", () => {
+    const base = parse('E {\n components {\n  SCR_UniversalInventoryStorageComponent "{5222CB01D5B9A306}" {\n   MaxWeight 10\n  }\n }\n}');
+    const over = parse('E {\n components {\n  InventoryItemComponent "{5222CB01D5B9A306}" {\n   Attributes A {\n    ItemVolume 2000\n   }\n  }\n }\n}');
+    const events: MergeEvent[] = [];
+    mergeNode(base, over, (e) => events.push(e));
+    expect(events).toEqual([
+      { kind: "typeChange", path: "components/{5222CB01D5B9A306}", from: "SCR_UniversalInventoryStorageComponent", to: "InventoryItemComponent" },
+      { kind: "set", path: "components/{5222CB01D5B9A306}/Attributes", key: "ItemVolume", value: "2000" },
+    ]);
+  });
+
+  it("gives the same tree with and without an event callback", () => {
+    const base = parse(files["Configs/Campaign/XPRewards.conf"]);
+    const over = parse(files["Configs/Campaign/CampaignXPRewards.conf"]);
+    expect(mergeNode(base, over, () => {})).toEqual(mergeNode(base, over));
   });
 
   it("writes a meta carrying the base GUID", () => {
