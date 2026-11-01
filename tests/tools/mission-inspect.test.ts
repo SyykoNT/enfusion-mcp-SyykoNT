@@ -49,8 +49,8 @@ describe("mission_inspect", () => {
     expect(text).toContain("- broken: **parse error**: line 1");
     expect(text).toContain("- AI World in _INIT: yes");
     expect(text).toContain("- info: COA_Lobby entity is named COA_Lobby");
-    expect(text).toContain("Composition not from the COAL_ set (rule 9, suspected server crashes): Prefabs/Compositions/Slotted/Helipad_L_US.et x2");
-    expect(text).not.toMatch(/COAL_Helipad_L|Safe_S/);
+    expect(text).toContain("Vanilla composition on the guide's avoid list (suspected server crashes): Prefabs/Compositions/Slotted/SlotFlatLarge/Helipad_L_US_01.et x2");
+    expect(text).not.toMatch(/CheckpointUnderConstruction|VehicleMaintenance_S_BLUFOR/);
     expect(text).toContain("- info: 1 CIV mission prefab(s) placed, but CIV has no slots");
     expect(text).not.toContain("mission .conf files point");
   });

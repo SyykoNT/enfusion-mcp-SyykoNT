@@ -32,6 +32,8 @@ const LAYER: Partial<Record<PrefabKind, string>> = {
   gameBorder: "GameBorderS", safestart: "GameBorderS", forwardDeploy: "GameBorderS",
   objectiveMarker: "MARKERS", spawnMarker: "MARKERS", depot: "VEHICLES",
 };
+// Guide's avoid list (D-035) as vanilla slotted names; "_" after the category spares the guide-safe CheckpointUnderConstruction
+const AVOID = /\/Compositions\/Slotted\/(?:\w+\/)?(?:E_)?(Barricade|Checkpoint|LivingArea|Helipad|FieldHospital|VehicleMaintenance|FiringRange|AmmoStorage)_[^/]*\.et$/;
 
 interface Rule { level: "error" | "warning" | "info"; text: string }
 interface Params { world: string; sections?: Section[]; crfPath?: string; lobbyPath?: string; format: "markdown" | "json" }
@@ -111,12 +113,12 @@ function missionInspect(config: Config, p: Params): string {
   const comps = new Map<string, number>();
   for (const e of m.entities) {
     const path = e.prefab ? stripGuid(e.prefab) : "";
-    // CRF's own Compositions/Slotted set is the guide's safe list for PROPS (reference 05, section 4 layer table)
-    if (path.includes("/Compositions/") && !basename(path).startsWith("COAL_") && ![crf, lobbyRoot].some((r) => existsSync(join(r, path)))) {
+    // CRF's and the Lobby's own compositions are never flagged (D-035)
+    if (AVOID.test(path) && ![crf, lobbyRoot].some((r) => existsSync(join(r, path)))) {
       comps.set(path, (comps.get(path) ?? 0) + 1);
     }
   }
-  for (const [path, n] of comps) rules.push({ level: "warning", text: `Composition not from the COAL_ set (rule 9, suspected server crashes): ${path}${n > 1 ? ` x${n}` : ""}` });
+  for (const [path, n] of comps) rules.push({ level: "warning", text: `Vanilla composition on the guide's avoid list (suspected server crashes): ${path}${n > 1 ? ` x${n}` : ""}` });
   const misplaced = new Map<string, number>();
   for (const [e, c] of classes) {
     const layer = c && LAYER[c.kind];
@@ -206,7 +208,7 @@ export function registerMissionInspect(server: McpServer, config: Config): void 
         "safestart and forward-deploy zones, markers, MSPs, vehicle spawners and depots per side; every entity name the " +
         "mission's components refer to (Task Creator anchors, Cache Hunt caches, CTF bases, Rush triggers...) checked " +
         "against the world's entity names with near-miss suggestions; Task Creator entries; and rule checks (COA_Lobby " +
-        "name, AI World, mission .conf count, non-COAL_ compositions). Read-only and offline, no Workbench.",
+        "name, AI World, mission .conf count, vanilla compositions the guide says to avoid). Read-only and offline, no Workbench.",
       inputSchema: {
         world: z.string().min(1).describe("Mission world .ent, CRF-relative (e.g. 'Worlds/Arland/MyMission.ent'), project-path-relative or absolute. Must be inside the project path."),
         sections: z.array(z.enum(SECTIONS)).optional().describe("Limit the report. Default: all of summary, sides, names, tasks, rules."),
