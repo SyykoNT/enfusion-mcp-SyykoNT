@@ -547,6 +547,8 @@ export class WorkbenchClient {
       detached: true,
       stdio: "ignore",
       cwd,
+      // cwd is the game folder, so without these Steam counts Workbench as the game (its steam_appid.txt says 1874880).
+      env: { ...process.env, SteamAppId: "1874910", SteamGameId: "1874910" },
     });
     // Without a listener a failed start is an uncaught 'error' that ends the MCP; the NET API wait below reports it.
     proc.on("error", (e) => logger.warn(`Workbench did not start: ${e.message}`));
