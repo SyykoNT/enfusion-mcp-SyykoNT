@@ -126,13 +126,13 @@ GenericEntity CacheHunt_HomeFlag {
 }
 `;
 
-const PROPS = `GenericEntity : "{7000000000000001}Prefabs/Compositions/Slotted/Helipad_L_US.et" {
+const PROPS = `GenericEntity : "{7000000000000001}Prefabs/Compositions/Slotted/SlotFlatLarge/Helipad_L_US_01.et" {
 }
-GenericEntity : "{7000000000000001}Prefabs/Compositions/Slotted/Helipad_L_US.et" {
+GenericEntity : "{7000000000000001}Prefabs/Compositions/Slotted/SlotFlatLarge/Helipad_L_US_01.et" {
 }
-GenericEntity : "{7000000000000002}Prefabs/Compositions/Slotted/COAL_Helipad_L.et" {
+GenericEntity : "{7000000000000002}Prefabs/Compositions/Slotted/SlotRoadLarge/CheckpointUnderConstruction_L_US_01.et" {
 }
-GenericEntity : "{7000000000000003}Prefabs/Compositions/Slotted/Safe_S.et" {
+GenericEntity : "{7000000000000003}Prefabs/Compositions/Slotted/SlotFlatSmall/VehicleMaintenance_S_BLUFOR.et" {
 }
 `;
 
@@ -160,7 +160,7 @@ export function makeProjects(): { root: string; crf: string; lobby: string; worl
     "CRF/Scripts/Game/CacheHunt.c": CACHE_HUNT,
     "CRF/Prefabs/Lobby/COA_Lobby.et": `COA_Gamemode : "{1000000000000099}Prefabs/!Systems/!Lobby/COA_Lobby.et" {\n}\n`,
     "CRF/Prefabs/Mine/MySpawn.et": `COA_StaticSpawnPoint : "{4000000000000002}${MM}/SpawnPoints/SpawnPoints/OPFOR_Spawn.et" {\n}\n`,
-    "CRF/Prefabs/Compositions/Slotted/Safe_S.et": "GenericEntity {\n}\n",
+    "CRF/Prefabs/Compositions/Slotted/SlotFlatSmall/VehicleMaintenance_S_BLUFOR.et": "GenericEntity {\n}\n",
     [`CRF/${MM}/Systems/TaskCreator/CRF_task_empty.et.meta`]: meta(`{4000000000000008}${MM}/Systems/TaskCreator/CRF_task_empty.et`),
     [`CRF/${MM}/Markers/ObjectiveMarkers/NEW/CIVILIAN_NewObjectiveMarker.et.meta`]: meta(`{4000000000000007}${MM}/Markers/ObjectiveMarkers/NEW/CIVILIAN_NewObjectiveMarker.et`),
     "COALITION-Lobby/Prefabs/!Systems/!Lobby/COA_Lobby.et": `COA_Gamemode {\n m_INDFORSlots {\n  COA_SlottingGroup "{3000000000000009}" {\n   m_aSlots {\n    RIFLEMAN\n    RIFLEMAN\n   }\n  }\n }\n}\n`,
