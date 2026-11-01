@@ -18,7 +18,7 @@ import { findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
-import { workbenchProfileDir } from "./cli.js";
+import { workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher } from "../watchdog/wb-watch.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
@@ -547,8 +547,7 @@ export class WorkbenchClient {
       detached: true,
       stdio: "ignore",
       cwd,
-      // cwd is the game folder, so without these Steam counts Workbench as the game (its steam_appid.txt says 1874880).
-      env: { ...process.env, SteamAppId: "1874910", SteamGameId: "1874910" },
+      env: workbenchEnv(),
     });
     // Without a listener a failed start is an uncaught 'error' that ends the MCP; the NET API wait below reports it.
     proc.on("error", (e) => logger.warn(`Workbench did not start: ${e.message}`));

@@ -48,6 +48,9 @@ export function workbenchProfileDir(config: Config): string {
   return candidates.find((d) => existsSync(join(d, "logs"))) ?? resolve(config.projectPath, "..");
 }
 
+/** cwd is the game folder, so without these Steam counts Workbench as the game (its steam_appid.txt says 1874880). */
+export const workbenchEnv = (): NodeJS.ProcessEnv => ({ ...process.env, SteamAppId: "1874910", SteamGameId: "1874910" });
+
 export function runWorkbench(config: Config, args: string[], timeoutMs: number): Promise<WorkbenchRun> {
   const exe = findWorkbenchExe(config.workbenchPath);
   if (!exe) throw new Error(`Workbench not found under ${config.workbenchPath} (need Workbench/ArmaReforgerWorkbenchSteamDiag.exe)`);
@@ -57,7 +60,7 @@ export function runWorkbench(config: Config, args: string[], timeoutMs: number):
     // CWD = game dir so ./addons/data and ./addons/core resolve (same as wb_launch)
     const cwd = existsSync(config.gamePath) ? config.gamePath : dirname(exe);
     const fullArgs = config.addonsDir ? [...args, "-addonsDir", config.addonsDir] : args;
-    const proc = spawn(exe, fullArgs, { cwd, windowsHide: true, stdio: "ignore" });
+    const proc = spawn(exe, fullArgs, { cwd, windowsHide: true, stdio: "ignore", env: workbenchEnv() });
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
     const finish = (code: number | null) => {
