@@ -5,9 +5,12 @@ import { registerWbEntityTools } from "../../src/tools/wb-entities.js";
 
 type Result = { content: { text: string }[]; isError?: boolean };
 
-// Stub client in edit mode answering EMCP_WB_CreateEntity with `answer`.
-function create(answer: Record<string, unknown>) {
-  const call = vi.fn(async () => answer);
+// Stub client in edit mode answering EMCP_WB_CreateEntity with `answer` (an Error is thrown, as the client does for a handler status "error").
+function create(answer: Record<string, unknown> | Error) {
+  const call = vi.fn(async () => {
+    if (answer instanceof Error) throw answer;
+    return answer;
+  });
   const client = { state: { connected: true, mode: "edit" }, probeMode: vi.fn(async () => "edit"), call };
   const tools: Record<string, (a: Record<string, unknown>) => Promise<Result>> = {};
   registerWbEntityTools({ registerTool: (n: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<Result>) => (tools[n] = h) } as unknown as McpServer, client as unknown as WorkbenchClient);
@@ -25,5 +28,11 @@ describe("wb_entity_create layer", () => {
   it("an old handler that reports no layer is not presented as having used the requested one", async () => {
     const r = await create({ status: "ok", entityName: "X" }).run({ prefab: "{0123456789ABCDEF}Prefabs/X.et", layerPath: "MISSION" });
     expect(r.content[0].text).toContain("- **Layer:** MISSION requested, not confirmed");
+  });
+
+  it("an unknown layer from the handler is an error result", async () => {
+    const r = await create(new Error("Layer not found: NoSuchLayer. Layers: default, PROPS")).run({ prefab: "{0123456789ABCDEF}Prefabs/X.et", layerPath: "NoSuchLayer" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("Layer not found: NoSuchLayer");
   });
 });

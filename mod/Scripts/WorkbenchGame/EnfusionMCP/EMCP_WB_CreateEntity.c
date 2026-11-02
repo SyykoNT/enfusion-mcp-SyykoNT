@@ -115,11 +115,11 @@ class EMCP_WB_CreateEntity : NetApiHandler
 		int targetLayer = req.layerID;
 		if (req.layerPath != "")
 		{
-			targetLayer = api.GetSubsceneLayerId(subScene, req.layerPath);
-			if (targetLayer < 0)
+			// GetSubsceneLayerId returns an id >= 0 even for an unknown path (live 1.8), so check the sub-scene's own list.
+			array<string> layers = {};
+			api.GetSubsceneFolders(subScene, layers);
+			if (!layers.Contains(req.layerPath))
 			{
-				array<string> layers = {};
-				api.GetSubsceneFolders(subScene, layers);
 				string list;
 				foreach (string layer : layers)
 				{
@@ -131,6 +131,7 @@ class EMCP_WB_CreateEntity : NetApiHandler
 				resp.message = "Layer not found: " + req.layerPath + ". Layers: " + list;
 				return resp;
 			}
+			targetLayer = api.GetSubsceneLayerId(subScene, req.layerPath);
 		}
 		else if (targetLayer < 0)
 			targetLayer = api.GetCurrentEntityLayerId();
