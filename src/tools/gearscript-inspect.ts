@@ -286,7 +286,8 @@ export function findGearscriptUsage(guid: string, projectPath: string, roots: Co
   const isWorld = (f: string) => /\.(layer|ent)$/i.test(f);
   const files: { file: string; read: () => string }[] = existsSync(projectPath)
     ? readdirSync(projectPath, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && existsSync(join(projectPath, d.name, "Worlds")))
+        // A project the project path holds as a junction counts, as in resolveCoalitionRoots
+        .filter((d) => (d.isDirectory() || d.isSymbolicLink()) && existsSync(join(projectPath, d.name, "Worlds")))
         .flatMap((d) => {
           const dir = join(projectPath, d.name, "Worlds");
           return (readdirSync(dir, { recursive: true }) as string[]).filter(isWorld).map((f) => join(dir, f));
