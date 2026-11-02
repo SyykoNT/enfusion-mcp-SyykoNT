@@ -3,12 +3,12 @@ import { z } from "zod";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, type Config } from "../config.js";
-import { findGproj } from "../utils/game-paths.js";
+import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { readGproj } from "../workbench/cli.js";
 import { argValue, clientProcesses, isAlive, killPids, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, instanceTable, isUnder, planStop, scan, writeInstance, type Entry } from "../utils/instances.js";
 import { DEFAULT_FAIL_PATTERNS, resolveLogFile, waitFor } from "../utils/logwatch.js";
-import { documentsDir, findMissionHeader } from "./server-params.js";
+import { findMissionHeader } from "./server-params.js";
 
 /** Everything this tool starts lives here, one folder per port: server/, peer<n>/, run.json. */
 export const MISSION_ROOT = join(MCP_HOME, "mission-server");
@@ -59,7 +59,7 @@ export interface StartArgs {
 }
 
 /** Checks the inputs and works out the run, or says why not. Every value here ends up in a process argv. */
-export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addonsDir">, docs = documentsDir): Run | string {
+export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addonsDir">, myGames = myGamesDir): Run | string {
   if (!isAbsolute(a.world) || !/\.ent$/i.test(a.world) || !existsSync(a.world)) return `world must be an existing absolute .ent path: ${a.world}`;
   const found = findMissionHeader(a.world);
   if (!found.addon) return `No .gproj above ${a.world}: the world must be inside an unpacked addon.`;
@@ -76,7 +76,7 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addo
   const dirs = a.addonsDirs ??
     (config.addonsDir
       ? config.addonsDir.split(",").map((d) => d.trim()).filter(Boolean)
-      : [config.projectPath, join(docs(), "My Games", "ArmaReforgerWorkbench", "addons")].filter((d) => existsSync(d)));
+      : [config.projectPath, join(myGames(), "ArmaReforgerWorkbench", "addons")].filter((d) => existsSync(d)));
   // The world's own addon must be found: add its parent folder when no listed folder holds it.
   if (!dirs.some((d) => isUnder(found.addon!, d))) dirs.push(dirname(found.addon));
   const bad = dirs.find((d) => !isAbsolute(d) || /[",\r\n]/.test(d) || !existsSync(d));

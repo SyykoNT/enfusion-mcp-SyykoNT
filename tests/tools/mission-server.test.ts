@@ -55,7 +55,7 @@ beforeEach(() => {
 describe("mission_server run plan and command lines", () => {
   it("builds the server and peer command lines: header as -server {GUID}path, our port, absolute profiles", () => {
     const t = addon();
-    const run = planRun({ world: t.world, port: 2521 }, config(join(t.root, "elsewhere")), () => join(t.root, "Docs"));
+    const run = planRun({ world: t.world, port: 2521 }, config(join(t.root, "elsewhere")), () => join(t.root, "Docs", "My Games"));
     if (typeof run === "string") throw new Error(run);
     expect(run).toMatchObject({ world: "Worlds/Map/Me_TVT_Test.ent", header: "{1234567890ABCDEF}Missions/Map/Me_1102_TVT1_Test.conf", addons: ["TestMission"], gproj: join(t.dir, "addon.gproj") });
     // Neither default folder exists here, so the world's own parent folder is added: the addon must be found.

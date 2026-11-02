@@ -1,25 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.js";
-import { findGproj } from "../utils/game-paths.js";
+import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
-
-const SHELL_FOLDERS = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders";
-
-/** The Windows Documents folder from the shell folder entry (follows OneDrive and moved folders), else ~/Documents. */
-export function documentsDir(query = () => execFileSync("reg", ["query", SHELL_FOLDERS, "/v", "Personal"], { encoding: "utf-8", windowsHide: true })): string {
-  try {
-    const raw = query().match(/Personal\s+REG_(?:EXPAND_)?SZ\s+(.+)/)?.[1]?.trim();
-    if (raw) return raw.replace(/%([^%]+)%/g, (m, v: string) => process.env[v] ?? m);
-  } catch {
-    // no registry (not Windows) or no entry
-  }
-  return join(homedir(), "Documents");
-}
 
 /** The header .conf (as the {GUID}path the tool's picker stores) whose World is this .ent, searched under the addon's Missions folder. */
 export function findMissionHeader(worldFile: string): { header?: string; addon?: string } {
@@ -77,13 +62,13 @@ export function dstProfiles(dump: string): { server: string; peers: string[] } {
  * A relative -profile lands in <Documents>\My Games\<name> (GI-14 probe, server log FileSystem lines); peers assumed the same (unverified).
  * Workbench writes the settings dump itself, so a change in the tool shows here once Workbench has saved its settings.
  */
-export function dstProfileDirs(config: Config, docs = documentsDir): { server?: string; peers: string[]; settings: string } {
+export function dstProfileDirs(config: Config, myGames = myGamesDir): { server?: string; peers: string[]; settings: string } {
   const settings = join(workbenchProfileDir(config), "profile", "wbSettingsDump.ini");
   const p = dstProfiles(existsSync(settings) ? readFileSync(settings, "utf-8") : "");
-  let myGames: string | undefined;
+  let mg: string | undefined;
   // These names lead to log roots: one that climbs out with ".." is dropped.
   const at = (name: string) =>
-    name.split(/[\\/]/).includes("..") ? undefined : isAbsolute(name) ? name : join((myGames ??= join(docs(), "My Games")), name);
+    name.split(/[\\/]/).includes("..") ? undefined : isAbsolute(name) ? name : join((mg ??= myGames()), name);
   return { server: p.server ? at(p.server) : undefined, peers: p.peers.map(at).filter((d): d is string => !!d && existsSync(d)), settings };
 }
 
@@ -95,9 +80,9 @@ export interface ParamsArgs {
 }
 
 /** The Dedicated Server Tool fields as the guide [p15-p16] fills them, with this PC's paths. */
-export function serverParams(a: ParamsArgs, config: Pick<Config, "serverPath" | "gamePath">, docs = documentsDir): string {
-  const documents = a.documentsFolder || docs();
-  const workbench = join(documents, "My Games", "ArmaReforgerWorkbench");
+export function serverParams(a: ParamsArgs, config: Pick<Config, "serverPath" | "gamePath">, myGames = myGamesDir): string {
+  const games = a.documentsFolder ? join(a.documentsFolder, "My Games") : myGames();
+  const workbench = join(games, "ArmaReforgerWorkbench");
   const projects = a.projectsFolder || join(workbench, "Projects");
   const mods = a.modsFolder || join(workbench, "addons");
   const found = (p: string) => `${p} (${existsSync(p) ? "found" : "NOT FOUND"})`;
@@ -124,14 +109,15 @@ export function serverParams(a: ParamsArgs, config: Pick<Config, "serverPath" | 
     `- Peer Executable: ${found(join(config.gamePath, "ArmaReforgerSteamDiag.exe"))}`,
     "- Peers Config: click + once per client, tick Enabled and leave Rpl Auto Join ticked",
     "",
-    `Documents: ${documents}${a.documentsFolder ? " (given)" : " (Windows shell folder)"}`,
+    `My Games: ${games}${a.documentsFolder ? " (from the given Documents folder)" : " (Windows Documents shell folder)"}`,
     "Note: the tool itself also passes Workbench's own -addonsDir and the IDs of the loaded addons (SCR_DedicatedServerPlugin.c), " +
       "so Params repeats them; which copy the server uses is unverified.",
   ].join("\n");
 }
 
 // Paths go into text the user pastes into Params: absolute, with no quote or line break that would split the line.
-const folder = z.string().refine((p) => isAbsolute(p) && !/["\r\n]/.test(p), "an absolute path without quotes or line breaks");
+// A comma would split the -addonsDir list (review GI-12 N2).
+const folder = z.string().refine((p) => isAbsolute(p) && !/[",\r\n]/.test(p), "an absolute path without quotes, commas or line breaks");
 
 export function registerServerParams(server: McpServer, config: Config): void {
   server.registerTool(

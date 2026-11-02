@@ -83,9 +83,9 @@ describe("Dedicated Server Tool logs (GI-14)", () => {
     expect(d.server).toBe(join(root, "dst", "server"));
     expect(d.peers).toEqual([join(root, "dst", "Peer1"), join(root, "dst", "Peer2")]);
     setDump("server", []);
-    expect(dstProfileDirs(config, () => "D:\\Docs").server).toBe(join("D:\\Docs", "My Games", "server"));
+    expect(dstProfileDirs(config, () => "D:\\Docs\\My Games").server).toBe(join("D:\\Docs", "My Games", "server"));
     setDump("..\\..\\..", [{ profile: "..\\Peer" }]);
-    expect(dstProfileDirs(config, () => "D:\\Docs")).toMatchObject({ server: undefined, peers: [] });
+    expect(dstProfileDirs(config, () => "D:\\Docs\\My Games")).toMatchObject({ server: undefined, peers: [] });
     setDump(join(root, "dst", "server"), twoPeers());
   });
 
