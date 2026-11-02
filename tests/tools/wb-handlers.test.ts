@@ -1,6 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+
+// noGit makes the MCP's git helper behave as if git were not on PATH (the test's own git calls are unaffected).
+const sys = vi.hoisted(() => ({ noGit: false }));
+vi.mock("../../src/release/git.js", async (orig) => {
+  const real = await orig<typeof import("../../src/release/git.js")>();
+  return {
+    ...real,
+    gitOrNull: (dir: string, args: string[]) => {
+      if (sys.noGit) throw new Error("git not found on PATH");
+      return real.gitOrNull(dir, args);
+    },
+  };
+});
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -147,6 +160,88 @@ describe("wb_handlers on a protected addon", () => {
     const r = await s.tools.wb_handlers({ action: "install", gprojPath: join(s.addon, "Mission.conf") });
     expect(r.isError).toBe(true);
     expect(s.emcp()).toEqual([]);
+  });
+
+  it("install refuses a protected git repo when git is not on PATH, and writes nothing (B1)", async () => {
+    const s = setup({ git: true });
+    const before = snap(s.addon);
+    sys.noGit = true;
+    try {
+      const r = await s.run("install");
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/protected git repo, but git was not found on PATH.*Nothing was copied/s);
+    } finally {
+      sys.noGit = false;
+    }
+    expect(snap(s.addon)).toEqual(before);
+  });
+
+  it("without git on PATH, a protected addon outside git and an unprotected git addon still install with the note", async () => {
+    const plain = setup();
+    sys.noGit = true;
+    try {
+      expect((await plain.run("install")).isError).toBeUndefined();
+      expect(plain.emcp()).toHaveLength(22);
+      const free = setup({ git: true });
+      const config = { projectPath: join(free.addon, ".."), protectedAddons: [] as string[] } as Config;
+      const r = new WorkbenchClient("127.0.0.1", 1, config).writeHandlers(free.addon);
+      expect(r.written).toHaveLength(22);
+      expect(r.gitNote).toMatch(/git was not found on PATH/);
+    } finally {
+      sys.noGit = false;
+    }
+  });
+
+  it("remove refuses a protected addon in a forbidden root and keeps its files (B2)", async () => {
+    const denied = mkdtempSync(join(home, "denied-"));
+    const s = setup({ base: join(denied, "projects") });
+    cpSync(bundled, join(s.addon, H), { recursive: true });
+    process.env.ENFUSION_FORBIDDEN_DIRS = denied;
+    try {
+      const r = await s.run("remove");
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/is inside/);
+    } finally {
+      delete process.env.ENFUSION_FORBIDDEN_DIRS;
+    }
+    expect(s.emcp()).toHaveLength(22);
+  });
+
+  it("refused retries do not repeat the exclude line (N1)", async () => {
+    const s = setup({ git: true });
+    writeFileSync(join(s.addon, ".gitignore"), "!Scripts/WorkbenchGame/EnfusionMCP/\n"); // re-includes the folder, so every try is refused
+    for (let i = 0; i < 2; i++) {
+      const r = await s.run("install");
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(/still does not ignore/);
+    }
+    const lines = readFileSync(join(s.addon, ".git", "info", "exclude"), "utf-8").split(/\r?\n/);
+    expect(lines.filter((l) => l === "Scripts/WorkbenchGame/EnfusionMCP/")).toHaveLength(1);
+    expect(s.emcp()).toEqual([]);
+  });
+
+  it("refuses when the handler folder is a junction into a forbidden root (N2)", async () => {
+    const denied = mkdtempSync(join(home, "denied-"));
+    const s = setup();
+    const own = join(s.addon, H, "SYK_Own.c");
+    const target = join(denied, "elsewhere");
+    mkdirSync(target);
+    // Replace the handler folder with a junction to the forbidden folder.
+    const { rmSync } = await import("node:fs");
+    rmSync(join(s.addon, H), { recursive: true });
+    symlinkSync(target, join(s.addon, H), "junction");
+    process.env.ENFUSION_FORBIDDEN_DIRS = denied;
+    try {
+      for (const action of ["install", "remove"]) {
+        const r = await s.run(action);
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toMatch(/is inside/);
+      }
+    } finally {
+      delete process.env.ENFUSION_FORBIDDEN_DIRS;
+    }
+    expect(readdirSync(target)).toEqual([]);
+    expect(existsSync(own)).toBe(false);
   });
 
   it("wb_cleanup still keeps a protected addon's handlers", async () => {

@@ -89,7 +89,10 @@ export function excludeHandlersFromGit(addonDir: string): string | undefined {
   try {
     mkdirSync(dirname(exclude), { recursive: true });
     const old = existsSync(exclude) ? readFileSync(exclude, "utf-8") : "";
-    appendFileSync(exclude, `${old && !old.endsWith("\n") ? "\n" : ""}# enfusion-mcp: keep the MCP Workbench handler scripts out of commits\n${line}\n`);
+    // Already there from a refused earlier try: append once only.
+    if (!old.split(/\r?\n/).includes(line)) {
+      appendFileSync(exclude, `${old && !old.endsWith("\n") ? "\n" : ""}# enfusion-mcp: keep the MCP Workbench handler scripts out of commits\n${line}\n`);
+    }
   } catch (e) {
     throw new WorkbenchError(
       `Refused: could not write ${exclude} (${e instanceof Error ? e.message : e}), so the MCP handlers would show up in your commits. ` +
@@ -105,6 +108,14 @@ export function excludeHandlersFromGit(addonDir: string): string | undefined {
     );
   }
   return `Added ${line} to ${exclude} (local, not committed) so the MCP handlers stay out of your commits.`;
+}
+
+/** True when dir or a parent holds .git (a folder, or a file in a worktree); needs no git binary. */
+function inGitRepo(dir: string): boolean {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    if (existsSync(join(d, ".git"))) return true;
+    if (dirname(d) === d) return false;
+  }
 }
 
 /** Read-only git view of the handler folder; null when addonDir is not in a git work tree. Throws when git is not on PATH. */
@@ -419,12 +430,21 @@ export class WorkbenchClient {
    * Only EMCP_* files are written; other files in the folder are left alone.
    */
   writeHandlers(modDir: string): { written: string[]; replaced: string[]; current: string[]; extra: string[]; gitNote?: string } {
-    const root = this.config && forbiddenRoot(this.config, modDir);
-    if (root) {
-      throw new WorkbenchError(`Refused: ${modDir} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS).`, "LAUNCH_FAILED");
-    }
+    this.refuseForbidden(modDir);
     const files = this.handlerFiles(modDir);
     if (!existsSync(files.bundledDir)) throw new WorkbenchError("Bundled handler scripts not found in the MCP package.", "LAUNCH_FAILED");
+    // D-040 allows writing into a protected repo only with the exclude line and the tracked-file check, which need git.
+    if (this.isProtectedMod(modDir) && inGitRepo(modDir)) {
+      try {
+        handlerGitState(modDir);
+      } catch {
+        throw new WorkbenchError(
+          `Refused: ${modDir} is a protected git repo, but git was not found on PATH, so the MCP cannot keep the handlers out of its commits. ` +
+            `Install git or put it on PATH, then try again; or add ${HANDLER_PATH} to the repo's .git/info/exclude by hand first. Nothing was copied.`,
+          "LAUNCH_FAILED"
+        );
+      }
+    }
     const gitNote = excludeHandlersFromGit(modDir);
     mkdirSync(files.handlerDir, { recursive: true });
     const written: string[] = [];
@@ -439,8 +459,18 @@ export class WorkbenchClient {
     return { written, replaced: files.stale, current: files.current, extra: files.extra, gitNote };
   }
 
+  /** wb_handlers never writes or deletes in a forbidden root, checked for the addon and, by real path, its handler folder (a junction). */
+  private refuseForbidden(modDir: string): void {
+    const handlerDir = join(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
+    for (const p of existsSync(handlerDir) ? [modDir, handlerDir] : [modDir]) {
+      const root = this.config && forbiddenRoot(this.config, p);
+      if (root) throw new WorkbenchError(`Refused: ${p} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS).`, "LAUNCH_FAILED");
+    }
+  }
+
   /** allowProtected: only wb_handlers remove (D-040); wb_cleanup keeps protected handlers (D-036). */
   cleanupHandlerScripts(modDir: string, allowProtected = false): boolean {
+    if (allowProtected) this.refuseForbidden(modDir);
     // A protected addon (CRF) keeps its handlers: putting them back needs the owner's OK (D-024, D-036).
     if (!allowProtected && this.isProtectedMod(modDir)) {
       throw new WorkbenchError(`Refused: ${modDir} is a protected addon (ENFUSION_PROTECTED_ADDONS); its handler scripts are kept.`);
