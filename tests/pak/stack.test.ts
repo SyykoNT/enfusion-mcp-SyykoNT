@@ -101,6 +101,15 @@ describe("addons behind links and Workshop downloads in a loose dir", () => {
     rmSync(r, { recursive: true, force: true });
   });
 
+  it.skipIf(process.platform !== "win32")("does not list a Workshop addon as shadowed by itself when the project path is a junction to the cache (B-031)", () => {
+    const { root: r, config: c } = makeFakeStack();
+    const link = join(r, "cache-link");
+    symlinkSync(c.workshopPath!, link, "junction");
+    const all = installedAddons({ ...c, projectPath: link } as Config);
+    expect(all.get("BBBBBBBBBBBBBBBB")!.shadowed).toEqual([]);
+    rmSync(r, { recursive: true, force: true });
+  });
+
   it("reads a Workshop download found in a loose dir from its paks (B-026)", () => {
     const { root: r, config: c } = makeFakeStack();
     // The default projectPath case: the project path is a folder of Workshop downloads

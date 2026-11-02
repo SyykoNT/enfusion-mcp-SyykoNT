@@ -148,7 +148,7 @@ function describe(a: Addon, cat: Addon[]): AddonInfo {
     described.set(key, d);
   }
   const guid = d.guid;
-  return { ...d, shadowed: cat.filter((o) => o.root !== a.root && o.guid === guid).map((o) => o.root) };
+  return { ...d, shadowed: cat.filter((o) => o.root !== a.root && o.guid === guid && realPathOf(o.root) !== realPathOf(a.root)).map((o) => o.root) };
 }
 
 /** Every installed addon by GUID, the copy Workbench would load (loose before Workshop before base game). */

@@ -73,6 +73,16 @@ describe("progress (GI-03)", () => {
     expect(p.next).toMatch(/^All plugin steps are done/);
   });
 
+  it("counts a briefing shown for any faction as written for every slotted side", () => {
+    const allSides = `  COA_MissionDescriptor "{4000000000000001}" {\n   m_sTitle "Briefing"\n   m_sTextData "Hold the bridge."\n   m_bShowForAnyFaction 1\n  }\n`;
+    const m = mission({
+      [`${LAYERS}/_INIT.layer`]: `SCR_AIWorld X {\n}\n` + lobbyEntity(` m_iTimeLimitMinutes 1\n m_iBLUFORTickets 0\n m_BLUFORSlots {\n${group("1-1", ["MEDIC"])} }\n m_OPFORSlots {\n${group("2-1", ["MEDIC"])} }\n m_aMissionDescriptors {\n${allSides} }\n`),
+    });
+    const step = progress(m, nodesOf(m)).steps[5];
+    expect(step.done).toBe(true);
+    expect(step.detail).toBe("briefing written for BLUFOR, OPFOR");
+  });
+
   it("asks to delete the extra .conf when plugin 6 ran twice", () => {
     const [a, at] = conf("A"), [b, bt] = conf("B");
     const m = mission({ [`${LAYERS}/_INIT.layer`]: `SCR_AIWorld X {\n}\n` + lobbyEntity(" m_iTimeLimitMinutes 1\n m_iBLUFORTickets 0\n"), [a]: at, [b]: bt });
@@ -121,12 +131,13 @@ describe("standards (GI-05)", () => {
 
 describe("safe composition replacements (GI-06)", () => {
   it("maps each avoid-list category and slot size to the guide's safe list", () => {
-    expect(replacements("Prefabs/Compositions/Slotted/SlotRoadLarge/Barricade_L_US_01.et")).toEqual(["COAL_Barricade_L"]);
+    expect(replacements("Prefabs/Compositions/Slotted/SlotRoadLarge/Barricade_L_US_01.et")).toEqual(["COAL_Barricade_L", "COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotRoadLarge/Checkpoint_L_USSR_01.et")).toEqual(["COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"]);
     expect(replacements("PrefabsEditable/Auto/Compositions/Slotted/SlotRoadMedium/E_Checkpoint_M_US_01.et")).toEqual(["CheckpointUnderConstruction_M_US"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotFlatMedium/VehicleMaintenance_M_US_01.et")).toEqual(["COAL_FieldHospital_M"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotFlatSmall/AmmoStorage_S_FIA_01.et")).toEqual(["COAL_SandbagPos_S"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotFlatLarge/LivingArea_L_US_01.et")).toEqual(["COAL_Barracks_L"]);
+    expect(replacements("Prefabs/Compositions/Slotted/SlotFlatLarge/FieldHospital_L_US_01.et")).toEqual(["COAL_Barracks_L", "COAL_Helipad_L"]);
   });
 });
 
@@ -192,6 +203,13 @@ describe("zone geometry (GI-08)", () => {
     const layer = square("COA_SafestartBorder", 0, 0, 50, " angleY 30\n") + point("SpawnOut", 60, 0);
     expect(check(layer, { COA_SafestartBorder: safe, SpawnOut: spawn })).toEqual([
       "info: COA_SafestartBorder in ZONES is rotated; zone checks against it were skipped",
+    ]);
+  });
+
+  it("skips a rotated forward deploy zone too, even when it reaches outside the border", () => {
+    const layer = square("COA_GameBorder", 0, 0, 1000) + square("COA_ForwardDeployBorder", 980, 0, 50, " angleY 30\n");
+    expect(check(layer, { COA_GameBorder: border, COA_ForwardDeployBorder: fd })).toEqual([
+      "info: COA_ForwardDeployBorder in ZONES is rotated; zone checks against it were skipped",
     ]);
   });
 });

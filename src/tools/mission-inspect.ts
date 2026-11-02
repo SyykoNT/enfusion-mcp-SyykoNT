@@ -175,7 +175,7 @@ function missionInspect(config: Config, p: Params): string {
   let vanilla: string[] | undefined;
   const fileOf = (name: string) =>
     (name.startsWith("COAL_") ? crf.list("Prefabs/Compositions") : (vanilla ??= PakVirtualFS.get(config.gamePath)?.allFilePaths().filter((f) => f.startsWith("Prefabs/Compositions/")) ?? []))
-      .find((f) => basename(f).startsWith(`${name}_`) || basename(f) === `${name}.et`);
+      .find((f) => f.endsWith(".et") && (basename(f).startsWith(`${name}_`) || basename(f) === `${name}.et`));
   for (const [path, n] of comps) {
     const found = replacements(path).flatMap((name) => fileOf(name) ?? []);
     const instead = found.length ? `; use ${found.join(" or ")}` : replacements(path).length ? `; the guide's replacement for it was not found in CRF ${crf.label} or the game files` : "";

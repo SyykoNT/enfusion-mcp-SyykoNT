@@ -54,7 +54,8 @@ export function progress(m: Lobby, nodes: EnfusionNode[]): { steps: Step[]; next
   const defaultsNode = firstOf(nodes.slice(1), (n) => (member(n, "m_aDefaultMissionDescriptors") ? n : undefined));
   const defaults = new Set(descriptors(defaultsNode, "m_aDefaultMissionDescriptors").map((d) => d.text));
   const written = descriptors(e, "m_aMissionDescriptors").filter((d) => d.text.trim() && !defaults.has(d.text));
-  const briefed = slotted.filter((s) => written.some((d) => d.keys.includes(s)));
+  // The Lobby UI lists a descriptor with m_bShowForAnyFaction for every faction (COA_MissionDescriptionUI.c:85-100)
+  const briefed = slotted.filter((s) => written.some((d) => d.any || d.keys.includes(s)));
   const gearscripts = SIDES.map((s) => `${s} ${prop(member(e, SETTINGS_FIELD[s]), "m_rGearScript") ? basename(stripGuid(prop(member(e, SETTINGS_FIELD[s]), "m_rGearScript")!)) : "(COA_Lobby.et default)"}`);
 
   const steps: Step[] = [
@@ -205,17 +206,17 @@ export function standards(m: Mission): Note[] {
 
 // Guide, Safe Compositions: replacements by avoid category and slot size, then by slot row
 const SAFE: Record<string, string[]> = {
-  Barricade_L: ["COAL_Barricade_L"], Checkpoint_L: ["COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"],
+  Barricade_L: ["COAL_Barricade_L", "COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"], Checkpoint_L: ["COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"],
   LivingArea_L: ["COAL_Barracks_L"], Helipad_L: ["COAL_Helipad_L"],
   road_M: ["CheckpointUnderConstruction_M_US"], road_S: ["CheckpointUnderConstruction_S_US"],
-  flat_M: ["COAL_FieldHospital_M"], flat_S: ["COAL_SandbagPos_S"],
+  flat_L: ["COAL_Barracks_L", "COAL_Helipad_L"], flat_M: ["COAL_FieldHospital_M"], flat_S: ["COAL_SandbagPos_S"],
 };
 /** Every name on the guide's safe list. */
 export const SAFE_NAMES = [...new Set(Object.values(SAFE).flat())];
 
 /** The guide's replacement names for one avoid-list composition (category and size from its file name). */
 export function replacements(path: string): string[] {
-  const m = /(?:E_)?(Barricade|Checkpoint|LivingArea|Helipad|FieldHospital|VehicleMaintenance|FiringRange|AmmoStorage)_([LMS])_/.exec(basename(path));
+  const m = /(Barricade|Checkpoint|LivingArea|Helipad|FieldHospital|VehicleMaintenance|FiringRange|AmmoStorage)_([LMS])_/.exec(basename(path));
   if (!m) return [];
   const road = m[1] === "Barricade" || m[1] === "Checkpoint";
   return SAFE[`${m[1]}_${m[2]}`] ?? SAFE[`${road ? "road" : "flat"}_${m[2]}`] ?? [];
@@ -292,14 +293,14 @@ export function zoneChecks(m: Mission, classes: Map<MissionEntity, Classified | 
   const name = (e: MissionEntity) => e.name ?? `${e.className} in ${e.layer}`;
   // Child entities' coords are relative to their parent, so only top-level entities are checked
   const top = [...classes].filter(([e]) => !e.parent);
+  const rotated = (e: MissionEntity) => ["angleX", "angleY", "angleZ", "angles"].some((k) => prop(e.node, k) !== undefined);
   // Every zone of one kind (and side), or none when one of them cannot be read: a point outside the others may sit in it
   const zones = (kind: string, side?: string): Pt[][] => {
     const polys: Pt[][] = [];
     for (const [e] of top.filter(([, c]) => c?.kind === kind && (!side || c.side === side))) {
-      const rotated = ["angleX", "angleY", "angleZ", "angles"].some((k) => prop(e.node, k) !== undefined);
-      const o = rotated ? undefined : outline(e);
+      const o = rotated(e) ? undefined : outline(e);
       if (!o) {
-        notes.push({ level: "info", text: `${name(e)} ${rotated ? "is rotated" : "has no readable outline"}; zone checks against it were skipped` });
+        notes.push({ level: "info", text: `${name(e)} ${rotated(e) ? "is rotated" : "has no readable outline"}; zone checks against it were skipped` });
         return [];
       }
       polys.push(o);
@@ -330,6 +331,10 @@ export function zoneChecks(m: Mission, classes: Map<MissionEntity, Classified | 
       if (d !== undefined) notes.push({ level: "warning", text: `${name(e)} is ${d} m outside the game border` });
     }
     for (const [e] of top.filter(([, c]) => c?.kind === "forwardDeploy")) {
+      if (rotated(e)) {
+        notes.push({ level: "info", text: `${name(e)} is rotated; zone checks against it were skipped` });
+        continue;
+      }
       const o = outline(e);
       const worst = o && Math.max(...o.map((p) => miss(p, border) ?? 0));
       if (worst) notes.push({ level: "warning", text: `Forward deploy zone ${name(e)} reaches ${worst} m outside the game border` });
