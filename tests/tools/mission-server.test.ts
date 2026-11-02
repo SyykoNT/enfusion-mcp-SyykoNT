@@ -170,7 +170,9 @@ describe("write-path flags and the other server tools (review MM-SERVER-3)", () 
     const { refusedArg } = await import("../../src/utils/process.js");
     const forms = [" -logsDir", "--logsDir", "/logsDir", "-logsDir C:\\x", "-LOGSDIR=C:\\x", "-diagMenu",
       // Recheck 2 N13: more dashes or slashes, a colon value, Unicode dashes, zero-width characters, single quotes.
-      "---logsDir", "//logsDir", "-logsDir:C:\\x", "\u2013logsDir", "\u2212profile", "\u200B-logsDir", "-\u200BlogsDir", "'-logsDir'", "\u2018-profile\u2019"];
+      "---logsDir", "//logsDir", "-logsDir:C:\\x", "\u2013logsDir", "\u2212profile", "\u200B-logsDir", "-\u200BlogsDir", "'-logsDir'", "\u2018-profile\u2019",
+      // Recheck 3 N15: a leading backslash or plus, a comma value, soft hyphen, combining grapheme joiner, Mongolian vowel separator.
+      "\\logsDir", "+logsDir", "-logsDir,C:\\x", "\u00AD-logsDir", "-\u034FlogsDir", "\u180E-logsDir"];
     for (const form of forms) expect(refusedArg([form])).toBe(form);
     // Plain values are not flags, even when they spell a flag's name.
     expect(refusedArg(["-maxFPS", "60", "-jobsysShortWorkerCount", "2", "profile", "logsDir"])).toBeUndefined();
