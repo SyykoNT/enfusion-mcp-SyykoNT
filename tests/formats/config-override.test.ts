@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parse, createNode } from "../../src/formats/enfusion-text.js";
 import {
-  resolveEffective, buildDelta, mergeNode, mergeOverride, overrideMeta, flatten, lookup, scaleNumber, type MergeEvent,
+  resolveEffective, buildDelta, mergeNode, mergeOverride, overrideMeta, worldMeta, flatten, lookup, scaleNumber, type MergeEvent,
 } from "../../src/formats/config-override.js";
 
 // Trimmed from Configs/Campaign/XPRewards.conf and CampaignXPRewards.conf (Arma Reforger 1.8)
@@ -143,5 +143,13 @@ describe("config override engine", () => {
     expect(scaleNumber("88.5", 2)).toBe("177");
     expect(scaleNumber("0.25", 3)).toBe("0.75");
     expect(scaleNumber(undefined, 2)).toBeNull();
+  });
+});
+
+describe("worldMeta", () => {
+  it("equals the .meta Workbench wrote for MCPParity.ent (301 bytes, no final newline)", () => {
+    const real = 'MetaFileClass {\n Name "{EC4BEF6A2B43CB86}Worlds/MCPParity.ent"\n Configurations {\n  ENTResourceClass PC {\n  }\n  ENTResourceClass XBOX_ONE : PC {\n  }\n  ENTResourceClass XBOX_SERIES : PC {\n  }\n  ENTResourceClass PS4 : PC {\n  }\n  ENTResourceClass PS5 : PC {\n  }\n  ENTResourceClass HEADLESS : PC {\n  }\n }\n}';
+    expect(real).toHaveLength(301);
+    expect(worldMeta("EC4BEF6A2B43CB86", "Worlds/MCPParity.ent")).toBe(real);
   });
 });

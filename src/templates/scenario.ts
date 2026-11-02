@@ -155,7 +155,7 @@ export interface ConflictScenarioOptions {
 export interface ConflictScenarioOutput {
   /** Content for Missions/{scenarioName}.conf */
   missionConf: string;
-  /** Content for Worlds/{scenarioName}.ent — minimal SubScene stub */
+  /** Content for Worlds/{scenarioName}.ent: Workbench's own sub-scene shape */
   worldEnt: string;
   /** Content for Worlds/{scenarioName}_Layers/default.layer — game mode, AI, radio */
   defaultLayer: string;
@@ -216,11 +216,12 @@ function buildMissionConf(opts: ConflictScenarioOptions, worldRef: string): stri
 }
 
 // ---------------------------------------------------------------------------
-// World .ent — minimal SubScene stub
+// World .ent: the SubScene + default layer block Workbench writes itself
 // ---------------------------------------------------------------------------
 
 function buildWorldEnt(worldRef: string): string {
-  return `SubScene {\n Parent "${worldRef}"\n}\n`;
+  // Workbench's own shape, no final newline. The "obsolete" modal (B-007) comes from a missing <Name>_Layers folder (SCN-STUB L2/L3), not this block.
+  return `SubScene {\n Parent "${worldRef}"\n}\nLayer default {\n Index 0\n}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -614,7 +615,7 @@ function buildSeedingLayer(opts: ConflictScenarioOptions): string | null {
  * Generate a complete Conflict multiplayer scenario.
  * Returns content for up to 7 files:
  *   - missionConf         → Missions/{scenarioName}.conf
- *   - worldEnt            → Worlds/{scenarioName}.ent  (SubScene stub)
+ *   - worldEnt            → Worlds/{scenarioName}.ent  (sub-scene, Workbench's own shape)
  *   - defaultLayer        → Worlds/{scenarioName}_Layers/default.layer
  *   - basesLayer          → Worlds/{scenarioName}_Layers/Bases.layer
  *   - cahLayer            → Worlds/{scenarioName}_Layers/CAH.layer  (null if no major bases)
