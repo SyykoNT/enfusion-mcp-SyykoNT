@@ -94,10 +94,12 @@ Added since that test pass:
 - `mod pack` and `mod build` check the addon and the output folder before Workbench starts, and list the
   resulting `data.pak`.
 - `server install` and `server update` leave Steam's own server install to Steam.
-- New tools: `resource_resolve`, `wb_watch`, `addon_git_guard`, and two read-only tools for COALITION CRF
-  missions, `mission_validate` and `gearscript_inspect`.
+- New tools: `resource_resolve`, `wb_watch`, `addon_git_guard`, `addon_deps`, `release_audit`,
+  `script_errors`, `log_watch`, `wb_handlers`, and read-only tools for COALITION CRF missions:
+  `coalition_doctor`, `mission_inspect`, `mission_validate`, `gearscript_inspect`, `mission_names`,
+  `server_params`, `mission_git`, `mission_pr_draft` and `mission_preflight`.
 
-Test suite: 1005 passed, 13 skipped.
+Test suite: 1249 passed, 14 skipped.
 
 ## Requirements
 
@@ -159,7 +161,9 @@ then `enfusion-mcp.config.json` in the repository root (see `enfusion-mcp.config
 defaults.
 
 With `ENFUSION_PROJECT_PATH` unset, tools write into addons under `My Games\ArmaReforgerWorkbench\addons`, but
-never into Workshop downloads there (folders with `ServerData.json`) or into the game's Workshop cache.
+never into Workshop downloads there (folders with `ServerData.json`) or into the game's Workshop cache. This
+works only when that folder is a real folder: where it is the guide's link to the game's Workshop cache, writes
+there are refused (see [COALITION CRF missions](#coalition-crf-missions-offline-read-only)).
 
 | Environment variable | Config key | Default |
 |---|---|---|
@@ -183,11 +187,12 @@ never into Workshop downloads there (folders with `ServerData.json`) or into the
 | `ENFUSION_WORKBENCH_PROFILE` | | Workbench profile folder used to find its `logs/`; detected when not set |
 | `ENFUSION_WORKBENCH_LOCK` | | None. A shared lock file for Workbench; `mod compile`, `pack` and `build` name its `owner:` line when they refuse because Workbench is open |
 | `ENFUSION_PYTHON` | | None. The `python.exe` for `mission_validate`; otherwise `py -3`, then `python`, then `python3`, the first that is 3.11 or later |
+| `ENFUSION_LOG_ROOTS` | `logRoots` | None. Extra folders `log_watch` may read logs under (comma-separated), besides the server profile, client profiles, Workbench and game log folders |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
 
 ## Tool reference
 
-65 tools, 3 guided prompts and 3 resource templates.
+77 tools, 3 guided prompts and 3 resource templates.
 
 ### Knowledge (offline)
 | Tool | Purpose |
@@ -204,15 +209,15 @@ never into Workshop downloads there (folders with `ServerData.json`) or into the
 ### Files and generators (offline)
 | Tool | Purpose |
 |---|---|
-| `project` | Browse, read and write files in a Workbench project |
+| `project` | Browse, read and write files in a Workbench project; `write` writes only into the addon that holds the file |
 | `script_create` | Enforce Script files from templates |
 | `prefab` | Create a prefab, or inspect a prefab's inheritance chain |
 | `config_create` | Faction, mission header, entity catalog and editor placeable configs |
 | `layout_create` / `layout_recipe` | UI layouts, from scratch or from recipes taken from game HUDs |
 | `menu_create` | A custom menu: script class, layout and menu preset entry |
 | `gamemode_scaffold` | A modded `SCR_GameModeCampaign` composed from feature recipes |
-| `scenario_create_conflict` | A Conflict scenario: mission header, world stub and layer files |
-| `animation_graph` | Author, inspect and set up vehicle animation graphs |
+| `scenario_create_conflict` | A Conflict scenario: mission header, world stub and layer files, into the addon named by `modName` or `projectPath` |
+| `animation_graph` | Author, inspect and set up vehicle animation graphs; `author` and `setup` write only with `modName` or `projectPath` |
 | `building_setup` | Destructible building prefabs from a Blender export manifest |
 | `game_duplicate` | Copy a game prefab or config into an addon, inherited components included |
 | `config_override` | Override any game config or prefab: `inspect`, `set`, `list` |
@@ -227,15 +232,73 @@ never into Workshop downloads there (folders with `ServerData.json`) or into the
 | `game` | Game client: `launch` (addons, connect, world), `stop`, `status`, `logs` |
 | `env_check` | Check the setup and say what to set for anything missing |
 | `addon_git_guard` | Local git commit guard for addon repos: `status`, `check` (both read-only) and `install` |
+| `addon_deps` | Read-only dependency check before publishing: each dependency's version and source, references into it, and findings such as undeclared, missing, unused or redundant dependencies, cycles and game version drift; plus the load order |
+| `script_errors` | Script runtime errors from Workbench, game client or dedicated server logs, grouped with counts, first and last time and the addon that owns the top frame. Compile errors stay with `mod compile` |
+| `log_watch` | Wait for patterns in a server, client or Workbench log (`wait`), or scan one (`scan`); read-only, returns a cursor to resume from |
 | `release_audit` | Read-only release report for one addon before a commit, test pack or publish: handler files, git state and commit messages, `.gproj`, meta and `resourceDatabase.rdb` registration, GUIDs shared with dependencies (a warning at another path, info when it overrides the same path), mission config images without a source, leftovers, BOM and public-text rules, size, preview image. Stable finding IDs (U1 marks an unreadable file or a check that failed) and a verdict (blocked, warnings, clean) |
 
 ### COALITION CRF missions (offline, read-only)
-Both tools read a CRF clone and its COALITION-Lobby clone, inside the project path.
+
+Set up your local repo of CRF via GitHub according to the Coalition Mission Making Guide found here:
+https://www.coalitiongroup.net/mission-making-guide
+
+Then run `coalition_doctor` to check your setup against the guide.
+
+All tools in this section only read, except `mission_git` with `fetch: true`, which writes git refs in the CRF
+clone.
 
 | Tool | Purpose |
 |---|---|
-| `mission_validate` | Runs CRF's own mission checks (`validate_mission.py`, `mission_synopsis.py`, `validate_resources.py`) on one mission world or on the worlds a branch changes; returns failures, warnings, the pull request title and check ticks CI would set, and the synopsis |
+| `coalition_doctor` | Checks this PC against the guide's Tools Setup in 20 rows, each with its state and the guide's fix: Arma Reforger Tools and Server, Git with its user name and commit email, GitHub Desktop signed in, the server mods downloaded in the game, the Workbench mods link and its check, the Projects folder, the CRF clone, its release branch and your mission branch, updating from release, opening the framework project, the `enfusion://` protocol; plus this server's own setup (Python 3.11+, COALITION-Lobby, `ENFUSION_PROJECT_PATH`, `ENFUSION_PROTECTED_ADDONS`, handler files git-ignored). Writes nothing and never fetches |
+| `mission_inspect` | Per-side readiness report for a mission world from its saved layers: slots, spawn points, safestart and forward-deploy zones, markers, MSPs, vehicle spawners and depots; entity names the mission's components refer to, checked against the world with near-miss suggestions; Task Creator entries; and rule checks from the guide |
+| `mission_validate` | Runs CRF's own mission checks (`validate_mission.py`, `mission_synopsis.py`, `validate_resources.py`) on one mission world or on the worlds a branch changes, with the Lobby clone from `lobbyPath` or beside CRF; returns failures, warnings, the pull request title and check ticks CI would set, and the synopsis |
 | `gearscript_inspect` | What each role in a gearscript spawns with, by the rules of COALITION-Lobby's gear manager: weapons, magazines, clothing, items and radios; lists what the gear manager skips, and with `usedBy` which missions use the gearscript |
+| `mission_names` | The guide's five mission names (branch, world file, mission `.conf`, in-game name, pull request title): `build` makes them, `check` compares a world, its `.conf` and the CRF branch with the rules |
+| `server_params` | The settings for Workbench's Dedicated Server Tool as the guide fills them, with your real folders: the Params line, the mission header `.conf` for a world, and the Diag server and client executables |
+| `mission_git` | Branch and change report for a mission branch: the branch (warns unless `mission/<name>`), commits ahead and behind `origin/release` as of the last fetch, changed files by kind, and warnings for handler files, files outside the mission folders, a world without a `.conf` or the reverse, and new resources without a `.meta` |
+| `mission_pr_draft` | Drafts the hand-filled parts of CRF's mission pull request template from the mission files: a side, faction and role line per slotted side, assets per side, objectives, a testing note from the newest Workbench log, and mods added to `addon.gproj`; lists what it could not fill. Returns text only |
+| `mission_preflight` | One go or no-go before you push a mission branch: runs `mission_git`, `mission_names check`, `mission_validate`, the `mission_inspect` rules and the newest Workbench log, then prints the guide's Before You Submit and pull request checklists with each row marked pass, FAIL, warn, not run, in game or you |
+
+Where the tools find CRF and COALITION-Lobby:
+
+| Copy | Looked for, in this order |
+|---|---|
+| CRF | `crfPath`; a clone in the project path (`ENFUSION_DEFAULT_MOD` first); the guide's folder, `Documents\My Games\ArmaReforgerWorkbench\Projects\Coalition-Reforger-Framework`; the Workshop download |
+| COALITION-Lobby | `lobbyPath`; a `COALITION-Lobby` clone beside CRF; the Workshop download |
+
+- A clone always wins over the Workshop download. A CRF clone is a folder that holds
+  `Tools/Validation/validate_mission.py`. `crfPath` and `lobbyPath` must be inside the project path or the
+  guide's `Projects` folder.
+- The Workshop downloads are read from `ENFUSION_WORKSHOP_PATH`. Set it if your game profile is not in the
+  default place. Documents is taken from the Windows shell folder, so a Documents folder on OneDrive or moved
+  elsewhere is found.
+- `mission_inspect` and `gearscript_inspect` take `source`: `clone` reads only clones, `workshop` only the
+  Workshop downloads (what servers run). `source: "workshop"` refuses `crfPath` and `lobbyPath`, since those
+  name clones. Each reply of these two tools and of `mission_names` names the copies it read, for example
+  `CRF: clone <branch> <hash>` or `Lobby: Workshop <version>`.
+
+What each tool needs:
+
+| Tool | Needs |
+|---|---|
+| `mission_inspect`, `gearscript_inspect`, `mission_names` | CRF and COALITION-Lobby as clones or Workshop downloads. `mission_names check` compares the CRF branch only for a clone |
+| `mission_validate` | A CRF clone with a COALITION-Lobby clone beside it, and Python 3.11 or later. CRF's checks are Python scripts that only a clone has, and they read the Lobby folder: `mission_synopsis.py` stops without it, and the other two skip the Lobby's checks. With only a Workshop copy it says why and runs nothing |
+| `mission_git` | A CRF clone: it reads the branch with git |
+| `mission_pr_draft` | A CRF clone to find the changed world and the added mods. Given `world`, it drafts the rest from clones or Workshop downloads and lists the mods part as not filled |
+| `mission_preflight` | Clones or Workshop downloads. Each step it cannot run, such as `mission_git` without a CRF clone or `mission_validate` without both clones, is marked not run with the reason |
+| `server_params` | No CRF or Lobby copy; `projectsFolder` and `modsFolder` override the guide's folders |
+
+The guide links `Documents\My Games\ArmaReforgerWorkbench\addons` to the game's Workshop cache. With
+`ENFUSION_PROJECT_PATH` unset that folder is the default project path, and because it resolves into the Workshop
+cache, tools refuse to write there. `wb_launch` without `gprojPath`, for example, answers:
+
+> Refused: ...\Documents\My Games\ArmaReforgerWorkbench\addons\EnfusionMCP is inside ...\Documents\My
+> Games\ArmaReforger\addons (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS); wb_launch would
+> copy handler scripts into it. Pass the .gproj of an addon of your own.
+
+Where the junction cannot be made (Documents on OneDrive), mods copied into that folder by hand are Workshop
+downloads (they hold `ServerData.json`), and writes into them are refused as well. The tools in this section
+only read (apart from those git refs), so they are not affected. To write, name an addon of your own with `gprojPath` or `projectPath`.
 
 ### Workbench session (NET API)
 | Tool | Purpose |
@@ -246,6 +309,7 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
 | `wb_state` | Mode, entity counts, selection, terrain bounds |
 | `wb_close` | Save the open world and exit Workbench |
 | `wb_cleanup` | Remove the handler scripts from an addon |
+| `wb_handlers` | `install`, `remove` and `status` of the server's own `EMCP_*` handler scripts in one addon; the only tool that writes them into a protected addon, such as a CRF clone |
 | `wb_play` / `wb_stop` | Enter and leave play mode |
 | `wb_save` | Save the world, optionally to a new path |
 | `wb_undo_redo` | Undo or redo in the World Editor |
@@ -291,16 +355,22 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
 ## Safety notes
 
 - `wb_launch` copies the server's handler scripts into the addon it opens, under
-  `Scripts/WorkbenchGame/EnfusionMCP/`. `mod pack` and `mod build` refuse while they are present
-  (`allowHandlers=true` for a local test pack). Run `wb_cleanup` before you publish, and keep that folder out of
-  version control. `addon_git_guard install` adds local pre-commit and commit-msg hooks (`hooks` picks which);
-  the pre-commit hook refuses commits of those files,
-  their folder `.meta`, `resourceDatabase.rdb`, and `.c` files that start with a UTF-8 BOM.
-- `wb_launch` refuses a `gprojPath` in the game or Tools install, in the game's
-  Workshop cache or in a Workshop download (a folder with `ServerData.json`). Without `gprojPath` it falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project
-  path, skipping those and `ENFUSION_PROTECTED_ADDONS`.
+  `Scripts/WorkbenchGame/EnfusionMCP/`. In a git repo it first adds that folder to the repo's local
+  `.git/info/exclude`, and refuses if handler files are already committed. `mod pack` and `mod build` refuse
+  while they are present (`allowHandlers=true` for a local test pack). Run `wb_cleanup` before you publish, and
+  keep that folder out of version control. `addon_git_guard install` adds local pre-commit and commit-msg hooks
+  (`hooks` picks which); the pre-commit hook refuses commits of those files, their folder `.meta`,
+  `resourceDatabase.rdb`, and `.c` files that start with a UTF-8 BOM.
+- `wb_launch` refuses a `gprojPath` in the game or Tools install, in the game's Workshop cache or in a Workshop
+  download (a folder with `ServerData.json`). Without `gprojPath` it falls back to `ENFUSION_DEFAULT_MOD` or the
+  first addon in the project path, skipping those and `ENFUSION_PROTECTED_ADDONS`.
 - `wb_launch` opens a protected addon (`ENFUSION_PROTECTED_ADDONS`) only when its handlers are already in place, and
   never writes into it; `wb_cleanup` keeps them.
+- `wb_handlers` is the one way to put the handlers into a protected addon. It writes only the `EMCP_*` files and
+  the local `.git/info/exclude` line, and `remove` deletes only `EMCP_*` files. It refuses an addon whose handler
+  files are committed, one inside an install, a Workshop cache or `ENFUSION_FORBIDDEN_DIRS`, and a protected git
+  repo when git is not on `PATH`. Only run it on a protected addon when its owner agrees. Workbench registers
+  handlers at start, so restart it after an install.
 - Only `wb_launch` starts Workbench. `wb_cleanup`, `wb_diagnose` and `wb_knowledge` work without it, and
   `wb_close` reports that it is not running. Every other `wb_*` tool returns an error when Workbench is not
   running. Tools that need edit or play mode read the mode right before they act, and a refusal names the mode
@@ -311,14 +381,13 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
   game clients this server started.
 - These file-writing tools write only into an addon named with `modName` or `projectPath`, never into
   `ENFUSION_DEFAULT_MOD` by default: `script_create`, `prefab`, `config_create`, `layout_create`,
-  `layout_recipe`, `menu_create`, `game_duplicate`, `config_override`, `economy`, `gamemode_scaffold` and
-  `building_setup`. `server_config` takes its target from `projectPath` only (its `modName` is the addon ID to
-  load). They refuse the game and Tools installs, the game's Workshop cache, Workshop downloads (folders with
-  `ServerData.json`), `ENFUSION_FORBIDDEN_DIRS`, the projects folder itself, folders without a `.gproj` and the
-  addons in `ENFUSION_PROTECTED_ADDONS`. Without a valid
-  target they write nothing.
-- `wb_entity_duplicate` still falls back to `ENFUSION_DEFAULT_MOD` or the first addon in the project path. Name
-  the target addon.
+  `layout_recipe`, `menu_create`, `game_duplicate`, `config_override`, `economy`, `gamemode_scaffold`,
+  `building_setup`, `scenario_create_conflict`, `animation_graph` (`author`, `setup`) and `wb_entity_duplicate`.
+  `server_config` takes its target from `projectPath` only (its `modName` is the addon ID to load), and
+  `project write` from the addon that holds the file. They refuse the game and Tools installs, the game's
+  Workshop cache, Workshop downloads (folders with `ServerData.json`), `ENFUSION_FORBIDDEN_DIRS`, the projects
+  folder itself, folders without a `.gproj` and the addons in `ENFUSION_PROTECTED_ADDONS`. Without a valid target
+  they write nothing.
 - `server config` and `server start` replace only the server's own `<serverProfilePath>/server.json`; any other
   `configPath` must be a new file. A server started with local addons binds `127.0.0.1`. The generated
   `server.json` binds `0.0.0.0`.
@@ -326,12 +395,14 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
   Workbench. A watcher never closes, kills or focuses a Workbench this server did not start. Its only automatic
   click is Ignore on the diag build's "Resources are leaking!" assert, in any Workbench it watches,
   and every click is reported. `wb_watch start` with `dismissLeakAssert=never` turns the click off.
-- `mission_validate` runs the Python scripts of the CRF clone in place (`python -I -B -X utf8`). It writes
-  nothing, but it executes that clone's code.
+- `mission_validate`, and `mission_preflight` through it, run the Python scripts of the CRF clone in place
+  (`python -I -B -X utf8`). They write nothing, but they execute that clone's code.
+- `mission_git` with `fetch: true` runs `git fetch origin release` in the CRF clone, which writes refs. Without
+  it, and in `mission_pr_draft` and `mission_preflight`, nothing is fetched, committed, pushed or posted.
 - `addon_git_guard install` writes only into the `.git/hooks` folder of one named addon under the project path
-  or `ENFUSION_ADDONS_DIR`. It refuses protected addons, installs, the game's Workshop cache and Workshop downloads, a repo with
-  `core.hooksPath` set, an existing pre-commit hook it did not write, and a repo whose `origin` is not under
-  `github.com/SyykoNT` unless `sharedRepoOk=true`.
+  or `ENFUSION_ADDONS_DIR`. It refuses protected addons, installs, the game's Workshop cache and Workshop
+  downloads, a repo with `core.hooksPath` set, an existing pre-commit hook it did not write, and a repo whose
+  `origin` is not under `github.com/SyykoNT` unless `sharedRepoOk=true`.
 - Workbench's NET API listens on all network interfaces (`0.0.0.0:5775`). Block inbound TCP 5775 in the
   Windows firewall unless you need remote access.
 - The server does not publish to the Workshop. Publishing stays a manual step in Workbench.
@@ -359,6 +430,9 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
 - `economy set` for ranks changes every faction's rank file that contains the rank.
 - `resource_resolve` assumes dependencies load depth first in `Dependencies` order; the engine's real order
   among sibling dependencies is not verified yet.
+- When the project path is Workbench's `addons` folder (the default, and the guide's setup), Workshop downloads
+  in it are read as loose projects, so `resource_resolve`, `addon_deps`, `release_audit` and `game_read` cannot
+  read the contents of their `.pak` files.
 
 ## Development
 
@@ -390,7 +464,7 @@ tests/          vitest
 
 ## Status
 
-Version 0.13.1, 65 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
+Version 0.13.1, 77 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
 Workbench are still open for the newest work: loading files written by the new text writer, and the watchdog
 against live dialogs.
 
