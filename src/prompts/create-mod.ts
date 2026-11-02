@@ -45,7 +45,7 @@ Before writing any code, assess the scope of what the user is asking for. Think 
    - What it will look like when tested in-game
 4. Present this plan to the user and **wait for their input** before writing any code. They may want to reorder phases, cut features, or adjust scope.
 5. Once the user approves (or adjusts) the plan, build **only Phase 1**.
-6. After building Phase 1, use **project** (action='write') to create a \`MODPLAN.md\` file in the project root with this exact structure:
+6. After building Phase 1, use **project** (action='write') to create a \`MODPLAN.md\` file in the new addon's root (path \`<AddonName>/MODPLAN.md\`) with this exact structure:
 
 \`\`\`markdown
 # Mod Plan: [Mod Name]

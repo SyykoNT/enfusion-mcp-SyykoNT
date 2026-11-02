@@ -9,6 +9,7 @@ import {
   type ConflictBaseSpec,
 } from "../templates/scenario.js";
 import { validateFilename } from "../utils/safe-path.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 
 const BASE_SPEC_SCHEMA = z.object({
   name: z
@@ -142,7 +143,11 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
         projectPath: z
           .string()
           .optional()
-          .describe("Addon root path. Uses configured default if omitted."),
+          .describe("Addon root path. Wins over modName. modName or projectPath is required to write."),
+        modName: z
+          .string()
+          .optional()
+          .describe("Addon folder under the project path or ENFUSION_ADDONS_DIR."),
       },
     },
     async ({
@@ -161,7 +166,9 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
       seedingEnabled,
       seedingThreshold,
       projectPath,
+      modName,
     }) => {
+      const target = resolveWriteAddon(config, { projectPath, modName });
       try {
         validateFilename(scenarioName);
 
@@ -181,9 +188,8 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           seedingThreshold,
         });
 
-        const basePath = projectPath || config.projectPath;
-
-        if (basePath) {
+        if (!("error" in target)) {
+          const basePath = target.dir;
           const missionsDir = resolve(basePath, "Missions");
           const worldsDir   = resolve(basePath, "Worlds");
           const layersDir   = resolve(basePath, "Worlds", `${scenarioName}_Layers`);
@@ -298,9 +304,11 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           };
         }
 
-        // No project path — return generated content only
+        // No valid target: return generated content only
         const parts: string[] = [
-          `Generated conflict scenario (no project path configured — not written to disk):`,
+          target.error,
+          ``,
+          `Generated conflict scenario (not written):`,
           ``,
           `**Missions/${scenarioName}.conf**`,
           `\`\`\``,
@@ -336,9 +344,9 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
         if (output.seedingLayer) {
           parts.push(``, `**Worlds/${scenarioName}_Layers/AmbientPatrols_SEEDING.layer**`, `\`\`\``, output.seedingLayer, `\`\`\``);
         }
-        parts.push(``, `Set ENFUSION_PROJECT_PATH to write files automatically.`);
         return {
           content: [{ type: "text" as const, text: parts.join("\n") }],
+          isError: true,
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
