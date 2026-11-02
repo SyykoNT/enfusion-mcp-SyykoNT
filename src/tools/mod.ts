@@ -89,7 +89,7 @@ function checkStructure(projectPath: string): ValidationIssue[] {
   return issues;
 }
 
-function checkGproj(projectPath: string): ValidationIssue[] {
+export function checkGproj(projectPath: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   const gprojFiles = readdirSync(projectPath).filter(
