@@ -101,4 +101,17 @@ describe("addons behind links and Workshop downloads in a loose dir", () => {
     rmSync(r, { recursive: true, force: true });
   });
 
+  it("reads a Workshop download found in a loose dir from its paks (B-026)", () => {
+    const { root: r, config: c } = makeFakeStack();
+    // The default projectPath case: the project path is a folder of Workshop downloads
+    const asLoose = { ...c, projectPath: c.workshopPath!, workshopPath: undefined } as Config;
+    const modB = buildStack(asLoose, "BBBBBBBBBBBBBBBB").layers.at(-1)!;
+    expect([modB.id, modB.kind]).toEqual(["ModB", "workshop"]);
+    expect(modB.read("Prefabs/Guerilla_Pants.et")?.toString()).toContain("Prefabs/Pants_BDU.et");
+    expect(modB.list("Prefabs")).toContain("Prefabs/Guerilla_Pants.et");
+    expect(installedAddons(asLoose).get("BBBBBBBBBBBBBBBB")?.source).toBe("workshop");
+    // No ServerData.json: a hand-made folder stays loose
+    expect(buildStack(asLoose, "ModC_CCCCCCCCCCCCCCCC").layers.at(-1)!.kind).toBe("loose");
+    rmSync(r, { recursive: true, force: true });
+  });
 });

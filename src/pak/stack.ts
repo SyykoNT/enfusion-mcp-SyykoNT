@@ -85,13 +85,23 @@ const subdirs = (dir: string) => {
 export const looseDirs = (config: Config) =>
   [...(config.addonsDir ?? "").split(","), config.projectPath].map((d) => d?.trim()).filter((d): d is string => !!d);
 
+/**
+ * A Workshop download is packed even when found in a loose dir: the default project path is the
+ * Workbench addons folder, a link to the Workshop cache, and hand copies keep ServerData.json too.
+ */
+const kindOf = (root: string, kind: LayerKind): LayerKind =>
+  kind === "loose" && existsSync(join(root, "ServerData.json")) ? "workshop" : kind;
+
 function catalog(config: Config): Addon[] {
   const out: Addon[] = [];
-  const add = (kind: LayerKind, dirs: string[]) => {
+  const add = (found: LayerKind, dirs: string[]) => {
     for (const root of dirs) {
       const gproj = findGproj(root);
+      if (!gproj) continue;
+      const kind = kindOf(root, found);
       // Workshop folders end in _<GUID>; reading 500+ .gproj files up front is not needed
-      if (gproj) out.push({ kind, root, gproj, guid: kind === "workshop" ? basename(root).split("_").pop()!.toUpperCase() : readGproj(gproj).guid.toUpperCase() });
+      const suffix = kind === "workshop" ? /_([0-9A-Fa-f]{16})$/.exec(basename(root))?.[1] : undefined;
+      out.push({ kind, root, gproj, guid: (suffix ?? readGproj(gproj).guid).toUpperCase() });
     }
   };
   // Loose first: Workbench runs with -addonsDir, so a local clone wins over its Workshop copy
@@ -162,7 +172,7 @@ function findAddon(config: Config, cat: Addon[], target: string): Addon {
     const gproj = resolve(target);
     if (!existsSync(gproj)) throw new Error(`No such .gproj: ${gproj}`);
     const kind: LayerKind = inside(config.workshopPath, gproj) ? "workshop" : inside(config.gamePath, gproj) ? "vanilla" : "loose";
-    return { kind, root: dirname(gproj), gproj };
+    return { kind: kindOf(dirname(gproj), kind), root: dirname(gproj), gproj };
   }
   const key = target.toLowerCase() === "vanilla" ? VANILLA_GUID : target;
   const hit = cat.find((a) => basename(a.root).toLowerCase() === key.toLowerCase())
