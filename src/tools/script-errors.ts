@@ -8,6 +8,7 @@ import { workbenchProfileDir } from "../workbench/cli.js";
 import { formatLogTime, mergeSummaries, parseLogHeader, parseLogTime, parseScriptErrors, type ScriptErrorGroup, type ScriptErrorSummary } from "../workbench/script-errors.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { serverLogsDir } from "./server.js";
+import { dstProfileDirs } from "./server-params.js";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
 
@@ -80,9 +81,13 @@ export function registerScriptErrors(server: McpServer, config: Config): void {
       description:
         "Summarize script runtime errors in Workbench, game client or dedicated server logs: Virtual Machine Exception blocks " +
         "(reason, class, function, stack) and other SCRIPT (E) lines, grouped with counts, first and last time and the addon " +
-        "that owns each top frame. Reads log files only. Compile errors are left to `mod compile`.",
+        "that owns each top frame. Reads log files only. Compile errors are left to `mod compile`. " +
+        "dstServer and dstPeers read the logs of Workbench's Dedicated Server Tool runs, from the Profile names in its saved settings.",
       inputSchema: {
-        source: z.enum(["workbench", "game", "server"]).default("workbench").describe("Which log root to read"),
+        source: z
+          .enum(["workbench", "game", "server", "dstServer", "dstPeers"])
+          .default("workbench")
+          .describe("Which log root to read; dstPeers merges the newest sessions of every peer of the Dedicated Server Tool"),
         logPath: z.string().optional().describe("A .log file, a log folder or a logs root (folder of logs_* folders) instead of source"),
         sessions: z.number().int().min(1).max(50).default(1).describe("Newest N log folders, aggregated"),
         since: z.string().regex(/^\d\d:\d\d(:\d\d)?$/).optional().describe("HH:MM[:SS] local time: only entries from then on (one session only)"),
@@ -95,8 +100,22 @@ export function registerScriptErrors(server: McpServer, config: Config): void {
     async (a) => {
       try {
         if (a.since && a.sessions > 1) return text("since applies to one session; drop sessions or since", true);
-        const root = a.logPath ?? logRoot(config, a.source);
-        const found = sessionsAt(root, a.sessions);
+        let root: string;
+        let found: Session[] | string;
+        if (!a.logPath && (a.source === "dstServer" || a.source === "dstPeers")) {
+          const dst = dstProfileDirs(config);
+          if (a.source === "dstServer" && !dst.server) {
+            return text(`The Dedicated Server Tool has no Profile set in ${dst.settings}, so its server writes to a default profile (location unverified). Set Profile in the tool (the guide uses "server"), or pass logPath.`, true);
+          }
+          const dirs = a.source === "dstServer" ? [dst.server!] : dst.peers;
+          if (!dirs.length) return text(`No profile folder for an enabled Dedicated Server Tool peer (${dst.settings}): none has run, none is enabled, or each writes to the default client profile (source game).`, true);
+          root = dirs.join(", ");
+          // One run = the newest sessions of each peer, labelled with the peer's profile folder.
+          found = dirs.flatMap((d) => newestSessions(join(d, "logs"), a.sessions).map((s) => ({ ...s, name: `${basename(d)}/${s.name}` })));
+        } else {
+          root = a.logPath ?? logRoot(config, a.source as "workbench" | "game" | "server");
+          found = sessionsAt(root, a.sessions);
+        }
         if (typeof found === "string") return text(found, true);
         if (!found.length) return text(`No logs in ${root}`, true);
 
