@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { realPathOf } from "../utils/safe-path.js";
+import { aiIdentity, aiLineHits } from "./ai-attribution.js";
 
 /** Run git in dir without taking optional locks (safe beside GitHub Desktop and other sessions). */
 export function git(dir: string, args: string[]): string {
@@ -63,8 +64,18 @@ export interface GitState {
   trackedForbidden: string[];
   ignoresHandlers: boolean;
   hasCommitMsgHook: boolean;
-  /** "<hash> <subject>" of scanned commits whose message mentions Claude, Anthropic or Co-Authored-By */
+  /** "<hash> <subject>: <why>" of scanned commits with an AI attribution line in the message or an AI author or committer */
   aiMessages: string[];
+}
+
+/** One G5 entry for a git log record ("%h %s\0%an\0%ae\0%cn\0%ce\0%B"), or none. */
+function aiReason(record: string): string[] {
+  const [head, an, ae, cn, ce, body] = record.split("\0");
+  const line = aiLineHits(body ?? "")[0];
+  const author = aiIdentity(an, ae);
+  const committer = aiIdentity(cn, ce);
+  const why = line ? `matched "${line.trim()}"` : author ? `author ${author}` : committer ? `committer ${committer}` : undefined;
+  return why ? [`${head}: ${why}`] : [];
 }
 
 /** Read-only repo state for release_audit. base defaults to the upstream; without one, commits on no remote branch count as unpushed. */
@@ -86,7 +97,7 @@ export function gitState(dir: string, base?: string): GitState {
   // Without an upstream, "unpushed" means on no remote-tracking branch
   const from = base ? baseSha : upstream;
   const range = unborn || (base && !baseSha) ? null : from ? [`${from}..HEAD`] : ["HEAD", "--not", "--remotes"];
-  const log = range ? gitOrNull(dir, ["log", ...range, "--format=%h %s%x00%B%x1e"]) : "";
+  const log = range ? gitOrNull(dir, ["log", ...range, "--format=%h %s%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e"]) : "";
   const commits = (log ?? "").split("\x1e").map((c) => c.trim()).filter(Boolean);
 
   const porcelain: string[] = [];
@@ -108,6 +119,6 @@ export function gitState(dir: string, base?: string): GitState {
     trackedForbidden: (gitOrNull(dir, ["ls-files", "-z", "--", ...forbidden]) ?? "").split("\0").filter(Boolean),
     ignoresHandlers: gitOrNull(dir, ["check-ignore", "-q", "Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c"]) !== null,
     hasCommitMsgHook: existsSync(join(hooksDir(dir), "commit-msg")),
-    aiMessages: commits.filter((c) => /anthropic|claude|co-authored-by/i.test(c.split("\0")[1] ?? "")).map((c) => c.split("\0")[0]),
+    aiMessages: commits.flatMap(aiReason),
   };
 }

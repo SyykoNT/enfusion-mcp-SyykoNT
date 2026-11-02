@@ -157,6 +157,15 @@ describe.skipIf(!hasGit)("addon_git_guard", { timeout: 30_000 }, () => {
     expect(guardInstall(d, { hooks: ["commit-msg"] }).lines).toContain("kept commit-msg (attribution stripper); not ours, left alone");
   });
 
+  it("status flags a v3 hook as older than the current version, and install replaces it", async () => {
+    const d = addon(projects, "OldV3", "AAAA000000000006");
+    writeFileSync(hook(d, "commit-msg"), COMMIT_MSG.replace("guard v4", "guard v3"));
+    const status = (await call({ action: "status" })).content[0].text;
+    expect(status).toContain("OldV3: commit-msg v3 is older than v4: run install to refresh");
+    expect(guardInstall(d, { hooks: ["commit-msg"] }).lines[0]).toMatch(/\(v4, replaced v3\)/);
+    expect(readFileSync(hook(d, "commit-msg"), "utf-8")).toBe(COMMIT_MSG);
+  });
+
   it("replaces an older version of our hook", () => {
     const d = addon(projects, "Upgrade", "8888888888888888");
     writeFileSync(hook(d, "pre-commit"), "#!/bin/sh\n# enfusion-mcp-syykont commit guard v0 (local hook, not tracked)\n");
@@ -176,9 +185,9 @@ describe.skipIf(!hasGit)("addon_git_guard", { timeout: 30_000 }, () => {
   it("status lists each repo with its hooks, ignore rule and handler count", async () => {
     const r = await call({ action: "status" });
     const text = r.content[0].text;
-    expect(text).toMatch(/^SYK-Test: pre-commit ours v3; commit-msg ours v3; handlers ignored no; handler files on disk 0$/m);
+    expect(text).toMatch(/^SYK-Test: pre-commit ours v4; commit-msg ours v4; handlers ignored no; handler files on disk 0$/m);
     expect(text).toMatch(/^Foreign: pre-commit foreign \(#!\/bin\/sh\); commit-msg none;/m);
-    expect(text).toMatch(/^StripperHook: pre-commit ours v3; commit-msg attribution stripper;/m);
+    expect(text).toMatch(/^StripperHook: pre-commit ours v4; commit-msg attribution stripper;/m);
     expect(text).not.toMatch(/^NoGit/m);
   });
 });

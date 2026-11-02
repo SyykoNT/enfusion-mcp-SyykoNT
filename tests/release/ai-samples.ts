@@ -1,0 +1,36 @@
+// Lines researched in tests/records/2026-11-02_AI-ATTR_research.md (in the MCP project folder). strip = the hook deletes it.
+export const AI_SAMPLES: { line: string; strip: boolean }[] = [
+  { line: "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>", strip: true },
+  { line: "Co-Authored-By: Claude <noreply@anthropic.com>", strip: true },
+  { line: "Co-authored-by: Codex <noreply@openai.com>", strip: true },
+  { line: "Co-authored-by: Copilot <copilot@github.com>", strip: true },
+  { line: "Co-authored-by: aider (gpt-4o) <aider@aider.chat>", strip: true },
+  { line: "Co-Authored-By: Continue <noreply@continue.dev>", strip: true },
+  { line: "Co-authored-by: Cursor <cursoragent@cursor.com>", strip: true },
+  { line: "Co-authored-by: Cursor Grok 4.7 <cursoragent@cursor.com>", strip: true },
+  { line: "Co-authored-by: claude[bot] <41898282+claude[bot]@users.noreply.github.com>", strip: true },
+  { line: "Co-authored-by: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>", strip: true },
+  { line: "Co-authored-by: opencode-agent[bot] <opencode-agent[bot]@users.noreply.github.com>", strip: true },
+  { line: "Claude-Session: https://claude.ai/code/session_x", strip: true },
+  { line: "Agent-Logs-Url: https://github.com/o/r/agents/x", strip: true },
+  { line: "\u{1F916} Generated with [Claude Code](https://claude.com/claude-code)", strip: true },
+  { line: "Generated with [Claude Code](https://claude.ai/code)", strip: true },
+  { line: "Generated with [Codex](https://openai.com/codex/).", strip: true },
+  { line: "Generated with [Continue](https://continue.dev)", strip: true },
+  { line: "*Powered by [Kilo](https://kilo.ai)*", strip: true },
+  { line: "[opencode session](https://opncd.ai/s/abc)", strip: true },
+  { line: "Made-with: Cursor", strip: true },
+  { line: "Made with Cursor", strip: true },
+  { line: "aider: fix the thing", strip: false },
+];
+
+export const HUMAN_LINES = [
+  "Co-authored-by: Jane Doe <12345+janedoe@users.noreply.github.com>",
+  "Co-authored-by: Claude Dupont <claude.dupont@gmail.com>",
+  "Co-authored-by: Devin Jones <devin@example.org>",
+  "Co-authored-by: Jules Martin <jules.martin@example.fr>",
+  "Co-authored-by: Cursor Smith <cursor@example.com>",
+  "Co-authored-by: Ada <ada@openai.com.example.net>",
+  "Fix the Codex panel; generated with care",
+  "Thanks to Claude for the review",
+];
