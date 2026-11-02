@@ -166,6 +166,21 @@ describe("write-path flags and the other server tools (review MM-SERVER-3)", () 
     expect(sys.spawned).toEqual([]);
   });
 
+  it("refusedArg names the flag in every spelling the engine could read (recheck N10)", async () => {
+    const { refusedArg } = await import("../../src/utils/process.js");
+    for (const form of [" -logsDir", "--logsDir", "/logsDir", "-logsDir C:\\x", "-LOGSDIR=C:\\x", "-diagMenu"]) expect(refusedArg([form])).toBe(form);
+    expect(refusedArg(["-maxFPS", "60", "-jobsysShortWorkerCount", "2"])).toBeUndefined();
+  });
+
+  it("game launch checks connect and world before they reach the argv (recheck N12)", async () => {
+    const c = { ...config(home), clientProfilesRoot: join(home, "cli") } as Config;
+    const game = handler(registerGame, c);
+    expect((await game({ action: "launch", connect: '127.0.0.1" -profile "C:\\x', lines: 80 })).content[0].text).toMatch(/^connect must be host or host:port/);
+    expect((await game({ action: "launch", world: "worlds/../../x.ent", lines: 80 })).content[0].text).toMatch(/^world must be a \.ent resource path/);
+    expect((await game({ action: "launch", world: "C:\\x\\y.ent", lines: 80 })).content[0].text).toMatch(/^world must be a \.ent resource path/);
+    expect(sys.spawned).toEqual([]);
+  });
+
   it("server stop leaves a mission_server run to mission_server (N4); log_watch may read its logs folders (N1)", async () => {
     const write = (pid: number, dir: string) => {
       mkdirSync(dir, { recursive: true });
