@@ -45,6 +45,7 @@ function Kids($h) { @(foreach ($k in [EmcpWatch]::Kids($h)) { [ordered]@{ hwnd =
 function Say($o) { [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress -Depth 5)); [Console]::Out.Flush() }
 function Own($h, $o) {
   $ow = [EmcpWatch]::GetWindow($h, 4)
+  $o.enabled = [EmcpWatch]::IsWindowEnabled($h)
   $o.owner = $ow.ToInt64()
   $o.ownerEnabled = $null
   if ($ow -ne [IntPtr]::Zero) { [uint32]$op = 0; [void][EmcpWatch]::GetWindowThreadProcessId($ow, [ref]$op); if ($op -eq $WbPid) { $o.ownerEnabled = [EmcpWatch]::IsWindowEnabled($ow) } }
@@ -110,7 +111,7 @@ function Names($el, $type) {
 $wins = @(foreach ($h in [EmcpWatch]::Top([uint32]$WbPid)) {
   $o = [ordered]@{ hwnd = $h.ToInt64(); cls = [EmcpWatch]::Cls($h); text = [EmcpWatch]::Text($h); visible = $true }
   Own $h $o
-  if (($o.owner -ne 0 -and $o.ownerEnabled -eq $false) -or $o.cls -ceq '#32770' -or $titles -contains $o.text -or $o.text.StartsWith('Validating ')) {
+  if (($o.owner -ne 0 -and $o.ownerEnabled -eq $false -and $o.enabled) -or $o.cls -ceq '#32770' -or $titles -contains $o.text -or $o.text.StartsWith('Validating ')) {
     if ($o.cls -ceq '#32770') { $o.children = Kids $h }
     else {
       $el = $ae::FromHandle($h)

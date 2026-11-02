@@ -122,13 +122,14 @@ describe("watcher main loop", () => {
   it("reports a Qt modal (owner disabled, not a #32770 box) as blocked_dialog other with its title, and never clicks it", async () => {
     const t = setup();
     const w = t.watcher();
-    const main = { hwnd: 7100, cls: "Qt683QWindowIcon", text: "World Editor", visible: true, hung: false, owner: 0, ownerEnabled: null };
-    t.sample.wins = [main, { hwnd: 7101, cls: "Qt683QWindowIcon", text: "Validating $MCPParity:Worlds/ScnStub_V1.ent", visible: true, hung: false, owner: 7100, ownerEnabled: false }];
+    const main = { hwnd: 7100, cls: "Qt683QWindowIcon", text: "World Editor", visible: true, hung: false, owner: 0, ownerEnabled: null, enabled: false };
+    const tool = { hwnd: 7102, cls: "Qt683QWindowToolSaveBits", text: "Resource Browser", visible: true, hung: false, owner: 7100, ownerEnabled: false, enabled: false };
+    t.sample.wins = [main, tool, { hwnd: 7101, cls: "Qt683QWindowIcon", text: "Validating $MCPParity:Worlds/ScnStub_V1.ent", visible: true, hung: false, owner: 7100, ownerEnabled: false, enabled: true }];
     await w.tick();
     t.clock.now += 12_000;
     const s = await w.tick();
     expect([s.state, s.kind]).toEqual(["blocked_dialog", "other"]);
-    expect(s.dialog?.title).toBe("Validating $MCPParity:Worlds/ScnStub_V1.ent");
+    expect(s.dialog?.title).toBe("Validating $MCPParity:Worlds/ScnStub_V1.ent"); // not the disabled Resource Browser listed before it
     expect(t.dismiss).not.toHaveBeenCalled();
     t.sample.wins = [main];
     expect((await w.tick()).state).toBe("ok");

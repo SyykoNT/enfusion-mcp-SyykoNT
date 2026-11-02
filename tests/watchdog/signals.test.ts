@@ -216,6 +216,10 @@ describe("isDialog", () => {
   it("is true for a window whose same-PID owner is disabled, even with an unknown title", () => {
     expect(isDialog(validating({ text: "Some new Qt dialog", owner: 4, ownerEnabled: false }))).toBe(true);
   });
+  it("is false for a tool window that a modal disabled too (live PR-1: the Resource Browser under the Validating box)", () => {
+    expect(isDialog({ hwnd: 9, cls: "Qt683QWindowToolSaveBits", text: "Resource Browser", visible: true, owner: 4, ownerEnabled: false, enabled: false })).toBe(false);
+    expect(isDialog(validating({ owner: 4, ownerEnabled: false, enabled: true }))).toBe(true);
+  });
   it("is false for an owned tool window whose owner is enabled, or whose owner is another process's", () => {
     expect(isDialog({ hwnd: 6, cls: "Qt683QWindowIcon", text: "Resource Browser", visible: true, owner: 4, ownerEnabled: true })).toBe(false);
     expect(isDialog({ hwnd: 6, cls: "Qt683QWindowIcon", text: "Tool", visible: true, owner: 4, ownerEnabled: null })).toBe(false);
@@ -256,6 +260,9 @@ describe("formatDialogs", () => {
     expect(formatDialogs([{ pid: 7, dialogs: [] }])).toBe("No dialog is open in Workbench PID 7; it may be loading, compiling or hung.");
     expect(formatDialogs([{ pid: 7, unavailable: "boom" }])).toBe("Workbench PID 7 (dialog check unavailable: boom)");
     expect(formatDialogs([])).toBe("");
+  });
+  it("leaves out buttons with no name", () => {
+    expect(formatDialogs([{ pid: 1, dialogs: [validating({ buttons: ["", "Yes", "", "No"] })] }])).toContain("buttons: Yes, No [");
   });
   it("caps the text of a dialog at 300 characters", () => {
     const long = validating({ children: [{ hwnd: 0, cls: "Text", text: "x".repeat(500) }] });

@@ -104,15 +104,17 @@ export interface WinInfo {
   /** Owner window (0 or absent: none) and whether it is enabled; null when the owner belongs to another process. */
   owner?: number;
   ownerEnabled?: boolean | null;
+  /** The window itself; a modal blocks its whole app, so tool windows under it are disabled too. */
+  enabled?: boolean;
   buttons?: string[];
 }
 
 const DIALOG_TITLES = ["Opening world", "Script Authorization Required"];
 const VALIDATING = "Validating ";
 
-/** A blocking dialog (D3): its same-PID owner is disabled; fallback for owners we could not read: box class or known title. */
+/** A blocking dialog (D3): it is enabled and its same-PID owner is disabled; fallback for owners we could not read: box class or known title. */
 export function isDialog(w: WinInfo): boolean {
-  return !!w.visible && ((!!w.owner && w.ownerEnabled === false) || w.cls === "#32770" || DIALOG_TITLES.includes(w.text) || w.text.startsWith(VALIDATING));
+  return !!w.visible && ((!!w.owner && w.ownerEnabled === false && w.enabled !== false) || w.cls === "#32770" || DIALOG_TITLES.includes(w.text) || w.text.startsWith(VALIDATING));
 }
 
 export type DialogKind = "leak_assert" | "script_authorization" | "open_world_prompt" | "obsolete_world" | "save_as" | "other";
@@ -145,7 +147,7 @@ export function formatDialogs(list: DialogProbe[]): string {
       lines.push(`Workbench PID ${p.pid} has a dialog open, which blocks every NET API call:`);
       for (const w of p.dialogs) {
         const text = dialogText(w);
-        lines.push(`- "${w.text}" (${w.cls})${text ? `: "${text}"` : ""}${w.buttons?.length ? ` buttons: ${w.buttons.join(", ")}` : ""} [${dialogKind(w)}]`);
+        lines.push(`- "${w.text}" (${w.cls})${text ? `: "${text}"` : ""}${w.buttons?.some(Boolean) ? ` buttons: ${w.buttons.filter(Boolean).join(", ")}` : ""} [${dialogKind(w)}]`);
       }
     }
   }
