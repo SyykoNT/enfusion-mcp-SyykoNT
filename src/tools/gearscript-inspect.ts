@@ -5,13 +5,16 @@ import { z } from "zod";
 import type { Config } from "../config.js";
 import { mergeNode } from "../formats/config-override.js";
 import { parseAll, type EnfusionNode } from "../formats/enfusion-text.js";
-import { chainOf, member, prop, slotRoles, SIDES, textOf, type Side } from "../coalition/mission-model.js";
+import { member, prop, SETTINGS_FIELD, slotRoles, SIDES, textOf, type Side } from "../coalition/mission-model.js";
 import {
-  CRF_PATH_HELP, LOBBY_PATH_HELP, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
+  CRF_PATH_HELP, LOBBY_PATH_HELP, LOBBY_PREFAB, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
 } from "../utils/coalition-paths.js";
 import { levenshtein } from "../utils/fuzzy.js";
 import { enumDefault, loadLobbyEnums, type LobbyEnums } from "../utils/lobby-enums.js";
-import { loadLobbyMission } from "./mission-inspect.js";
+import { loadLobbyMission, lobbyNodes } from "./mission-inspect.js";
+
+// Kept where the drift test and other tools import them from
+export { LOBBY_PREFAB, SETTINGS_FIELD };
 
 // The rules below describe COALITION-Lobby's COA_GearscriptManager.c in our own words; line
 // citations are to that file unless another is named. If the Lobby changes them, this drifts.
@@ -20,7 +23,6 @@ import { loadLobbyMission } from "./mission-inspect.js";
 export const ROLES_CONFIG = "{4388548E9F600148}Configs/Gearscripts/COA_Global_Roles_Config.conf";
 export const CVON_ROLES_CONFIG = "{F04F02DBFC65553E}Configs/Gearscripts/Additional Configs/COA_CVON_Global_Roles_Config.conf";
 export const MANAGER = "Scripts/Game/Systems/Core/Managers/Gamemode/Gearscript/COA_GearscriptManager.c";
-export const LOBBY_PREFAB = "Prefabs/!Systems/!Lobby/COA_Lobby.et";
 
 // ApplyDefaultWeapons :287-384: these four pick one weapon at random, the rest are single fields
 export const POOLS: Record<string, string> = { RIFLE: "m_Rifles", RIFLEUGL: "m_RifleUGLs", CARBINE: "m_Carbines", PISTOL: "m_Pistols" };
@@ -37,10 +39,6 @@ export interface Radios {
 }
 // COA_GearScriptContainer attribute defaults (COA_GearscriptConfig.c:14-24)
 const DEFAULT_RADIOS: Radios = { leadership: true, gi: false, rto: true };
-// COA_Gamemode.c:183-195: CIV is m_CIVILIANGearScriptSettings
-export const SETTINGS_FIELD: Record<Side, string> = {
-  BLUFOR: "m_BLUFORGearScriptSettings", OPFOR: "m_OPFORGearScriptSettings", INDFOR: "m_INDFORGearScriptSettings", CIV: "m_CIVILIANGearScriptSettings",
-};
 
 export interface Mag { prefab: string; count: number }
 export interface WeaponOption { prefab: string; source: string; mags: Mag[] }
@@ -253,11 +251,7 @@ interface MissionSide { worldRel: string; field: string; gearscript: string; rad
 /** One side's gearscript settings, CVON choice and slotted roles: the mission's COA_Lobby entity first, then its COA_Lobby.et chain. */
 function missionSide(config: Config, roots: CoalitionRoots, world: string, side: Side): MissionSide {
   const m = loadLobbyMission(config, roots, world);
-  // Missions place COA_Lobby.et by its GUID through CRF's override (Prefabs/Modded Overrides/...) or an old path that no
-  // longer exists; either way the Lobby's own prefab sits under it, so read that chain after the mission's
-  const copies = [...new Set([m.copy, roots.crf, roots.lobby])];
-  const chain = [...chainOf(m.lobby.prefab!, copies, config), ...chainOf(LOBBY_PREFAB, [roots.lobby], config)];
-  const nodes = [m.lobby.node, ...chain.map((l) => parseAll(l.text)[0])];
+  const nodes = lobbyNodes(config, roots, m);
   const first = (f: (n: EnfusionNode) => string | undefined) => nodes.map(f).find((v) => v !== undefined);
   const field = SETTINGS_FIELD[side];
   const flag = (key: string, def: boolean) => (first((n) => prop(member(n, field), key)) ?? (def ? "1" : "0")) !== "0";
@@ -446,7 +440,7 @@ export function registerGearscriptInspect(server: McpServer, config: Config): vo
           .min(1)
           .optional()
           .describe("'{GUID}Configs/Gearscripts/...conf', a CRF or Lobby relative path, or a bare file name such as 'COA_GS_USSR_Late_War.conf' (searched under Configs/Gearscripts). Optional with world and side."),
-        world: z.string().optional().describe("Mission world .ent (CRF-relative, project-relative or absolute, inside the project path). With side: gearscript, radios, CVON choice and slotted roles come from the mission."),
+        world: z.string().optional().describe("Mission world .ent (CRF-relative, project-relative or absolute, inside the project path or the guide's Projects folder). With side: gearscript, radios, CVON choice and slotted roles come from the mission."),
         side: z.enum(SIDES).optional().describe("Side to read from the mission world (CIV uses m_CIVILIANGearScriptSettings)."),
         roles: z
           .array(z.string())
