@@ -31,7 +31,7 @@ Work step by step. Ask the user when information is missing or before anything t
 
 Follow this workflow:
 
-1. **Read the plan** — Use **project** (action='read') to check for a \`MODPLAN.md\` file in the project root.
+1. **Read the plan**: use **project** (action='read') to check for a \`MODPLAN.md\` file in the addon root (path \`MODPLAN.md\` with projectPath = ${projectPath}).
    - If it exists: this is a phased project. Read the plan carefully. It contains the full mod vision, what's been completed, what's pending, architecture notes, class prefixes, and file names. Use this as your primary context. If the user's task matches the next pending phase, execute that phase. If it's a different task, still respect the existing architecture.
    - If it doesn't exist: this is either a simple mod or one created before planning was added. Proceed normally.
 
