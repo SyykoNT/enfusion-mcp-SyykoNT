@@ -59,6 +59,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
         "Generate a Conflict multiplayer scenario: a mission header (.conf), a sub-scene world (.ent with its .meta) and 3 to 6 layer files " +
         "(the result lists every file written). Generates GameMode_Seize, CampaignFactionManager, military bases with seizing, radio and patrol spawnpoints, " +
         "optional relay towers (base type='relay') and optional seeding mode. " +
+        "Needs a Conflict mod that supplies GameMode_Seize and MOBSpawnProtectionArea: neither is in vanilla 1.8.0.13, so without it Workbench logs 'Wrong GUID/name' and the game mode entity loads without its components. " +
         "Known worlds: " + KNOWN_WORLDS.join(", ") + ". " +
         "For custom maps pass the full resource ref as worldName, e.g. '{GUID}worlds/MyMap.ent'.",
       inputSchema: {

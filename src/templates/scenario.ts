@@ -13,8 +13,8 @@ const WORLD_PARENTS: Record<string, string> = {
 
 // Game mode (production Seize/Conflict mods)
 const PREFAB_GAME_MODE      = "{CE6DD1D3C1BC7366}Prefabs/GameLogic/GameMode_Seize.et";
-// Faction manager for Seize game mode
-const PREFAB_FACTION_MGR    = "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager_Seize.et";
+// Vanilla 1.8.0.13 path of this GUID (the old "_Seize" name matched no file)
+const PREFAB_FACTION_MGR    = "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et";
 // ConflictMilitaryBase — all military bases use this ($grp wrapper)
 const PREFAB_CONFLICT_BASE  = "{1391CE8C0E255636}Prefabs/Systems/MilitaryBase/ConflictMilitaryBase.et";
 // MOB spawn protection area
