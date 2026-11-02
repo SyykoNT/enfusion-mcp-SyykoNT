@@ -70,8 +70,8 @@ export interface GitState {
 
 /** One G5 entry for a git log record ("%h %s\0%an\0%ae\0%cn\0%ce\0%B"), or none. */
 function aiReason(record: string): string[] {
-  const [head, an, ae, cn, ce, body] = record.split("\0");
-  const line = aiLineHits(body ?? "")[0];
+  const [head, an = "", ae = "", cn = "", ce = "", body = ""] = record.split("\0");
+  const line = aiLineHits(body)[0];
   const author = aiIdentity(an, ae);
   const committer = aiIdentity(cn, ce);
   const why = line ? `matched "${line.trim()}"` : author ? `author ${author}` : committer ? `committer ${committer}` : undefined;
@@ -97,8 +97,8 @@ export function gitState(dir: string, base?: string): GitState {
   // Without an upstream, "unpushed" means on no remote-tracking branch
   const from = base ? baseSha : upstream;
   const range = unborn || (base && !baseSha) ? null : from ? [`${from}..HEAD`] : ["HEAD", "--not", "--remotes"];
-  const log = range ? gitOrNull(dir, ["log", ...range, "--format=%h %s%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e"]) : "";
-  const commits = (log ?? "").split("\x1e").map((c) => c.trim()).filter(Boolean);
+  const log = range ? gitOrNull(dir, ["log", ...range, "--format=%h %s%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x00%x1e"]) : "";
+  const commits = (log ?? "").split("\0\x1e").map((c) => c.trim()).filter(Boolean);
 
   const porcelain: string[] = [];
   const entries = git(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).split("\0");

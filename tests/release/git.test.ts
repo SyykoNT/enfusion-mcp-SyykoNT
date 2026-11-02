@@ -99,6 +99,15 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", { timeout: 30_000
     expect(g5.fix).toContain("Human Co-Authored-By lines are fine");
   });
 
+  it("a 0x1E byte in a message neither throws nor hides an AI trailer after it", () => {
+    const d = repo();
+    execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-m", "odd\x1eby design\n\nCo-authored-by: Codex <noreply@openai.com>"], { stdio: "ignore" });
+    execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-m", "plain"], { stdio: "ignore" });
+    const hits = gitState(d).aiMessages;
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatch(/ odd\x1eby design: matched "Co-authored-by: Codex <noreply@openai\.com>"$/);
+  });
+
   it("a clean repo with ignore rule and hook gives only G6; an unborn repo says no commit yet", () => {
     const d = repo();
     writeFileSync(join(d, ".gitignore"), "Scripts/WorkbenchGame/EnfusionMCP/\n");

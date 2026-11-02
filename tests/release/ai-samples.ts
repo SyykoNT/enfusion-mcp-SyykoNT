@@ -33,4 +33,6 @@ export const HUMAN_LINES = [
   "Co-authored-by: Ada <ada@openai.com.example.net>",
   "Fix the Codex panel; generated with care",
   "Thanks to Claude for the review",
+  "generated with claude code in mind",
+  "I generated with [Claude Code in mind",
 ];

@@ -48,7 +48,7 @@ export const AI_LINES: { id: string; pattern: string; strip: boolean; tool: stri
   { id: "L1", pattern: String.raw`^ *co-authored-by:.*<(${aiEmail}|${botEmail})> *$`, strip: true, tool: "all trailer forms", source: "verified" },
   { id: "L2", pattern: String.raw`^ *claude-session:`, strip: true, tool: "Claude Code sessions", source: "verified" },
   { id: "L3", pattern: String.raw`^ *agent-logs-url:`, strip: true, tool: "Copilot agent", source: "verified" },
-  { id: "L4", pattern: String.raw`generated with \[?claude code`, strip: true, tool: "Claude Code", source: "verified" },
+  { id: "L4", pattern: String.raw`generated with \[claude code\]\(`, strip: true, tool: "Claude Code", source: "verified" },
   { id: "L5", pattern: String.raw`generated with \[codex\]\(https://openai\.com/codex`, strip: true, tool: "Codex CLI", source: "verified" },
   { id: "L6", pattern: String.raw`generated with \[continue\]\(https://continue\.dev`, strip: true, tool: "Continue", source: "verified" },
   { id: "L7", pattern: String.raw`powered by \[kilo\]\(https://kilo\.ai`, strip: true, tool: "Kilo Code", source: "verified" },
