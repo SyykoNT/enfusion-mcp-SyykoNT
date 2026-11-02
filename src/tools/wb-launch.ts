@@ -18,7 +18,8 @@ export function registerWbLaunch(
     {
       description:
         "Start Workbench on one project and install the MCP handler scripts into that addon " +
-        "(Scripts/WorkbenchGame/EnfusionMCP/), then wait for the NET API. Pass gprojPath; without it the server " +
+        "(Scripts/WorkbenchGame/EnfusionMCP/), then wait for the NET API. In a git repo it first adds that folder to the " +
+        "repo's local exclude file (.git/info/exclude) and refuses if handler files are committed. Pass gprojPath; without it the server " +
         "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path, never one in ENFUSION_PROTECTED_ADDONS. " +
         "A protected gprojPath opens only when it already holds the handlers (nothing is written into it); otherwise it is refused. If a Workbench already answers on " +
         "the NET API it reports that and starts nothing; if one is running but not answering it refuses to start " +
@@ -53,7 +54,7 @@ export function registerWbLaunch(
     async ({ gprojPath, unattended, worldPath }) => {
       try {
         const alreadyRunning = await client.ping();
-        if (!alreadyRunning) await client.ensureRunning(gprojPath, unattended, worldPath);
+        const gitNote = alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath);
 
         // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
@@ -91,7 +92,7 @@ export function registerWbLaunch(
           content: [
             {
               type: "text" as const,
-              text: `**Workbench Ready**: launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${world}${note}${formatConnectionStatus(client)}`,
+              text: `**Workbench Ready**: launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${world}${note}${gitNote ? `\n\n${gitNote}` : ""}${formatConnectionStatus(client)}`,
             },
           ],
         };

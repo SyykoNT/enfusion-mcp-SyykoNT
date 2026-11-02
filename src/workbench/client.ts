@@ -8,7 +8,7 @@
  */
 
 import { Socket } from "node:net";
-import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -22,6 +22,7 @@ import { workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher } from "../watchdog/wb-watch.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
+import { git, gitOrNull } from "../release/git.js";
 
 const DEFAULT_CLIENT_ID = "EnfusionMCP";
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -55,6 +56,55 @@ export function buildLaunchArgs(opts: { gproj?: string | null; addonsDir?: strin
   // shortcut: -load with a {GUID}path is unprobed, so the GUID is dropped; keep it once a live run shows -load takes it.
   if (worldPath) args.push("-wbModule=WorldEditor", "-run", "-load", worldPath.replace(/^\{[0-9A-Fa-f]{16}\}/, ""));
   return args;
+}
+
+/**
+ * Keep the handler folder out of the commits of the git repo that holds addonDir (PRD F1.21): adds it to the
+ * repo's local exclude file (never .gitignore) when it is not ignored yet. Throws, before anything is copied,
+ * when handler files are already tracked or the exclude file cannot be written. Returns a note for the reply.
+ * git gets addonDir only as the -C value.
+ */
+export function excludeHandlersFromGit(addonDir: string): string | undefined {
+  let inside: string | null;
+  try {
+    inside = gitOrNull(addonDir, ["rev-parse", "--is-inside-work-tree"]);
+  } catch {
+    return `git was not found on PATH, so the MCP could not check whether ${addonDir} is a git repo; if it is, keep Scripts/WorkbenchGame/${HANDLER_FOLDER}/ out of your commits.`;
+  }
+  if (inside !== "true") return undefined;
+  const handlerPath = `Scripts/WorkbenchGame/${HANDLER_FOLDER}/`;
+  const tracked = (gitOrNull(addonDir, ["ls-files", "-z", "--", handlerPath]) ?? "").split("\0").filter((f) => /(^|\/)EMCP_[^/]*$/.test(f));
+  if (tracked.length) {
+    throw new WorkbenchError(
+      `Refused: handler files are committed in this repo (${tracked.length}, e.g. ${tracked[0]}); an exclude cannot hide tracked files. ` +
+        `Remove them from git first (git rm -r --cached ${handlerPath}, then commit), then launch again. Nothing was copied.`,
+      "LAUNCH_FAILED"
+    );
+  }
+  const probe = `${handlerPath}EMCP_WB_Ping.c`;
+  if (gitOrNull(addonDir, ["check-ignore", "-q", probe]) !== null) return undefined;
+  // Relative to the repo root, so an addon in a subfolder of the repo is covered too.
+  const line = `${gitOrNull(addonDir, ["rev-parse", "--show-prefix"]) ?? ""}${handlerPath}`;
+  const exclude = resolve(addonDir, git(addonDir, ["rev-parse", "--git-path", "info/exclude"]).trim());
+  try {
+    mkdirSync(dirname(exclude), { recursive: true });
+    const old = existsSync(exclude) ? readFileSync(exclude, "utf-8") : "";
+    appendFileSync(exclude, `${old && !old.endsWith("\n") ? "\n" : ""}# enfusion-mcp: keep the MCP Workbench handler scripts out of commits\n${line}\n`);
+  } catch (e) {
+    throw new WorkbenchError(
+      `Refused: could not write ${exclude} (${e instanceof Error ? e.message : e}), so the MCP handlers would show up in your commits. ` +
+        `Add the line ${line} to that file (or to the repo's .gitignore) by hand, then launch again. Nothing was copied.`,
+      "LAUNCH_FAILED"
+    );
+  }
+  if (gitOrNull(addonDir, ["check-ignore", "-q", probe]) === null) {
+    throw new WorkbenchError(
+      `Refused: added ${line} to ${exclude}, but git still does not ignore ${probe} (a .gitignore rule may re-include it). ` +
+        `Fix the ignore rules so that folder is ignored, then launch again. Nothing was copied.`,
+      "LAUNCH_FAILED"
+    );
+  }
+  return `Added ${line} to ${exclude} (local, not committed) so the MCP handlers stay out of your commits.`;
 }
 
 export type WorkbenchMode = "edit" | "play" | "no_world" | "unknown";
@@ -118,7 +168,7 @@ function isUndefinedHandler(err: unknown): boolean {
 }
 
 export class WorkbenchClient {
-  private launchPromise: Promise<void> | null = null;
+  private launchPromise: Promise<string | undefined> | null = null;
   private _state: WorkbenchState = { connected: false, mode: "unknown", lastUpdated: 0 };
 
   /** Current cached connection state. Updated after every successful call. */
@@ -249,8 +299,9 @@ export class WorkbenchClient {
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
    * @param unattended Launch with -noThrow (no error dialogs).
    * @param worldPath Optional .ent to open in the World Editor at start.
+   * @returns A note for the reply when the handler install changed the repo's git exclude, else undefined.
    */
-  async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string): Promise<void> {
+  async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
     if (!this.config) {
       throw new WorkbenchError("No config provided — cannot auto-launch Workbench.", "LAUNCH_FAILED");
     }
@@ -509,7 +560,7 @@ export class WorkbenchClient {
     }
   }
 
-  private async launchWorkbench(gprojPath?: string, unattended = false, worldPath?: string): Promise<void> {
+  private async launchWorkbench(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
     // 1. Check if already running (maybe it came up between the failed call and now)
     if (await this.ping()) {
       logger.info("Workbench is already running.");
@@ -547,8 +598,9 @@ export class WorkbenchClient {
     let resolvedGproj = gprojPath || this.findFallbackGproj();
     // Built before any handler copy, so a bad worldPath is refused with nothing written.
     let args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir: this.config?.addonsDir, unattended, worldPath });
+    let gitNote: string | undefined;
     if (resolvedGproj && !isProtected) {
-      this.installHandlerScripts(dirname(resolvedGproj));
+      gitNote = this.installHandlerScripts(dirname(resolvedGproj));
       // Remove any leftover standalone addon to prevent duplicate class errors.
       // If a previous session created {projectPath}/EnfusionMCP/ it would be
       // picked up as a sibling addon and cause compile-time class name conflicts.
@@ -556,7 +608,7 @@ export class WorkbenchClient {
     } else if (!resolvedGproj) {
       // No project found — fall back to standalone addon as last resort and open it
       // directly so its handlers at least compile (user's project won't be open).
-      this.installHandlerScripts();
+      gitNote = this.installHandlerScripts();
       const fallbackBase = this.config?.projectPath;
       if (fallbackBase) {
         const standaloneGproj = join(fallbackBase, HANDLER_FOLDER, `${HANDLER_FOLDER}.gproj`);
@@ -626,7 +678,7 @@ export class WorkbenchClient {
         this._state.connected = true;
         this._state.lastUpdated = Date.now();
         logger.info("Workbench NET API is responding.");
-        return;
+        return gitNote;
       } catch (err) {
         if (err instanceof WorkbenchError) {
           lastErrorCode = err.code;
@@ -743,7 +795,7 @@ export class WorkbenchClient {
    * Copy handler scripts into a mod directory so they compile as part of that mod.
    * If no modDir given, installs to default project path (standalone, less useful).
    */
-  private installHandlerScripts(modDir?: string): void {
+  private installHandlerScripts(modDir?: string): string | undefined {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const bundledDir = join(packageRoot, "mod", "Scripts", "WorkbenchGame", HANDLER_FOLDER);
     if (!existsSync(bundledDir)) {
@@ -768,9 +820,12 @@ export class WorkbenchClient {
       );
     }
 
+    // Before the skip below: handlers already on disk need the exclude as much as new ones.
+    const gitNote = existsSync(targetBase) ? excludeHandlersFromGit(targetBase) : undefined;
+
     // Already installed? Skip (stale handlers stay until they are cleaned up)
     if (existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {
-      return;
+      return gitNote;
     }
 
 
@@ -805,6 +860,7 @@ export class WorkbenchClient {
         logger.info(`Created standalone addon .gproj at ${gprojPath}`);
       }
     }
+    return gitNote;
   }
 
   /**
