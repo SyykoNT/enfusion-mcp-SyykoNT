@@ -99,7 +99,7 @@ Added since that test pass:
   `script_errors`, `log_watch`, `wb_handlers` and `mission_server`; plus a set of read-only tools for COALITION CRF
   missions, described under [COALITION missions](#coalition-missions-optional).
 
-Test suite: 1249 passed, 14 skipped.
+Run the test suite with `npx vitest run`.
 
 ## Requirements
 
