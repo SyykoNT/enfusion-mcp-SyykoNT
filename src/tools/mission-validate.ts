@@ -60,10 +60,10 @@ export function parseQaReport(stdout: string): QaReport {
   return report;
 }
 
-const CHECKS_START = "<!-- CRF_CHECKS_START -->";
-const CHECKS_END = "<!-- CRF_CHECKS_END -->";
-const SYNOPSIS_START = "<!-- CRF_SYNOPSIS_START -->";
-const SYNOPSIS_END = "<!-- CRF_SYNOPSIS_END -->";
+export const CHECKS_START = "<!-- CRF_CHECKS_START -->";
+export const CHECKS_END = "<!-- CRF_CHECKS_END -->";
+export const SYNOPSIS_START = "<!-- CRF_SYNOPSIS_START -->";
+export const SYNOPSIS_END = "<!-- CRF_SYNOPSIS_END -->";
 
 export interface SynopsisReport {
   title?: string;
