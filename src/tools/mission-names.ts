@@ -1,10 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Config } from "../config.js";
 import { parseAll } from "../formats/enfusion-text.js";
-import { prop, slotRoles, SIDES } from "../coalition/mission-model.js";
+import { prop, slotRoles, SIDES, textOf } from "../coalition/mission-model.js";
 import { gitOrNull } from "../release/git.js";
 import { resolveCoalitionRoots } from "../utils/coalition-paths.js";
 import { loadLobbyEnums } from "../utils/lobby-enums.js";
@@ -129,7 +127,8 @@ const rows = (n: Names) => [
 const noteLines = (notes: Note[]) => notes.map((n) => `${n.level.toUpperCase()} ${n.text}`);
 
 export function missionNames(config: Config, p: NamesParams, now = new Date()): string {
-  const { crf, lobby } = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
+  const roots = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
+  const { crf, lobby } = roots;
   const modes = [...(loadLobbyEnums([lobby, crf]).get("COA_EGamemode")?.keys() ?? [])];
 
   if (p.action === "build") {
@@ -146,14 +145,15 @@ export function missionNames(config: Config, p: NamesParams, now = new Date()): 
   }
 
   if (!p.world) throw new Error("check needs world (the mission .ent).");
-  const m = loadLobbyMission(config, crf, p.world);
+  const m = loadLobbyMission(config, roots, p.world);
   const slots = SIDES.reduce((n, s) => n + slotRoles(m.slots[s]).length, 0);
   const confs: Header[] = m.confs.map((conf) => {
-    const header = parseAll(readFileSync(join(m.root, conf), "utf-8")).find((n) => n.type === "SCR_MissionHeader");
+    const header = parseAll(textOf(m.copy, conf) ?? "").find((n) => n.type === "SCR_MissionHeader");
     const f = (k: string) => (prop(header, k) ?? "").trim();
     return { conf, name: f("m_sName"), author: f("m_sAuthor"), mode: f("m_sGameMode"), terrain: f("m_sTerrainName") };
   });
-  const branch = gitOrNull(crf, ["branch", "--show-current"]) || null;
+  // A Workshop copy has no branch: checkNames then says the branch is unknown
+  const branch = (crf.kind === "loose" && gitOrNull(crf.root, ["branch", "--show-current"])) || null;
   const { notes, expected } = checkNames({ worldRel: m.worldRel, slots, confs }, branch, modes, now);
   return [
     `mission_names check ${m.worldRel}  (${slots} slots, branch ${branch ?? "unknown"})`,

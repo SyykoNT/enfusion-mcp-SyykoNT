@@ -7,7 +7,7 @@ let fx: ReturnType<typeof makeProjects>;
 let classify: ReturnType<typeof prefabClassifier>;
 beforeAll(() => {
   fx = makeProjects();
-  classify = prefabClassifier(fx.config, [fx.lobby, fx.crf]);
+  classify = prefabClassifier(fx.config, [fx.lobbyCopy, fx.crfCopy]);
 });
 afterAll(() => rmSync(fx.root, { recursive: true, force: true }));
 

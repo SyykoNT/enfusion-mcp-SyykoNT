@@ -10,7 +10,7 @@ let m: Mission;
 let names: Set<string>;
 beforeAll(() => {
   fx = makeProjects();
-  m = loadMission(fx.config, fx.world);
+  m = loadMission(fx.config, fx.crfCopy, fx.worldRel, [fx.crfCopy, fx.lobbyCopy]);
   names = new Set(m.entities.flatMap((e) => (e.name ? [e.name] : [])));
 });
 afterAll(() => rmSync(fx.root, { recursive: true, force: true }));
@@ -28,7 +28,7 @@ describe("name references", () => {
   });
 
   it("adds a script default for an unset name field", () => {
-    const defaults = nameDefaults([fx.crf]);
+    const defaults = nameDefaults([fx.crfCopy]);
     expect(defaults.get("CRF_CacheHuntGamemodeManager")).toEqual(
       new Map([["m_sRandomCenterEntityName", "CacheHunt_Center"], ["m_sDefenderHomeFlagName", "CacheHunt_HomeFlag"]])
     );

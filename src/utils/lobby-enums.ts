@@ -1,5 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import type { Layer } from "../pak/stack.js";
 
 /** Enum name to its members (name to value), in source order. */
 export type LobbyEnums = Map<string, Map<string, number>>;
@@ -7,18 +6,16 @@ export type LobbyEnums = Map<string, Map<string, number>>;
 const ENUM = /\b(modded\s+)?enum\s+(\w+)\s*(?::\s*\w+\s*)?\{([^}]*)\}/g;
 
 /**
- * Read every enum in `<root>/Scripts/Game/**\/*.c` of each root (COALITION-Lobby, CRF), so roles
- * added upstream show up without a fork release. A `modded enum` appends its members to the
+ * Read every enum in `Scripts/Game/**\/*.c` of each copy (COALITION-Lobby, CRF; clone or Workshop), so
+ * roles added upstream show up without a fork release. A `modded enum` appends its members to the
  * base enum of the same name (CRF mods COA_EGearRole and COA_EGamemode this way).
  */
-export function loadLobbyEnums(roots: string[]): LobbyEnums {
+export function loadLobbyEnums(copies: Pick<Layer, "list" | "read">[]): LobbyEnums {
   const found: { modded: boolean; name: string; body: string }[] = [];
-  for (const root of roots) {
-    const dir = join(root, "Scripts", "Game");
-    if (!existsSync(dir)) continue;
-    for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
-      if (!rel.endsWith(".c")) continue;
-      const text = readFileSync(join(dir, rel), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  for (const copy of copies) {
+    for (const path of copy.list("Scripts/Game")) {
+      if (!path.endsWith(".c")) continue;
+      const text = (copy.read(path)?.toString("utf-8") ?? "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
       for (const m of text.matchAll(ENUM)) found.push({ modded: !!m[1], name: m[2], body: m[3] });
     }
   }
