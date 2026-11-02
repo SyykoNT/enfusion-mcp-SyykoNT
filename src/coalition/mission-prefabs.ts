@@ -17,7 +17,7 @@ export interface Classified {
 
 const S = "(BLUFOR|OPFOR|INDFOR|CIVILIAN|CIV|GLOBAL)";
 // Mission-maker prefab families in Lobby and CRF PrefabsMissionMaking (paths from their .meta listings)
-const RULES: [PrefabKind, RegExp][] = [
+export const RULES: [PrefabKind, RegExp][] = [
   ["spawn", new RegExp(`/SpawnPoints/${S}_Spawn\\.et$`)],
   ["groupSpawn", new RegExp(`/Groups/${S}_InitalGroupSpawn\\.et$`)],
   ["msp", new RegExp(`/Vehicles/${S}_MSP\\.et$`)],
@@ -31,7 +31,7 @@ const RULES: [PrefabKind, RegExp][] = [
   ["taskAnchor", /\/TaskCreator\/CRF_task_empty\.et$/i],
 ];
 // Entity classes as written in mission layers, for prefab-less or renamed prefabs
-const CLASS_FALLBACK: Record<string, PrefabKind> = {
+export const CLASS_FALLBACK: Record<string, PrefabKind> = {
   COA_StaticSpawnPoint: "spawn",
   COA_SafestartBorder: "safestart",
   COA_ForwardDeployBorder: "forwardDeploy",

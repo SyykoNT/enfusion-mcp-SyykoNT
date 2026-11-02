@@ -7,7 +7,7 @@ import { stripGuid, walkChain } from "../utils/prefab-ancestry.js";
 export const SIDES = ["BLUFOR", "OPFOR", "INDFOR", "CIV"] as const;
 export type Side = (typeof SIDES)[number];
 // CIV is m_CIVSlots (validate_mission.py:204-212 field map)
-const SLOTS_FIELD: Record<Side, string> = { BLUFOR: "m_BLUFORSlots", OPFOR: "m_OPFORSlots", INDFOR: "m_INDFORSlots", CIV: "m_CIVSlots" };
+export const SLOTS_FIELD: Record<Side, string> = { BLUFOR: "m_BLUFORSlots", OPFOR: "m_OPFORSlots", INDFOR: "m_INDFORSlots", CIV: "m_CIVSlots" };
 
 export interface MissionEntity {
   layer: string;
