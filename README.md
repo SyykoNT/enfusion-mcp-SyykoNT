@@ -96,8 +96,9 @@ Added since that test pass:
   resulting `data.pak`.
 - `server install` and `server update` leave Steam's own server install to Steam.
 - New tools: `resource_resolve`, `wb_watch`, `addon_git_guard`, `addon_deps`, `release_audit`,
-  `script_errors`, `log_watch`, `wb_handlers` and `mission_server`; plus a set of read-only tools for COALITION CRF
-  missions, described under [COALITION missions](#coalition-missions-optional).
+  `script_errors`, `log_watch`, `wb_handlers` and `mission_server`; plus a set of tools for COALITION CRF
+  missions, read-only except `mission_git fetch`, which updates git's remote refs, described under
+  [COALITION missions](#coalition-missions-optional).
 
 Run the test suite with `npx vitest run`.
 
