@@ -220,7 +220,7 @@ function buildMissionConf(opts: ConflictScenarioOptions, worldRef: string): stri
 // ---------------------------------------------------------------------------
 
 function buildWorldEnt(worldRef: string): string {
-  // Without the `Layer default` block Workbench opens the world with an "obsolete" modal (B-007). No final newline, as Workbench writes it.
+  // Workbench's own shape, no final newline. The "obsolete" modal (B-007) comes from a missing <Name>_Layers folder (SCN-STUB L2/L3), not this block.
   return `SubScene {\n Parent "${worldRef}"\n}\nLayer default {\n Index 0\n}`;
 }
 
