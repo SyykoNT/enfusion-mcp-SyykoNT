@@ -78,7 +78,7 @@ describe.skipIf(!hasGit)("mission_pr_draft", { timeout: 30_000 }, () => {
     write(fx.crf, "Missions/Test/Draft.conf", 'SCR_MissionHeader {\n World "{8000000000000009}Worlds/Test/Draft.ent"\n}\n');
     write(fx.crf, "Configs/Gearscripts/Custom/Me/COA_GS_SeaTigers.conf", 'COA_GearScriptConfig {\n m_FactionName "Sea Tigers"\n}\n');
     write(fx.crf, "addon.gproj", 'GameProject {\n Dependencies {\n  "58D0FB3206B6F859"\n  "AAAA000000000001"\n }\n}\n');
-  });
+  }, 30_000);
   afterAll(() => delete process.env.ENFUSION_WORKBENCH_PROFILE);
 
   it("drafts faction lines in the template's SIDE - faction - role format, with assets per side", async () => {

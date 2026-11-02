@@ -50,7 +50,7 @@ describe.skipIf(!hasGit)("mission_preflight", { timeout: 30_000 }, () => {
       "mission_synopsis.py": { code: 0, stdout: fixture("synopsis.txt") },
       "validate_resources.py": { code: 0, stdout: "All checks passed.\n" },
     });
-  });
+  }, 30_000);
   afterAll(() => delete process.env.ENFUSION_WORKBENCH_PROFILE);
 
   it("marks automatic rows from the tools, leaves the in-game rows open, and says no-go", async () => {
