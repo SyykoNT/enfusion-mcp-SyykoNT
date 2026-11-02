@@ -65,6 +65,7 @@ import { registerConfigOverride } from "./tools/config-override.js";
 import { registerEconomy } from "./tools/economy.js";
 import { registerServer } from "./tools/server.js";
 import { registerServerParams } from "./tools/server-params.js";
+import { registerMissionServer } from "./tools/mission-server.js";
 import { registerLogWatch } from "./tools/log-watch.js";
 import { registerGame } from "./tools/game.js";
 import { registerScriptErrors } from "./tools/script-errors.js";
@@ -146,6 +147,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerEconomy(server, config);
   registerServer(server, config);
   registerServerParams(server, config);
+  registerMissionServer(server, config);
   registerLogWatch(server, config);
   registerGame(server, config);
   registerScriptErrors(server, config);
