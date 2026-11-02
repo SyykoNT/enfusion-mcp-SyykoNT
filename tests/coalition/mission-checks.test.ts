@@ -29,8 +29,8 @@ const ent = (parent = "{9000000000000001}worlds/Test/Test.ent") => `SubScene {\n
 const lobbyEntity = (body = "") => `COA_Gamemode COA_Lobby : "{1000000000000099}Prefabs/!Systems/!Lobby/COA_Lobby.et" {\n${body}}\n`;
 const group = (callsign: string, roles: string[]) =>
   `  COA_SlottingGroup "{3000000000000001}" {\n   m_sCallsign "${callsign}"\n   m_aSlots {\n${roles.map((r) => `    ${r}\n`).join("")}   }\n  }\n`;
-const briefing = (text: string, key: string) =>
-  `  COA_MissionDescriptor "{4000000000000001}" {\n   m_sTitle "${key} Briefing"\n   m_sTextData "${text}"\n   m_aFactionKeys {\n    "${key}"\n   }\n  }\n`;
+const briefing = (text: string, key: string, title = `${key} Briefing`) =>
+  `  COA_MissionDescriptor "{4000000000000001}" {\n   m_sTitle "${title}"\n   m_sTextData "${text}"\n   m_aFactionKeys {\n    "${key}"\n   }\n  }\n`;
 const conf = (name: string) => [`Missions/Test/${name}.conf`, `SCR_MissionHeader {\n World "{8000000000000001}${WORLD}"\n}\n`];
 // What COA_Lobby.et would hold: default briefings, a faction manager keyed by GUID
 const PREFAB = parseAll(
@@ -81,6 +81,47 @@ describe("progress (GI-03)", () => {
     const step = progress(m, nodesOf(m)).steps[5];
     expect(step.done).toBe(true);
     expect(step.detail).toBe("briefing written for BLUFOR, OPFOR");
+  });
+
+  describe("side briefing warnings (P5-WARN)", () => {
+    const allSides = `  COA_MissionDescriptor "{4000000000000002}" {\n   m_sTitle "Briefing"\n   m_sTextData "Hold the bridge."\n   m_bShowForAnyFaction 1\n  }\n`;
+    const noKeys = `  COA_MissionDescriptor "{4000000000000003}" {\n   m_sTitle "Orphan"\n   m_sTextData "Nobody reads this."\n  }\n`;
+    const sides = (...s: string[]) => s.map((x) => ` m_${x}Slots {\n${group("1-1", ["MEDIC"])} }\n`).join("");
+    const run = (slots: string, descriptors: string) => {
+      const m = mission({ [`${LAYERS}/_INIT.layer`]: `SCR_AIWorld X {\n}\n` + lobbyEntity(` m_iBLUFORTickets 0\n${slots} m_aMissionDescriptors {\n${descriptors} }\n`) });
+      return progress(m, nodesOf(m));
+    };
+
+    it("warns about template side text while an all-sides briefing keeps step 5 done", () => {
+      const p = run(sides("BLUFOR", "OPFOR"), allSides + briefing("Add the briefing.", "BLUFOR") + briefing("Hold the north.", "OPFOR"));
+      expect(p.steps[5].done).toBe(true);
+      expect(p.warnings).toEqual([`BLUFOR: the side briefing is still the template text (CRF's PR check leaves "Side-based briefings" unticked)`]);
+    });
+
+    it("warns when no descriptor is keyed to a slotted side", () => {
+      const p = run(sides("BLUFOR", "OPFOR"), allSides + briefing("Hold the north.", "BLUFOR"));
+      expect(p.steps[5].done).toBe(true);
+      expect(p.warnings).toEqual([`OPFOR: no side briefing (only all-sides or other sides' briefings); CRF's PR check leaves "Side-based briefings" unticked`]);
+    });
+
+    it("warns about a filled briefing with no key and show-for-any off, and counts it for no side", () => {
+      const p = run(sides("BLUFOR"), noKeys);
+      expect(p.steps[5].done).toBe(false);
+      expect(p.warnings).toEqual([
+        `BLUFOR: no side briefing (only all-sides or other sides' briefings); CRF's PR check leaves "Side-based briefings" unticked`,
+        `Briefing "Orphan" is shown to nobody: it has no faction key and Show For Any Faction is off (Lobby UI, COA_MissionDescriptionUI.c:85-100)`,
+      ]);
+    });
+
+    it("has no warnings when every slotted side has its own filled briefing", () => {
+      expect(run(sides("BLUFOR", "OPFOR"), briefing("Hold the south.", "BLUFOR") + briefing("Hold the north.", "OPFOR")).warnings).toEqual([]);
+    });
+
+    it("treats a default text under another title as filled, as CRF's (title, text) pair rule does", () => {
+      const p = run(sides("BLUFOR"), briefing("Add the briefing.", "BLUFOR", "Operation Anvil"));
+      expect(p.steps[5].done).toBe(true);
+      expect(p.warnings).toEqual([]);
+    });
   });
 
   it("asks to delete the extra .conf when plugin 6 ran twice", () => {

@@ -276,7 +276,7 @@ function missionInspect(config: Config, p: Params): string {
     out.push("", "## Rules", ...rules.map((r) => `- ${r.level}: ${r.text}`));
   }
   if (steps) {
-    out.push("", "## Progress", ...steps.steps.map((s) => `- [${s.done ? "x" : " "}] ${s.step}: ${s.detail}`), `Next: ${steps.next}`);
+    out.push("", "## Progress", ...steps.steps.map((s) => `- [${s.done ? "x" : " "}] ${s.step}: ${s.detail}`), ...steps.warnings.map((w) => `- warning: ${w}`), `Next: ${steps.next}`);
   }
   if (table) {
     out.push("", "## Settings", "| Setting | Value | From |", "|---|---|---|", ...table.map((r) => `| ${r.name} | ${r.value || "(unset)"} | ${r.from} |`));
