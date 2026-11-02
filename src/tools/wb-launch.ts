@@ -19,8 +19,8 @@ export function registerWbLaunch(
       description:
         "Start Workbench on one project and install the MCP handler scripts into that addon " +
         "(Scripts/WorkbenchGame/EnfusionMCP/), then wait for the NET API. Pass gprojPath; without it the server " +
-        "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path, never one in ENFUSION_PROTECTED_ADDONS " +
-        "(a protected gprojPath is refused). If a Workbench already answers on " +
+        "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path, never one in ENFUSION_PROTECTED_ADDONS. " +
+        "A protected gprojPath opens only when it already holds the handlers (nothing is written into it); otherwise it is refused. If a Workbench already answers on " +
         "the NET API it reports that and starts nothing; if one is running but not answering it refuses to start " +
         "another. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
@@ -30,7 +30,8 @@ export function registerWbLaunch(
           .optional()
           .describe(
             "Path to a .gproj file to open directly. Skips the Workbench launcher screen and goes straight " +
-            "into the World Editor. Handler scripts are copied into the mod so all wb_* tools work. " +
+            "into the World Editor. Handler scripts are copied into the mod so all wb_* tools work; a protected addon " +
+            "(ENFUSION_PROTECTED_ADDONS) is never written to and must already hold them. " +
             "If omitted, the server falls back to ENFUSION_DEFAULT_MOD or the first .gproj it finds that is not protected."
           ),
         unattended: z
@@ -64,7 +65,12 @@ export function registerWbLaunch(
         }
 
         const modDir = gprojPath ? dirname(resolve(gprojPath)) : null;
-        const note = modDir
+        const isProtected = !!modDir && client.isProtectedMod(modDir);
+        const stale = isProtected ? client.staleHandlers(modDir!) : [];
+        const note = isProtected
+          ? `\n\nProtected addon: handlers already present, nothing written.` +
+            (stale.length ? `\n\n**Warning:** stale handlers, refresh by hand (missing or different from the bundled copy): ${stale.join(", ")}` : "")
+          : modDir
           ? `\n\nNote: Handler scripts were copied to ${modDir}/Scripts/WorkbenchGame/EnfusionMCP/. ` +
             `Call **wb_cleanup** with the mod directory path when done to remove them before publishing.`
           : "";
@@ -73,7 +79,7 @@ export function registerWbLaunch(
           content: [
             {
               type: "text" as const,
-              text: `**Workbench Ready** — Launched, handler scripts installed, NET API responding. All \`wb_*\` tools are available.${note}${formatConnectionStatus(client)}`,
+              text: `**Workbench Ready** — Launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${note}${formatConnectionStatus(client)}`,
             },
           ],
         };
@@ -199,7 +205,7 @@ export function registerWbLaunch(
           `These are injected automatically so Workbench compiles the NET API handlers. They are`,
           `harmless locally, but they ship with the mod if it is published.`,
           ``,
-          ...installed.map((m) => `- \`${m.modDir}\` *(${m.fileCount} files)*`),
+          ...installed.map((m) => `- \`${m.modDir}\` *(${m.fileCount} files${m.protected ? ", protected: kept" : ""})*`),
           ``,
           `Pass \`all: true\` to remove them from all ${installed.length}, or \`modDir\` for a single one.`,
         ];
@@ -218,7 +224,9 @@ export function registerWbLaunch(
         }
         const cleaned: string[] = [];
         const failed: string[] = [];
+        const kept = installed.filter((m) => m.protected).map((m) => m.modDir);
         for (const mod of installed) {
+          if (mod.protected) continue;
           try {
             if (client.cleanupHandlerScripts(mod.modDir)) cleaned.push(mod.modDir);
           } catch (e) {
@@ -227,6 +235,9 @@ export function registerWbLaunch(
         }
         const lines = [`**Cleanup Complete** — handler scripts removed from ${cleaned.length} addon${cleaned.length === 1 ? "" : "s"}.`, ``];
         lines.push(...cleaned.map((c) => `- \`${c}\``));
+        if (kept.length > 0) {
+          lines.push(``, `**Kept (protected, ENFUSION_PROTECTED_ADDONS):**`, ...kept.map((k) => `- \`${k}\``));
+        }
         if (failed.length > 0) {
           lines.push(``, `**Failed (${failed.length}):**`, ...failed.map((f) => `- ${f}`));
         }
@@ -259,6 +270,15 @@ export function registerWbLaunch(
         };
       }
 
+      if (client.isProtectedMod(resolvedModDir)) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `**Refused:** ${resolvedModDir} is a protected addon (ENFUSION_PROTECTED_ADDONS); its handler scripts are kept.${formatConnectionStatus(client)}`,
+          }],
+          isError: true,
+        };
+      }
       const removed = client.cleanupHandlerScripts(resolvedModDir);
       if (removed) {
         return {

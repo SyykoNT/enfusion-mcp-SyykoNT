@@ -8,13 +8,13 @@
  */
 
 import { Socket } from "node:net";
-import { existsSync, mkdirSync, copyFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
-import { findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
+import { findGproj, findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
@@ -280,8 +280,8 @@ export class WorkbenchClient {
    *
    * Pure filesystem scan: no NET API call, safe to run with Workbench closed.
    */
-  listInstalledHandlerMods(): Array<{ modDir: string; handlerDir: string; fileCount: number }> {
-    const installed: Array<{ modDir: string; handlerDir: string; fileCount: number }> = [];
+  listInstalledHandlerMods(): Array<{ modDir: string; handlerDir: string; fileCount: number; protected: boolean }> {
+    const installed: Array<{ modDir: string; handlerDir: string; fileCount: number; protected: boolean }> = [];
     if (!this.config?.projectPath || !existsSync(this.config.projectPath)) return installed;
 
     try {
@@ -292,7 +292,7 @@ export class WorkbenchClient {
         const handlerDir = join(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
         if (existsSync(handlerDir)) {
           const fileCount = readdirSync(handlerDir).filter((f) => f.startsWith("EMCP_") && f.endsWith(".c")).length;
-          if (fileCount) installed.push({ modDir, handlerDir, fileCount });
+          if (fileCount) installed.push({ modDir, handlerDir, fileCount, protected: this.isProtectedMod(modDir) });
         }
       }
     } catch {
@@ -301,7 +301,29 @@ export class WorkbenchClient {
     return installed;
   }
 
+  /** True when modDir's .gproj is in ENFUSION_PROTECTED_ADDONS. */
+  isProtectedMod(modDir: string): boolean {
+    const gproj = this.config ? findGproj(modDir) : null;
+    return !!gproj && isProtectedAddon(this.config!, gproj);
+  }
+
+  /** Bundled handler files that are missing or differ (bytes) in modDir. Reads only. */
+  staleHandlers(modDir: string): string[] {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const bundledDir = join(packageRoot, "mod", "Scripts", "WorkbenchGame", HANDLER_FOLDER);
+    const handlerDir = join(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
+    if (!existsSync(bundledDir)) return [];
+    return readdirSync(bundledDir).filter((f) => f.endsWith(".c")).filter((f) => {
+      const installed = join(handlerDir, f);
+      return !existsSync(installed) || !readFileSync(installed).equals(readFileSync(join(bundledDir, f)));
+    });
+  }
+
   cleanupHandlerScripts(modDir: string): boolean {
+    // A protected addon (CRF) keeps its handlers: putting them back needs the owner's OK (D-024, D-036).
+    if (this.isProtectedMod(modDir)) {
+      throw new WorkbenchError(`Refused: ${modDir} is a protected addon (ENFUSION_PROTECTED_ADDONS); its handler scripts are kept.`);
+    }
     const handlerDir = resolve(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
     logger.info(`Checking for handler scripts at: ${handlerDir}`);
     if (!existsSync(handlerDir)) {
@@ -488,21 +510,23 @@ export class WorkbenchClient {
     if (gprojPath && !existsSync(gprojPath)) {
       throw new WorkbenchError(`Not found: ${gprojPath}. Pass the path of an addon's .gproj file.`, "LAUNCH_FAILED");
     }
-    if (gprojPath && isProtectedAddon(this.config!, gprojPath)) {
+    // A protected addon is opened only when it already holds the handlers: nothing is ever written into it.
+    const isProtected = !!gprojPath && isProtectedAddon(this.config!, gprojPath);
+    if (isProtected && !existsSync(join(dirname(gprojPath!), "Scripts", "WorkbenchGame", HANDLER_FOLDER, "EMCP_WB_Ping.c"))) {
       throw new WorkbenchError(
-        `Refused: ${gprojPath} is a protected addon (ENFUSION_PROTECTED_ADDONS) and wb_launch would copy handler scripts into it. ` +
-          `Pass a test addon's .gproj, or open the protected addon in Workbench yourself.`,
+        `Refused: ${gprojPath} is a protected addon (ENFUSION_PROTECTED_ADDONS) without the MCP handler scripts, and wb_launch never writes into it. ` +
+          `Copy the handlers into its Scripts/WorkbenchGame/EnfusionMCP/ by hand with the owner's OK, or pass a test addon's .gproj.`,
         "LAUNCH_FAILED"
       );
     }
     let resolvedGproj = gprojPath || this.findFallbackGproj();
-    if (resolvedGproj) {
+    if (resolvedGproj && !isProtected) {
       this.installHandlerScripts(dirname(resolvedGproj));
       // Remove any leftover standalone addon to prevent duplicate class errors.
       // If a previous session created {projectPath}/EnfusionMCP/ it would be
       // picked up as a sibling addon and cause compile-time class name conflicts.
       this.cleanupStandaloneAddon();
-    } else {
+    } else if (!resolvedGproj) {
       // No project found — fall back to standalone addon as last resort and open it
       // directly so its handlers at least compile (user's project won't be open).
       this.installHandlerScripts();
