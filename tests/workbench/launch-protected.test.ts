@@ -48,12 +48,46 @@ function withHandlers(modDir: string): string {
 const snap = (dir: string) => readdirSync(dir).sort().map((f) => `${f}:${readFileSync(join(dir, f)).toString("base64")}`).join("|");
 
 type Result = { content: { text: string }[]; isError?: boolean };
-function wbCleanup(config: Config): (a: Record<string, unknown>) => Promise<Result> {
+function wbTools(config: Config, client = new WorkbenchClient("127.0.0.1", 1, config)) {
   const tools: Record<string, (a: Record<string, unknown>) => Promise<Result>> = {};
   const fake = { registerTool: (name: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<Result>) => { tools[name] = h; } };
-  registerWbLaunch(fake as unknown as McpServer, config, new WorkbenchClient("127.0.0.1", 1, config));
-  return tools.wb_cleanup;
+  registerWbLaunch(fake as unknown as McpServer, config, client);
+  return tools;
 }
+const wbCleanup = (config: Config) => wbTools(config).wb_cleanup;
+
+describe("wb_launch worldPath", () => {
+  it("passes worldPath to the launch and asks the caller to confirm with wb_state", async () => {
+    const { addon, config, client } = setup();
+    const gproj = join(addon("TestAddon", "1111111111111111"), "addon.gproj");
+    vi.spyOn(client, "ping").mockResolvedValue(false);
+    const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined); // never starts a real Workbench
+    const r = await wbTools(config, client).wb_launch({ gprojPath: gproj, worldPath: "worlds/Test.ent" });
+    expect(launch).toHaveBeenCalledWith(gproj, undefined, "worlds/Test.ent");
+    expect(r.content[0].text).toMatch(/World requested at start: worlds\/Test\.ent[\s\S]*wb_state/);
+  });
+
+  it("does not switch worlds in a running Workbench and says so", async () => {
+    const { config, client } = setup();
+    vi.spyOn(client, "ping").mockResolvedValue(true);
+    const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
+    const r = await wbTools(config, client).wb_launch({ worldPath: "worlds/Test.ent" });
+    expect(launch).not.toHaveBeenCalled();
+    expect(r.content[0].text).toMatch(/Already Running[\s\S]*worldPath was not opened[\s\S]*wb_open_resource/);
+  });
+
+  it("refuses a bad worldPath before copying any handlers", async () => {
+    const { addon, projects, client, handlers } = setup();
+    const test = addon("TestAddon", "1111111111111111");
+    await expect(client.ensureRunning(join(test, "addon.gproj"), false, "worlds/Test.layer")).rejects.toThrow(/\.ent/);
+    expect(handlers(test)).toBe(false);
+    expect(existsSync(join(projects, "EnfusionMCP"))).toBe(false);
+    // only a protected addon: no project to open the world in, so no standalone addon is created either
+    const only = setup();
+    await expect(only.client.ensureRunning(undefined, false, "worlds/Test.ent")).rejects.toThrow(/needs a project/);
+    expect(existsSync(join(only.projects, "EnfusionMCP"))).toBe(false);
+  });
+});
 
 describe("wb_cleanup and protected addons", () => {
   it("refuses a protected modDir and keeps its handlers", async () => {
@@ -83,6 +117,16 @@ describe("wb_cleanup and protected addons", () => {
     expect(r.content[0].text).toMatch(/Kept \(protected[\s\S]*Coalition-Reforger-Framework/);
     expect(handlers(test)).toBe(false);
     expect(snap(dir)).toBe(before);
+  });
+
+  it("modDir on a test addon removes the handlers and points to release_audit, not 'ready to publish'", async () => {
+    const { addon, config, handlers } = setup();
+    const test = addon("TestAddon", "1111111111111111");
+    withHandlers(test);
+    const r = await wbCleanup(config)({ modDir: test });
+    expect(handlers(test)).toBe(false);
+    expect(r.content[0].text).toMatch(/removed[\s\S]*release_audit/);
+    expect(r.content[0].text).not.toMatch(/ready to publish/);
   });
 });
 

@@ -41,12 +41,19 @@ export function registerWbLaunch(
             "Start Workbench with -noThrow, which Bohemia documents as disabling error message dialogs (asserts, crashes). " +
             "Untested on a GUI Workbench and on Script Authorization prompts; use only for unattended runs."
           ),
+        worldPath: z
+          .string()
+          .optional()
+          .describe(
+            "A world (.ent) of the opened project to load in the World Editor at start (-wbModule=WorldEditor -run -load). " +
+            "Needs gprojPath or ENFUSION_DEFAULT_MOD. Only on a fresh start: a running Workbench does not switch worlds."
+          ),
       },
     },
-    async ({ gprojPath, unattended }) => {
+    async ({ gprojPath, unattended, worldPath }) => {
       try {
         const alreadyRunning = await client.ping();
-        if (!alreadyRunning) await client.ensureRunning(gprojPath, unattended);
+        if (!alreadyRunning) await client.ensureRunning(gprojPath, unattended, worldPath);
 
         // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
@@ -54,11 +61,14 @@ export function registerWbLaunch(
         }
 
         if (alreadyRunning) {
+          const notOpened = worldPath
+            ? `\n\nworldPath was not opened: a running Workbench does not switch worlds here. Open it with **wb_open_resource**, or close Workbench and launch again.`
+            : "";
           return {
             content: [
               {
                 type: "text" as const,
-                text: `**Workbench Already Running** — NET API is responding. All \`wb_*\` tools are available.${formatConnectionStatus(client)}`,
+                text: `**Workbench Already Running**: NET API is responding. All \`wb_*\` tools are available.${notOpened}${formatConnectionStatus(client)}`,
               },
             ],
           };
@@ -74,12 +84,14 @@ export function registerWbLaunch(
           ? `\n\nNote: Handler scripts were copied to ${modDir}/Scripts/WorkbenchGame/EnfusionMCP/. ` +
             `Call **wb_cleanup** with the mod directory path when done to remove them before publishing.`
           : "";
+        // Not verified here (no handler for it yet): the caller confirms with wb_state.
+        const world = worldPath ? `\n\nWorld requested at start: ${worldPath}. Confirm it loaded with **wb_state**.` : "";
 
         return {
           content: [
             {
               type: "text" as const,
-              text: `**Workbench Ready**: launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${note}${formatConnectionStatus(client)}`,
+              text: `**Workbench Ready**: launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${world}${note}${formatConnectionStatus(client)}`,
             },
           ],
         };
@@ -285,7 +297,7 @@ export function registerWbLaunch(
           content: [
             {
               type: "text" as const,
-              text: `**Cleanup Complete** — EnfusionMCP handler scripts removed from the mod. The mod is ready to publish.${formatConnectionStatus(client)}`,
+              text: `**Cleanup Complete**: EnfusionMCP handler scripts removed from the mod. For a release check, run **release_audit**.${formatConnectionStatus(client)}`,
             },
           ],
         };

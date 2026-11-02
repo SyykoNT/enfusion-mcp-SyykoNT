@@ -3,7 +3,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
+import { WorkbenchClient, WorkbenchError, buildLaunchArgs } from "../../src/workbench/client.js";
 import type { Config } from "../../src/config.js";
 import {
   decodePascalString,
@@ -421,5 +421,26 @@ describe("missing handlers in a running Workbench", () => {
     expect(existsSync(join(project, "MCPParity", "Scripts"))).toBe(false);
     expect(existsSync(join(project, "EnfusionMCP"))).toBe(false);
     await mock.close();
+  });
+});
+
+describe("buildLaunchArgs", () => {
+  it("keeps the old command line without worldPath", () => {
+    expect(buildLaunchArgs({ gproj: "C:\p\A\addon.gproj", addonsDir: "C:\p", unattended: true })).toEqual([
+      "-gproj", "C:\p\A\addon.gproj", "-addonsDir", "C:\p", "-noThrow",
+    ]);
+    expect(buildLaunchArgs({})).toEqual([]);
+  });
+
+  it("adds the World Editor flags after -gproj and -addonsDir, the world as one argument", () => {
+    expect(buildLaunchArgs({ gproj: "C:\p\A\addon.gproj", addonsDir: "C:\p", worldPath: "worlds/My Map/Map.ent" })).toEqual([
+      "-gproj", "C:\p\A\addon.gproj", "-addonsDir", "C:\p", "-wbModule=WorldEditor", "-run", "-load", "worlds/My Map/Map.ent",
+    ]);
+    expect(buildLaunchArgs({ gproj: "a.gproj", worldPath: "{0123456789ABCDEF}worlds/Map.ent" }).slice(-1)).toEqual(["worlds/Map.ent"]);
+  });
+
+  it("refuses worldPath without a project or that is not a .ent", () => {
+    expect(() => buildLaunchArgs({ worldPath: "worlds/Map.ent" })).toThrow(/needs a project/);
+    expect(() => buildLaunchArgs({ gproj: "a.gproj", worldPath: "worlds/Map.layer" })).toThrow(/\.ent/);
   });
 });

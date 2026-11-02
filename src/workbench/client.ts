@@ -32,6 +32,29 @@ const WORKBENCH_SUBDIR = "Workbench";
 const HANDLER_FOLDER = "EnfusionMCP";
 const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
+const WORLD_LAUNCH_TIMEOUT_MS = 300_000;
+
+/**
+ * Workbench command line. worldPath (a .ent of the opened project) adds the World Editor flags
+ * verified with the COALITION launcher: -wbModule=WorldEditor -run -load <world>.
+ */
+export function buildLaunchArgs(opts: { gproj?: string | null; addonsDir?: string; unattended?: boolean; worldPath?: string }): string[] {
+  const { gproj, addonsDir, unattended, worldPath } = opts;
+  if (worldPath && !gproj) {
+    throw new WorkbenchError(`Refused: worldPath needs a project to open it in; pass gprojPath (or set ENFUSION_DEFAULT_MOD).`, "LAUNCH_FAILED");
+  }
+  if (worldPath && !worldPath.toLowerCase().endsWith(".ent")) {
+    throw new WorkbenchError(`Refused: worldPath must be a world (.ent) file: ${worldPath}`, "LAUNCH_FAILED");
+  }
+  const args: string[] = [];
+  if (gproj) args.push("-gproj", gproj);
+  if (addonsDir) args.push("-addonsDir", addonsDir);
+  // Bohemia's CLI docs: "Disable all kinds of error message dialogs. (VME's, asserts, crashes, ...)"
+  if (unattended) args.push("-noThrow");
+  // shortcut: -load with a {GUID}path is unprobed, so the GUID is dropped; keep it once a live run shows -load takes it.
+  if (worldPath) args.push("-wbModule=WorldEditor", "-run", "-load", worldPath.replace(/^\{[0-9A-Fa-f]{16}\}/, ""));
+  return args;
+}
 
 export type WorkbenchMode = "edit" | "play" | "no_world" | "unknown";
 
@@ -224,8 +247,9 @@ export class WorkbenchClient {
    * and waits for NET API. Safe to call concurrently — deduplicates launches.
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
    * @param unattended Launch with -noThrow (no error dialogs).
+   * @param worldPath Optional .ent to open in the World Editor at start.
    */
-  async ensureRunning(gprojPath?: string, unattended = false): Promise<void> {
+  async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string): Promise<void> {
     if (!this.config) {
       throw new WorkbenchError("No config provided — cannot auto-launch Workbench.", "LAUNCH_FAILED");
     }
@@ -235,7 +259,7 @@ export class WorkbenchClient {
       return this.launchPromise;
     }
 
-    const promise = this.launchWorkbench(gprojPath, unattended).finally(() => {
+    const promise = this.launchWorkbench(gprojPath, unattended, worldPath).finally(() => {
       // Only clear if this is still the active promise (guards against re-entrant calls)
       if (this.launchPromise === promise) {
         this.launchPromise = null;
@@ -484,7 +508,7 @@ export class WorkbenchClient {
     }
   }
 
-  private async launchWorkbench(gprojPath?: string, unattended = false): Promise<void> {
+  private async launchWorkbench(gprojPath?: string, unattended = false, worldPath?: string): Promise<void> {
     // 1. Check if already running (maybe it came up between the failed call and now)
     if (await this.ping()) {
       logger.info("Workbench is already running.");
@@ -520,6 +544,8 @@ export class WorkbenchClient {
       );
     }
     let resolvedGproj = gprojPath || this.findFallbackGproj();
+    // Built before any handler copy, so a bad worldPath is refused with nothing written.
+    let args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir: this.config?.addonsDir, unattended, worldPath });
     if (resolvedGproj && !isProtected) {
       this.installHandlerScripts(dirname(resolvedGproj));
       // Remove any leftover standalone addon to prevent duplicate class errors.
@@ -535,6 +561,7 @@ export class WorkbenchClient {
         const standaloneGproj = join(fallbackBase, HANDLER_FOLDER, `${HANDLER_FOLDER}.gproj`);
         if (existsSync(standaloneGproj)) {
           resolvedGproj = standaloneGproj;
+          args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir: this.config?.addonsDir, unattended });
         }
       }
     }
@@ -553,14 +580,6 @@ export class WorkbenchClient {
     }
 
     // 4. Spawn with -gproj to skip the launcher
-    const args: string[] = [];
-    if (resolvedGproj) {
-      args.push("-gproj", resolvedGproj);
-    }
-    if (this.config?.addonsDir) args.push("-addonsDir", this.config.addonsDir);
-    // Bohemia's CLI docs: "Disable all kinds of error message dialogs. (VME's, asserts, crashes, ...)"
-    if (unattended) args.push("-noThrow");
-
     // Use the game install directory as CWD so Workbench finds base game addons
     // (data/ArmaReforger.gproj with GUID 58D0FB3206B6F859) via ./addons resolution.
     const cwd = this.findGameDir() || dirname(exePath);
@@ -597,7 +616,8 @@ export class WorkbenchClient {
     }
 
     // 5. Wait for NET API — track the last error type so the timeout message is actionable
-    const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
+    const timeoutMs = worldPath ? WORLD_LAUNCH_TIMEOUT_MS : LAUNCH_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
     let lastErrorCode: WorkbenchError["code"] | undefined;
     while (Date.now() < deadline) {
       try {
@@ -631,9 +651,11 @@ export class WorkbenchClient {
         `NET API port never responded. Ensure NET API is enabled in Workbench: ` +
         `File > Options > General > Net API (checkbox must be on).`;
     }
+    // A modal while the world loads (for example "world data structure is obsolete") blocks every ping.
+    if (worldPath) hint += ` A dialog may be open in Workbench while the world loads; check the Workbench window.`;
 
     throw new WorkbenchError(
-      `Workbench launched but did not connect within ${LAUNCH_TIMEOUT_MS / 1000}s.\n\n${hint}`,
+      `Workbench launched but did not connect within ${timeoutMs / 1000}s.\n\n${hint}`,
       "LAUNCH_FAILED"
     );
   }
