@@ -78,7 +78,8 @@ describe("Dedicated Server Tool logs (GI-14)", () => {
     });
   });
 
-  it("finds the server and the configured peers' folders; a relative Profile is under <Documents>\\My Games; .. is dropped", () => {
+  // Windows only: D:\Docs counts as an absolute path under Windows path rules, not on Linux.
+  it.skipIf(process.platform !== "win32")("finds the server and the configured peers' folders; a relative Profile is under <Documents>\\My Games; .. is dropped", () => {
     const d = dstProfileDirs(config);
     expect(d.server).toBe(join(root, "dst", "server"));
     expect(d.peers).toEqual([join(root, "dst", "Peer1"), join(root, "dst", "Peer2")]);
@@ -101,7 +102,8 @@ describe("Dedicated Server Tool logs (GI-14)", () => {
     expect(p.content[0].text).not.toContain("OldRunPeerThree");
   });
 
-  it("log_watch roots are each profile's logs folder only (review B1): a .log elsewhere is refused, even for a drive-root Profile", async () => {
+  // Windows only: a drive-root Profile (C:\) is absolute under Windows path rules, not on Linux.
+  it.skipIf(process.platform !== "win32")("log_watch roots are each profile's logs folder only (review B1): a .log elsewhere is refused, even for a drive-root Profile", async () => {
     const outside = join(root, "dst", "server", "notlogs", "secret.log");
     expect((await scan({ source: "path", path: outside })).content[0].text).toBe(`Path is not under an allowed log root: ${outside}`);
     setDump("C:\\", []);

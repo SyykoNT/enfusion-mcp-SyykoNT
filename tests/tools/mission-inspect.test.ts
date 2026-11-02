@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { rmSync } from "node:fs";
+import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerMissionInspect } from "../../src/tools/mission-inspect.js";
 import { makeProjects, write } from "../coalition/fixture.js";
@@ -108,7 +109,7 @@ describe("mission_inspect", () => {
     write(fx.crf, "Worlds/Test/Plain.ent", "SubScene {\n}\n");
     write(fx.crf, "Worlds/Test/Plain_Layers/default.layer", "GenericEntity Thing {\n}\n");
     expect(await call({ world: "Worlds/Test/Plain.ent" })).toMatchObject({ isError: true, text: expect.stringContaining("has no COA_Lobby entity") });
-    expect(await call({ world: "C:/Windows/x.ent" })).toMatchObject({ isError: true, text: expect.stringContaining("inside the project path") });
+    expect(await call({ world: resolve("/", "Windows", "x.ent") })).toMatchObject({ isError: true, text: expect.stringContaining("inside the project path") });
   });
 
   it("names the CRF copy searched when a relative world is missing", async () => {

@@ -262,8 +262,8 @@ The NetAPI server runs in the same process as all Workbench editors (WorldEditor
 ProcAnimEditor etc.) on the same port (default 5775). But only modules with a `GetModule()` type
 are accessible from script handlers.
 
-**For animation graph work:** Use file-based tools (`animation_graph_inspect`, `animation_graph_author`,
-`animation_graph_setup` in the enfusion-mcp-BK fork) — these read/write AGR/AGF/AST/ASI directly
+**For animation graph work:** Use the file-based `animation_graph` tool (actions `inspect`, `author` and
+`setup`), which reads and writes AGR/AGF/AST/ASI directly
 without needing Workbench. Then call `ResourceManager` reload to pick up changes.
 
 **When working with animation files via MCP tools:** Ask the user for the path to their animations
@@ -277,8 +277,8 @@ way to query which animation workspace is currently open in the editor.
 Claude Code uses `~/.claude.json` (not `claude_desktop_config.json`). To point at the local fork:
 
 ```bash
-claude mcp remove enfusion-mcp
-claude mcp add --scope user enfusion-mcp -- node /path/to/enfusion-mcp-BK/dist/index.js
+claude mcp remove enfusion-mcp-SyykoNT
+claude mcp add --scope user enfusion-mcp-SyykoNT -- node /path/to/enfusion-mcp-SyykoNT/dist/index.js
 ```
 
 Requires Claude Code restart to pick up new tool schemas.

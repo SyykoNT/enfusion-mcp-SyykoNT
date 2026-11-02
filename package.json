@@ -1,6 +1,6 @@
 {
   "name": "enfusion-mcp-syykont",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "type": "module",
   "description": "MCP server for Arma Reforger 1.8 modding: API + game data knowledge, headless compile/pack, game & dedicated server control, economy/config overrides",
   "bin": {
@@ -46,9 +46,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/SyykoNT/enfusion-mcp-syykont.git"
+    "url": "https://github.com/SyykoNT/enfusion-mcp-SyykoNT.git"
   },
-  "homepage": "https://github.com/SyykoNT/enfusion-mcp-syykont",
+  "homepage": "https://github.com/SyykoNT/enfusion-mcp-SyykoNT",
+  "bugs": {
+    "url": "https://github.com/SyykoNT/enfusion-mcp-SyykoNT/issues"
+  },
   "license": "MIT",
   "keywords": [
     "mcp",
