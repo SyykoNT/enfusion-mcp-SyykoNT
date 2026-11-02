@@ -16,7 +16,7 @@ import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
 import { findGproj, findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
-import { findPids } from "../utils/process.js";
+import { findPids, isAlive } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher } from "../watchdog/wb-watch.js";
@@ -759,6 +759,14 @@ export class WorkbenchClient {
           lastErrorCode = err.code;
           logger.debug(`Workbench poll (${err.code}): ${err.message}`);
         }
+      }
+      // The spawned PID is the Workbench itself (workbenchEnv() sets the Steam app id, so Steam does not relaunch it under another PID).
+      if (proc.pid && !isAlive(proc.pid)) {
+        throw new WorkbenchError(
+          `Workbench (PID ${proc.pid}) exited ${Math.round((Date.now() - launchedAt) / 1000)}s after launch, before its NET API answered. ` +
+          `Check its log folder (${join(workbenchProfileDir(this.config!), "logs")}) and, if it crashed, CrashReporter.`,
+          "LAUNCH_FAILED"
+        );
       }
       await new Promise((r) => setTimeout(r, LAUNCH_POLL_INTERVAL_MS));
     }

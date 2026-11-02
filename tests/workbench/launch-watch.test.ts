@@ -9,7 +9,7 @@ const home = mkdtempSync(join(tmpdir(), "emcp-lw-home-"));
 process.env.USERPROFILE = process.env.HOME = home;
 
 // spawn is a stub (no Workbench starts), the watcher spawn is recorded, no Workbench counts as running.
-const sys = vi.hoisted(() => ({ spawnEnv: [] as NodeJS.ProcessEnv[], spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][] }));
+const sys = vi.hoisted(() => ({ spawnEnv: [] as NodeJS.ProcessEnv[], spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][], alive: true }));
 vi.mock("node:child_process", async (orig) => ({
   ...(await orig<typeof import("node:child_process")>()),
   spawn: vi.fn((_exe: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
@@ -21,6 +21,7 @@ vi.mock("node:child_process", async (orig) => ({
 vi.mock("../../src/utils/process.js", async (orig) => ({
   ...(await orig<typeof import("../../src/utils/process.js")>()),
   findPids: () => [],
+  isAlive: () => sys.alive,
   spawnDetached: vi.fn((_exe: string, args: string[]) => {
     sys.watcher.push(args);
     return 777;
@@ -31,7 +32,7 @@ vi.mock("../../src/utils/game-paths.js", async (orig) => ({
   findWorkbenchExe: () => join(home, "Tools", "Workbench", "ArmaReforgerWorkbenchSteamDiag.exe"),
 }));
 
-const { WorkbenchClient } = await import("../../src/workbench/client.js");
+const { WorkbenchClient, WorkbenchError } = await import("../../src/workbench/client.js");
 const { isOwned, readInstance, pidInstanceFile, WORKBENCH_INSTANCES } = await import("../../src/utils/instances.js");
 
 function client() {
@@ -53,6 +54,7 @@ beforeEach(() => {
   sys.spawnArgs = [];
   sys.listeners = [];
   sys.watcher = [];
+  sys.alive = true;
 });
 
 describe("launchWorkbench records and watches what it starts", () => {
@@ -87,5 +89,34 @@ describe("launchWorkbench records and watches what it starts", () => {
     const { c, gproj } = client();
     await c.ensureRunning(gproj, true);
     expect(sys.spawnArgs[0]).toContain("-noThrow");
+  });
+});
+
+describe("launchWorkbench stops waiting when its Workbench has exited", () => {
+  // The "already running?" ping and every NET API poll are refused.
+  function refusingClient() {
+    const { c, gproj } = client();
+    vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockRejectedValue(new WorkbenchError("refused", "CONNECTION_REFUSED"));
+    return { c, gproj };
+  }
+
+  it("fails at once, naming the PID, instead of polling a dead process", async () => {
+    const { c, gproj } = refusingClient();
+    sys.alive = false;
+    const t0 = Date.now();
+    await expect(c.ensureRunning(gproj)).rejects.toThrow(/PID 4242\) exited .*CrashReporter/);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("keeps polling to the timeout while the process is alive", async () => {
+    const { c, gproj } = refusingClient();
+    vi.useFakeTimers();
+    try {
+      const done = expect(c.ensureRunning(gproj)).rejects.toThrow(/did not connect within 90s/);
+      await vi.advanceTimersByTimeAsync(95_000);
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
