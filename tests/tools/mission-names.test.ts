@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { alnum, branchSlug, buildNames, checkNames, dateNote, missionNames, stripDisplayPrefix, utcMmdd, type Header } from "../../src/tools/mission-names.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { alnum, branchSlug, buildNames, checkNames, dateNote, missionNames, registerMissionNames, stripDisplayPrefix, utcMmdd, type Header } from "../../src/tools/mission-names.js";
+import { CRF_PATH_HELP, LOBBY_PATH_HELP } from "../../src/utils/coalition-paths.js";
 import { makeProjects, write } from "../coalition/fixture.js";
 
 // 01:30 UTC on 2 November is still 1 November in the Americas
@@ -100,5 +102,18 @@ describe("missionNames on a CRF and Lobby fixture", () => {
     expect(text).toContain("INFO Missions/Test/Author_1031_TVT4_Fixture.conf: names 4 slots; the world now has 6.");
     expect(text).toContain("PULL REQUEST TITLE  New Mission | Author TVT6 Fixture");
     expect(() => missionNames(fx.config, { action: "check", world: join(fx.root, "..", "elsewhere.ent") }, NOW)).toThrow(/inside the project path/);
+  });
+
+  it("names the CRF and Lobby copies it read in build and check replies", () => {
+    const copies = [`CRF: clone unknown (${fx.crf})`, `Lobby: clone unknown (${fx.lobby})`];
+    const build = missionNames(fx.config, { action: "build", author: "T", mode: "TVT", name: "D", terrain: "Arland" }, NOW);
+    const check = missionNames(fx.config, { action: "check", world: "Worlds/Test/Author_TVT_Fixture.ent" }, NOW);
+    for (const text of [build, check]) expect(text.split("\n").slice(1, 3)).toEqual(copies);
+  });
+
+  it("describes crfPath and lobbyPath with the shared Coalition help", () => {
+    let schema: Record<string, { description?: string }> = {};
+    registerMissionNames({ registerTool: (_n: string, d: { inputSchema: typeof schema }) => void (schema = d.inputSchema) } as unknown as McpServer, fx.config);
+    expect([schema.crfPath.description, schema.lobbyPath.description]).toEqual([CRF_PATH_HELP, LOBBY_PATH_HELP]);
   });
 });

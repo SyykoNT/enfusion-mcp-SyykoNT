@@ -80,6 +80,11 @@ describe("resolveCoalitionRoots", () => {
     expect(() => resolveCoalitionRoots({ ...cfg(), workshopPath: empty }, undefined, undefined, "workshop")).toThrow(/^source "workshop": no CRF Workshop copy/);
   });
 
+  it("refuses crfPath or lobbyPath with source workshop instead of ignoring them", () => {
+    expect(() => resolveCoalitionRoots(cfg(), "CrfClone", undefined, "workshop")).toThrow(/^source "workshop" reads the Workshop copies, but crfPath names a clone/);
+    expect(() => resolveCoalitionRoots(cfg(), undefined, "COALITION-Lobby", "workshop")).toThrow(/but lobbyPath names a clone/);
+  });
+
   it.skipIf(process.platform !== "win32")("finds a CRF clone that the project path holds as a junction", () => {
     const linked = join(root, "linked-projects");
     mkdirSync(linked);
