@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ZodTypeAny } from "zod";
 import type { Config } from "../../src/config.js";
@@ -61,10 +61,12 @@ describe("server_params", () => {
   it("refuses folders that would break the Params line", () => {
     let schema: Record<string, ZodTypeAny> = {};
     registerServerParams({ registerTool: (_n: string, def: { inputSchema: typeof schema }) => (schema = def.inputSchema) } as unknown as McpServer, config as Config);
-    expect(schema.modsFolder.safeParse('C:\\Mods" -addons "Evil').success).toBe(false);
+    // Absolute on the running system: a C:\ path is relative off Windows.
+    const abs = (s: string) => resolve("/", s);
+    expect(schema.modsFolder.safeParse(abs('Mods" -addons "Evil')).success).toBe(false);
     expect(schema.modsFolder.safeParse("Mods").success).toBe(false);
     // A comma would split the -addonsDir list into two folders (review GI-12 N2).
-    expect(schema.modsFolder.safeParse("D:\\My,Mods").success).toBe(false);
-    expect(schema.modsFolder.safeParse("C:\\Mods").success).toBe(true);
+    expect(schema.modsFolder.safeParse(abs("My,Mods")).success).toBe(false);
+    expect(schema.modsFolder.safeParse(abs("Mods")).success).toBe(true);
   });
 });

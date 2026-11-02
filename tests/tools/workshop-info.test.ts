@@ -41,7 +41,8 @@ describe("workshop_info: finding the addon", () => {
   });
 
   it("refuses traversal and reports not found as an error", async () => {
-    for (const modName of ["..\\Outside", "../Outside"]) {
+    // Off Windows a backslash is an ordinary file name character, so "..\Outside" is not a traversal there.
+    for (const modName of process.platform === "win32" ? ["..\\Outside", "../Outside"] : ["../Outside"]) {
       const r = await call({ modName });
       expect(r.isError).toBe(true);
       expect(r.content[0].text).toMatch(/^Refused: modName ".*Outside" is outside /);

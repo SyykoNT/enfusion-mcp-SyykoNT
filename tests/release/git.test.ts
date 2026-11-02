@@ -131,6 +131,11 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", { timeout: 30_000
     const d = repo();
     execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one"], { stdio: "ignore" });
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1"); // git's own switch for the "dubious ownership" refusal
+    // Hosted CI images set safe.directory=* system-wide, which would cancel the refusal; read no system or global config.
+    const noConfig = join(mkdtempSync(join(tmpdir(), "emcp-gitcfg-")), "empty");
+    writeFileSync(noConfig, "");
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", noConfig);
     try {
       expect(() => gitState(d)).toThrow(/git cannot read the repo in .*: .*(dubious ownership|safe\.directory)/s);
     } finally {
