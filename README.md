@@ -227,6 +227,7 @@ never into Workshop downloads there (folders with `ServerData.json`) or into the
 | `game` | Game client: `launch` (addons, connect, world), `stop`, `status`, `logs` |
 | `env_check` | Check the setup and say what to set for anything missing |
 | `addon_git_guard` | Local git commit guard for addon repos: `status`, `check` (both read-only) and `install` |
+| `release_audit` | Read-only release report for one addon before a commit, test pack or publish: handler files, git state and commit messages, `.gproj`, meta and `resourceDatabase.rdb` registration, GUIDs shared with dependencies (a warning at another path, info when it overrides the same path), mission config images without a source, leftovers, BOM and public-text rules, size, preview image. Stable finding IDs (U1 marks an unreadable file or a check that failed) and a verdict (blocked, warnings, clean) |
 
 ### COALITION CRF missions (offline, read-only)
 Both tools read a CRF clone and its COALITION-Lobby clone, inside the project path.
@@ -302,6 +303,8 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
   `wb_close` reports that it is not running. Every other `wb_*` tool returns an error when Workbench is not
   running. Tools that need edit or play mode read the mode right before they act, and a refusal names the mode
   they saw.
+- Workbench started by `wb_launch`, and headless runs (`mod compile`, `mod pack`, `mod build`), report to Steam as
+  Arma Reforger Tools (app 1874910).
 - `wb_close` closes only a Workbench this server started. `server stop` and `game stop` act only on servers and
   game clients this server started.
 - These file-writing tools write only into an addon named with `modName` or `projectPath`, never into
