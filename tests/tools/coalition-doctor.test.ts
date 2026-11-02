@@ -1,11 +1,12 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Config } from "../../src/config.js";
 import { gitOrNull } from "../../src/release/git.js";
 import { doctorRows, doctorText, type Probe, type Row } from "../../src/tools/coalition-doctor.js";
+import { CRF_MARKER, guideProjectsDir } from "../../src/utils/coalition-paths.js";
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const roots: string[] = [];
@@ -27,7 +28,7 @@ function repo(dir: string, origin: string, ignoreHandlers = true) {
 }
 
 /** A PC laid out as the guide's Tools Setup describes, under a temp folder; `docs` is the Documents folder name. */
-function guidePc(opts: { docs?: string; link?: "junction" | "folder" | "none"; dep?: boolean; git?: boolean } = {}) {
+function guidePc(opts: { docs?: string; link?: "junction" | "folder" | "none" | "broken"; dep?: boolean; git?: boolean; clone?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "emcp-doctor-"));
   roots.push(root);
   const myGames = join(root, opts.docs ?? "Documents", "My Games");
@@ -40,18 +41,25 @@ function guidePc(opts: { docs?: string; link?: "junction" | "folder" | "none"; d
   put(join(root, "steam", "Arma Reforger Tools", "Workbench", "ArmaReforgerWorkbenchSteamDiag.exe"));
   put(join(root, "steam", "Arma Reforger Server", "ArmaReforgerServer.exe"));
   put(join(gameAddons, "ModX_AAAAAAAAAAAAAAAA", "addon.gproj"), gproj("ModX", "AAAAAAAAAAAAAAAA", ["58D0FB3206B6F859"]));
-  const crf = join(projects, "Coalition-Reforger-Framework");
-  put(join(crf, "Tools", "Validation", "validate_mission.py"));
+  // Without a clone, CRF and Lobby are only the game's Workshop downloads (a new guide user's start)
+  const crf = opts.clone === false ? join(gameAddons, "COALITIONFramework-CRF_5EB3564A02CE294F") : join(projects, "Coalition-Reforger-Framework");
+  mkdirSync(projects, { recursive: true });
+  if (opts.clone !== false) put(join(crf, "Tools", "Validation", "validate_mission.py"));
   put(join(crf, "addon.gproj"), gproj("COALITIONFramework", "5EB3564A02CE294F", ["58D0FB3206B6F859", "69EA43E490A50DBE", "AAAAAAAAAAAAAAAA", ...(opts.dep ? ["BBBBBBBBBBBBBBBB"] : [])]));
-  const lobby = join(projects, "COALITION-Lobby");
+  const lobby = opts.clone === false ? join(gameAddons, "COALITIONLobby_69EA43E490A50DBE") : join(projects, "COALITION-Lobby");
   put(join(lobby, "addon.gproj"), gproj("COALITIONLobby", "69EA43E490A50DBE", ["58D0FB3206B6F859"]));
-  if (opts.git !== false) {
+  if (opts.git !== false && opts.clone !== false) {
     repo(crf, "https://github.com/CoalitionArma/Coalition-Reforger-Framework.git");
     g(crf, "checkout", "-q", "-b", "mission/the-patrol");
     repo(lobby, "https://github.com/CoalitionArma/COALITION-Lobby.git");
   }
   if (opts.link === "folder") mkdirSync(join(wb, "addons"), { recursive: true });
-  else if (opts.link !== "none") symlinkSync(gameAddons, join(wb, "addons"), "junction");
+  else if (opts.link === "broken") {
+    const gone = join(root, "gone");
+    mkdirSync(gone);
+    symlinkSync(gone, join(wb, "addons"), "junction");
+    rmSync(gone, { recursive: true });
+  } else if (opts.link !== "none") symlinkSync(gameAddons, join(wb, "addons"), "junction");
   const config = {
     workbenchPath: join(root, "steam", "Arma Reforger Tools"), gamePath: game, serverPath: join(root, "steam", "Arma Reforger Server"),
     projectPath: projects, workshopPath: gameAddons, protectedAddons: ["5EB3564A02CE294F", "69EA43E490A50DBE"],
@@ -107,5 +115,53 @@ describe.skipIf(!hasGit)("coalition_doctor", () => {
     expect(row(rows, "Python 3.11+ (mission_validate)").state).toBe("missing");
     expect(row(rows, "GitHub Desktop, signed in").state).toBe("missing");
     expect(doctorText(rows)).toMatch(/^## Coalition Tools Setup check\n\n\d+ OK, 2 missing, 4 to check/);
+  });
+});
+
+describe.skipIf(!hasGit)("coalition_doctor review fixes", () => {
+  it("N1: reports a link whose target is gone as broken, with a fix that removes it first", () => {
+    const pc = guidePc({ link: "broken", git: false });
+    const rows = doctorRows(pc.config, pc.probe);
+    expect(row(rows, "Link the game's mods into the Workbench")).toMatchObject({ state: "missing", found: expect.stringContaining("is a link whose target is gone"), fix: expect.stringMatching(/^Remove that link first .*rmdir ".*addons", then run in Command Prompt: mklink \/J/) });
+    expect(row(rows, "Check the link")).toMatchObject({ state: "missing", found: "the link's target is gone" });
+  });
+
+  it("N2: judges ENFUSION_PROTECTED_ADDONS by folder name or .gproj ID as the write guard does", () => {
+    const pc = guidePc({ git: false });
+    const byName = doctorRows({ ...pc.config, protectedAddons: ["Coalition-Reforger-Framework", "COALITIONLobby"] }, pc.probe);
+    expect(row(byName, "ENFUSION_PROTECTED_ADDONS").state).toBe("ok");
+    expect(row(doctorRows({ ...pc.config, protectedAddons: ["coalition-reforger-framework", "SomethingElse"] }, pc.probe), "ENFUSION_PROTECTED_ADDONS").state).toBe("warn");
+  });
+
+  it("N3: never lists the base game as a mod to download", () => {
+    const pc = guidePc({ git: false });
+    const rows = doctorRows({ ...pc.config, gamePath: join(pc.root, "wrong") }, pc.probe);
+    const mods = row(rows, "Download the server mods in the game");
+    expect(mods.state).toBe("ok");
+    expect(mods.found).not.toContain("58D0FB3206B6F859");
+    expect(row(rows, "Arma Reforger Tools").state).toBe("warn");
+  });
+
+  // The shared lookup also checks this PC's real guide Projects folder, so a real clone there would be found
+  it.skipIf(existsSync(join(guideProjectsDir(), "Coalition-Reforger-Framework", CRF_MARKER)))("N4: with only Workshop copies of CRF and Lobby, keeps all 20 rows and says the clone is needed", () => {
+    const pc = guidePc({ clone: false });
+    const rows = doctorRows(pc.config, pc.probe);
+    expect(rows).toHaveLength(20);
+    expect(row(rows, "Clone the framework")).toMatchObject({ state: "missing", found: `no clone; reading the Workshop copy ${pc.crf}` });
+    for (const item of ["Switch to the release branch", "Create your mission branch", "Know how to update from release"]) {
+      expect(row(rows, item)).toMatchObject({ state: "missing", found: "needs the clone" });
+    }
+    expect(row(rows, "COALITION-Lobby")).toMatchObject({ state: "info", found: expect.stringContaining("(Workshop copy)") });
+    expect(row(rows, "ENFUSION_PROJECT_PATH").state).toBe("warn");
+    expect(row(rows, "Workbench handler files git-ignored")).toMatchObject({ state: "info", found: "no clones" });
+    expect(row(rows, "Download the server mods in the game").state).toBe("ok");
+  });
+
+  it("N5: the Git identity fix gives the guide's GitHub docs, not an unsourced menu path", () => {
+    const pc = guidePc({ git: false });
+    const fix = row(doctorRows(pc.config, { ...pc.probe, git: () => null }), "Git username and commit email").fix!;
+    expect(fix).toContain("https://docs.github.com/en/get-started/getting-started-with-git/setting-your-username-in-git");
+    expect(fix).toContain("setting-your-commit-email-address");
+    expect(fix).not.toContain("File > Options");
   });
 });

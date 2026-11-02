@@ -4,10 +4,10 @@ import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Config } from "../config.js";
-import { closure } from "../pak/stack.js";
+import { closure, VANILLA_GUID } from "../pak/stack.js";
 import { gitOrNull } from "../release/git.js";
 import { CRF_GUID, LOBBY_GUID, resolveCoalitionRoots, type CoalitionRoots } from "../utils/coalition-paths.js";
-import { findGproj, findWorkbenchExe, myGamesDir } from "../utils/game-paths.js";
+import { findGproj, findWorkbenchExe, isProtectedAddon, myGamesDir } from "../utils/game-paths.js";
 import { findPython } from "../utils/python.js";
 import { realPathOf } from "../utils/safe-path.js";
 
@@ -89,7 +89,7 @@ export function doctorRows(config: Config, probe: Probe): Row[] {
   const name = git(homedir(), ["config", "--global", "--get", "user.name"]);
   const email = git(homedir(), ["config", "--global", "--get", "user.email"]);
   add(tools, "Git username and commit email", name && email ? "ok" : "missing", `${name ?? "(no user.name)"} <${email ?? "no user.email"}>`,
-    "Set your Git name and the email on your GitHub account (GitHub Desktop: File > Options > Git).");
+    "Set your Git username and commit email (the email on your GitHub account): https://docs.github.com/en/get-started/getting-started-with-git/setting-your-username-in-git and https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address");
   add(tools, "GitHub Desktop, signed in", probe.gitHubDesktop ? "ok" : "missing", probe.gitHubDesktop ? `${probe.gitHubDesktop} (sign-in not checked)` : "not found", "Install GitHub Desktop from https://desktop.github.com/ and sign in.");
 
   // Give the Workbench Your Mods [p4, p5]
@@ -112,7 +112,8 @@ export function doctorRows(config: Config, probe: Probe): Row[] {
       if (!gproj) continue;
       const c = closure(config, gproj);
       const names = Object.assign({}, ...c.order.map((a) => a.depNames)) as Record<string, string>;
-      for (const g of c.missing) missing.set(g, names[g] ?? "");
+      // The base game is not a Workshop mod; a wrong ENFUSION_GAME_PATH shows in the Tools row
+      for (const g of c.missing) if (g !== VANILLA_GUID) missing.set(g, names[g] ?? "");
     }
     const list = [...missing].slice(0, 10).map(([g, n]) => `${n || "?"} {${g}}`).join(", ");
     add(mods, "Download the server mods in the game", missing.size ? "warn" : roots ? "ok" : "info",
@@ -120,19 +121,26 @@ export function doctorRows(config: Config, probe: Probe): Row[] {
       "Open Arma Reforger (the game) and download the server's mods; the Workbench can't open a mod's prefabs or terrain until it is in the addons folder.");
   }
   const mklink = `mklink /J "${wbAddons}" "${gameAddons}"`;
-  let link: State = "missing", linkFound = `no ${wbAddons}`;
-  if (existsSync(wbAddons)) {
-    if (lstatSync(wbAddons).isSymbolicLink()) [link, linkFound] = ["ok", `${wbAddons} is a link${oneDrive ? " (Documents is on OneDrive, where the guide says links fail; this one resolves)" : ""}`];
-    // The guide: a link under OneDrive doesn't work, so a copied folder is the expected setup there
-    else [link, linkFound] = [oneDrive ? "info" : "warn", `${wbAddons} is a real folder, not a link${oneDrive ? " (Documents is on OneDrive)" : ""}`];
+  // lstat sees the link itself; existsSync follows it, so a link whose target is gone looks absent
+  const entry = lstatSync(wbAddons, { throwIfNoEntry: false });
+  const isLink = !!entry?.isSymbolicLink();
+  const broken = isLink && !existsSync(wbAddons);
+  let link: State, linkFound: string, linkFix: string;
+  if (!entry) [link, linkFound, linkFix] = ["missing", `no ${wbAddons}`, `With no addons folder in ArmaReforgerWorkbench yet, run in Command Prompt: ${mklink}`];
+  else if (broken) [link, linkFound, linkFix] = ["missing", `${wbAddons} is a link whose target is gone`, `Remove that link first (it holds no files): rmdir "${wbAddons}", then run in Command Prompt: ${mklink}`];
+  else if (isLink) [link, linkFound, linkFix] = ["ok", `${wbAddons} is a link${oneDrive ? " (Documents is on OneDrive, where the guide says links fail; this one resolves)" : ""}`, ""];
+  // The guide: a link under OneDrive doesn't work, so a copied folder is the expected setup there
+  else if (oneDrive) [link, linkFound, linkFix] = ["info", `${wbAddons} is a real folder, not a link (Documents is on OneDrive)`, "Documents is on OneDrive, where the link doesn't work: copy your addons over by hand whenever the mods update."];
+  else [link, linkFound, linkFix] = ["warn", `${wbAddons} is a real folder, not a link`, `Move that folder out of ArmaReforgerWorkbench, then run in Command Prompt: ${mklink}`];
+  add(mods, "Link the game's mods into the Workbench", link, linkFound, linkFix);
+  let check: State, checkFound: string;
+  if (!entry || broken) [check, checkFound] = ["missing", broken ? "the link's target is gone" : "no link"];
+  else if (!isLink) [check, checkFound] = [oneDrive ? "info" : "warn", "not a link"];
+  else {
+    const same = samePath(wbAddons, gameAddons);
+    [check, checkFound] = [same ? "ok" : "warn", `points at ${realPathOf(wbAddons)}${same ? ", the game's addons" : `, not the game's addons (${realPathOf(gameAddons)})`}`];
   }
-  add(mods, "Link the game's mods into the Workbench", link, linkFound, oneDrive
-    ? "Documents is on OneDrive, where the link doesn't work: copy your addons over by hand whenever the mods update."
-    : `With no addons folder in ArmaReforgerWorkbench yet, run in Command Prompt: ${mklink}`);
-  const target = existsSync(wbAddons) ? realPathOf(wbAddons) : "";
-  add(mods, "Check the link", !target ? "missing" : link !== "ok" ? (oneDrive ? "info" : "warn") : samePath(wbAddons, gameAddons) ? "ok" : "warn",
-    !target ? "no link" : link !== "ok" ? "not a link" : `points at ${target}${samePath(wbAddons, gameAddons) ? ", the game's addons" : `, not the game's addons (${realPathOf(gameAddons)})`}`,
-    "The Workbench's addons must be a link to the game's addons, so both use the same mods.");
+  add(mods, "Check the link", check, checkFound, "The Workbench's addons must be a link to the game's addons, so both use the same mods.");
   const projects = join(probe.myGames, "ArmaReforgerWorkbench", "Projects");
   const crfClone = roots?.crf.kind === "loose" ? roots.crf.root : undefined;
   const elsewhere = crfClone && !samePath(dirname(crfClone), projects);
@@ -145,6 +153,8 @@ export function doctorRows(config: Config, probe: Probe): Row[] {
   if (!crfClone) {
     add(fw, "Clone the framework", "missing", roots ? `no clone; reading the Workshop copy ${roots.crf.root}` : rootsError,
       "In GitHub Desktop: File > Clone Repository > URL https://github.com/CoalitionArma/Coalition-Reforger-Framework into your ArmaReforgerWorkbench\\Projects folder.");
+    // The guide's branch steps need the clone; their rows stay so the list always matches the guide
+    for (const item of ["Switch to the release branch", "Create your mission branch", "Know how to update from release"]) add(fw, item, "missing", "needs the clone", "Clone the framework first.");
   } else {
     const origin = git(crfClone, ["remote", "get-url", "origin"]);
     add(fw, "Clone the framework", origin && ORIGIN.test(origin) ? "ok" : "warn", `${crfClone}, origin ${origin ?? "(none)"}${elsewhere ? " (not the guide's Projects folder)" : ""}`,
@@ -174,8 +184,13 @@ export function doctorRows(config: Config, probe: Probe): Row[] {
   add(mcp, "ENFUSION_PROJECT_PATH", crfClone && samePath(dirname(crfClone), config.projectPath) ? "ok" : crfClone ? "info" : "warn",
     `${config.projectPath}${crfClone ? (samePath(dirname(crfClone), config.projectPath) ? " holds the CRF clone" : `; the CRF clone is in ${dirname(crfClone)}`) : "; no CRF clone found"}`,
     "Set ENFUSION_PROJECT_PATH to the folder that holds the CRF clone, so project tools and write guards see it.");
-  const prot = (config.protectedAddons ?? []).map((g) => g.toUpperCase());
-  const missingProt = [CRF_GUID, LOBBY_GUID].filter((g) => !prot.includes(g));
+  const prot = config.protectedAddons ?? [];
+  // Judged as the write guard judges it (GUID, ID or folder name); the GUID alone when there is no .gproj to read
+  const guarded = (guid: string, root?: string) => {
+    const gproj = root && findGproj(root);
+    return gproj ? isProtectedAddon(config, gproj) : prot.some((p) => p.toUpperCase() === guid);
+  };
+  const missingProt = ([[CRF_GUID, roots?.crf.root], [LOBBY_GUID, roots?.lobby.root]] as const).filter(([g, r]) => !guarded(g, r)).map(([g]) => g);
   add(mcp, "ENFUSION_PROTECTED_ADDONS", missingProt.length ? "warn" : "ok", prot.length ? prot.join(",") : "(unset)",
     `Set ENFUSION_PROTECTED_ADDONS to ${CRF_GUID},${LOBBY_GUID} so no tool writes into CRF or Lobby.`);
   const clones = roots ? [roots.crf, roots.lobby].filter((r) => r.kind === "loose").map((r) => r.root) : [];
