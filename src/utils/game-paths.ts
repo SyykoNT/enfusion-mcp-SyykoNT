@@ -1,17 +1,46 @@
+import { execFileSync } from "node:child_process";
 import { readdirSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve, join, sep, basename, dirname } from "node:path";
+import { homedir, userInfo } from "node:os";
+import { resolve, join, sep, basename, dirname, isAbsolute, relative } from "node:path";
 import type { Config } from "../config.js";
 import { readGproj } from "../workbench/cli.js";
 import { forbiddenRoot, realPathOf } from "./safe-path.js";
 
+let shellDocs: string | null | undefined;
+/** The Documents folder Windows records (it can be moved anywhere), or null off Windows or when the read fails. */
+function shellDocuments(): string | null {
+  if (shellDocs !== undefined) return shellDocs;
+  shellDocs = null;
+  if (process.platform !== "win32") return null;
+  try {
+    const out = execFileSync("reg", ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders", "/v", "Personal"], {
+      encoding: "utf-8", windowsHide: true, timeout: 5_000, stdio: ["ignore", "pipe", "ignore"],
+    });
+    const raw = /Personal\s+REG_(?:EXPAND_)?SZ\s+(.+)/.exec(out)?.[1]?.trim();
+    if (raw) shellDocs = raw.replace(/%([^%]+)%/g, (m, v: string) => process.env[v] ?? m);
+  } catch {
+    // keep the two fixed candidates
+  }
+  return shellDocs;
+}
+
 /**
- * The "My Games" folder Arma Reforger and Workbench write to. Windows may redirect Documents to
- * OneDrive, so use whichever candidate actually holds an Arma folder.
+ * The "My Games" folder Arma Reforger and Workbench write to: under the Documents folder Windows
+ * records, else Documents or OneDrive\Documents in the home folder, whichever holds an Arma folder.
  */
-export function myGamesDir(): string {
-  const dirs = [join(homedir(), "Documents", "My Games"), join(homedir(), "OneDrive", "Documents", "My Games")];
-  return dirs.find((d) => existsSync(join(d, "ArmaReforgerWorkbench")) || existsSync(join(d, "ArmaReforger"))) ?? dirs[0];
+export function myGamesDir(documents: string | null = shellDocuments()): string {
+  const home = homedir();
+  let profile = "";
+  try {
+    profile = userInfo().homedir;
+  } catch {
+    // no profile: use the shell folder as written
+  }
+  // A shell folder inside the user profile follows the home folder, as %USERPROFILE% would
+  const rel = documents && profile ? relative(profile, documents) : "";
+  const docs = documents && rel && !rel.startsWith("..") && !isAbsolute(rel) ? join(home, rel) : documents;
+  const dirs = [...(docs ? [join(docs, "My Games")] : []), join(home, "Documents", "My Games"), join(home, "OneDrive", "Documents", "My Games")];
+  return dirs.find((d) => existsSync(join(d, "ArmaReforgerWorkbench")) || existsSync(join(d, "ArmaReforger"))) ?? join(home, "Documents", "My Games");
 }
 
 /**
