@@ -108,7 +108,7 @@ describe("unpack", () => {
 describe("server start ports", () => {
   const cfg = { ...config, serverPath: join(root, "srv2"), serverProfilePath: join(root, "prof2"), packedPath: join(root, "packed2") } as Config;
   mkdirSync(cfg.serverPath, { recursive: true });
-  writeFileSync(join(cfg.serverPath, "ArmaReforgerServer.exe"), "");
+  writeFileSync(join(cfg.serverPath, process.platform === "win32" ? "ArmaReforgerServer.exe" : "ArmaReforgerServer"), "");
   mkdirSync(join(cfg.packedPath, "TestAddon"), { recursive: true });
   writeFileSync(join(cfg.packedPath, "TestAddon", "data.pak"), "");
   writeFileSync(join(cfg.packedPath, "TestAddon", "addon.gproj"), "GameProject {\n ID \"TestAddon\"\n GUID \"1111111111111111\"\n}\n");

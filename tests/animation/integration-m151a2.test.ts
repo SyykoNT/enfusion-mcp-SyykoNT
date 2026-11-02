@@ -12,9 +12,9 @@ import { validateGraph } from "../../src/animation/validator.js";
 import { generateSuggestions, formatSuggestions } from "../../src/animation/suggestions.js";
 
 // Needs the M151A2 animation files from a local Workbench profile; set TESTANIM_DIR to run.
-const BASE = process.env.TESTANIM_DIR ?? "C:/Users/Steffen/Documents/My Games/ArmaReforgerWorkbench/profile/TESTANIM";
+const BASE = process.env.TESTANIM_DIR ?? "";
 
-const HAS_FILES = existsSync(`${BASE}/M151A2.agr`);
+const HAS_FILES = BASE !== "" && existsSync(`${BASE}/M151A2.agr`);
 
 function readFile(name: string): string {
   return HAS_FILES ? readFileSync(`${BASE}/${name}`, "utf-8") : "";
