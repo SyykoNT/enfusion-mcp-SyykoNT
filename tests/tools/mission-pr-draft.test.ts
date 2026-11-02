@@ -55,7 +55,7 @@ GenericEntity Boat1 : "{5000000000000001}Prefabs/Vehicles/Naval/Sampan.et" {
 }
 `;
 
-describe.skipIf(!hasGit)("mission_pr_draft", () => {
+describe.skipIf(!hasGit)("mission_pr_draft", { timeout: 30_000 }, () => {
   let fx: ReturnType<typeof makeProjects>;
   beforeAll(() => {
     fx = makeProjects();

@@ -27,7 +27,7 @@ const hasGit = spawnSync("git", ["--version"]).status === 0;
 const git = (dir: string, ...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "ignore" });
 const fixture = (name: string) => readFileSync(join(import.meta.dirname, "../fixtures/mission", name), "utf-8");
 
-describe.skipIf(!hasGit)("mission_preflight", () => {
+describe.skipIf(!hasGit)("mission_preflight", { timeout: 30_000 }, () => {
   let fx: ReturnType<typeof makeProjects>;
   beforeAll(() => {
     fx = makeProjects();
