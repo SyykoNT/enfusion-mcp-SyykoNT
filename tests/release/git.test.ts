@@ -99,7 +99,7 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", () => {
     }
     expect(gitState(d, "HEAD~1")).toMatchObject({ ahead: 1, note: undefined });
     expect(gitState(d, "HEAD~1").aiMessages).toHaveLength(1);
-  });
+  }, 20_000); // many git runs: 2.4 to 4.9 s, too close to vitest's 5 s default
 
   it("G6 only, git checks skipped, outside a repo or inside a parent repo", () => {
     const plain = mkdtempSync(join(tmpdir(), "emcp-nogit-"));
