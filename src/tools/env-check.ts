@@ -1,12 +1,32 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import { findWorkbenchExe, findGproj } from "../utils/game-paths.js";
 import { findPids, serverProcesses, clientProcesses } from "../utils/process.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
 import { gameGuidMap } from "../pak/rdb.js";
 import type { WorkbenchClient } from "../workbench/client.js";
+
+export interface BuildInfo { version: string; commit: string; builtAt: string }
+
+// dist/build-info.json is written by scripts/build-info.mjs; missing or broken means an unstamped build.
+export function readBuildInfo(file = fileURLToPath(new URL("../build-info.json", import.meta.url))): BuildInfo | undefined {
+  try {
+    const j = JSON.parse(readFileSync(file, "utf-8"));
+    if (typeof j.version === "string" && typeof j.commit === "string" && typeof j.builtAt === "string") return j;
+  } catch { /* unstamped build */ }
+  return undefined;
+}
+
+const packageVersion = (): string => createRequire(import.meta.url)("../../package.json").version;
+
+export function serverVersion(file?: string): string {
+  const info = readBuildInfo(file);
+  return info ? `${info.version}+${info.commit}` : packageVersion();
+}
 
 export function registerEnvCheck(server: McpServer, config: Config, client: WorkbenchClient): void {
   server.registerTool(
@@ -20,7 +40,8 @@ export function registerEnvCheck(server: McpServer, config: Config, client: Work
     },
     async () => {
       const ok = (b: boolean) => (b ? "✅" : "❌");
-      const lines: string[] = ["## Environment", ""];
+      const info = readBuildInfo();
+      const lines: string[] = ["## Environment", "", info ? `- MCP build: ${info.version}+${info.commit}, built ${info.builtAt}` : `- MCP build: ${packageVersion()} (no build-info.json: built without scripts/build-info.mjs)`];
       const gameExe = join(config.gamePath, "ArmaReforgerSteam.exe");
       const gameDiag = join(config.gamePath, "ArmaReforgerSteamDiag.exe");
       const wbExe = findWorkbenchExe(config.workbenchPath);

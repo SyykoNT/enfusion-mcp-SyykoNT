@@ -13,7 +13,7 @@ vi.mock("../../src/utils/process.js", async (importActual) => ({
   clientProcesses: vi.fn(() => []),
   serverProcesses: vi.fn(() => [{ pid: 7, ppid: 1, cmd: "ArmaReforgerServerDiag.exe -server x", created: 0 }]),
 }));
-const { registerEnvCheck } = await import("../../src/tools/env-check.js");
+const { registerEnvCheck, serverVersion } = await import("../../src/tools/env-check.js");
 
 type Def = { description: string; inputSchema: Record<string, unknown> };
 type Handler = () => Promise<{ content: { text: string }[] }>;
@@ -32,6 +32,16 @@ describe("env_check", () => {
     const { def } = register({} as Config);
     expect(Object.keys(def.inputSchema)).toEqual([]);
     expect(def.description).not.toMatch(/'configure'/);
+  });
+
+  it("reports version+commit from build-info.json, and the plain version when it is missing or broken", () => {
+    const dir = mkdtempSync(join(tmpdir(), "emcp-bi-"));
+    const stamp = join(dir, "build-info.json");
+    writeFileSync(stamp, JSON.stringify({ version: "0.14.0", commit: "abc1234", builtAt: "2026-11-02T10:00:00.000Z" }));
+    expect(serverVersion(stamp)).toBe("0.14.0+abc1234");
+    expect(serverVersion(join(dir, "missing.json"))).toBe("0.14.0");
+    writeFileSync(stamp, "{ not json");
+    expect(serverVersion(stamp)).toBe("0.14.0");
   });
 
   it("reads the version from the Workbench profile logs and sees the Diag server", async () => {

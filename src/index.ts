@@ -2,20 +2,17 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createRequire } from "node:module";
 import { registerTools } from "./server.js";
+import { serverVersion } from "./tools/env-check.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { SERVER_INSTRUCTIONS } from "./server-instructions.js";
-
-const require = createRequire(import.meta.url);
-const { version } = require("../package.json");
 
 const config = loadConfig();
 
 const server = new McpServer({
   name: "enfusion-mcp",
-  version,
+  version: serverVersion(),
 }, { instructions: SERVER_INSTRUCTIONS });
 
 registerTools(server, config);
