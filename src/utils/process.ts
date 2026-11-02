@@ -1,8 +1,28 @@
 import { execFileSync, spawn } from "node:child_process";
 import { openSync, closeSync, existsSync, readdirSync, statSync } from "node:fs";
+import { constants, setPriority } from "node:os";
 import { join } from "node:path";
 
 const IS_WIN = process.platform === "win32";
+
+/**
+ * Documented startup flag (BI wiki "Arma Reforger:Startup_Parameters": "disables the Crash Reporter from appearing/sending reports
+ * automatically"; the Server Config page says its disableCrashReporter option "has the same effect as -disableCrashReporter").
+ * The Enfusion CLI table spells it -disableCrashReport. Not verified on a live crash, so check a crash.log after the first one.
+ */
+export const DISABLE_CRASH_REPORTER = "-disableCrashReporter";
+
+/** BelowNormal priority and a CPU affinity mask for one process (Windows). False when the process is gone or PowerShell fails. */
+export function limitProcess(pid: number, mask: number): boolean {
+  if (!IS_WIN || !Number.isInteger(pid) || !Number.isInteger(mask) || mask < 1) return false;
+  try {
+    setPriority(pid, constants.priority.PRIORITY_BELOW_NORMAL);
+    execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).ProcessorAffinity = ${mask}`], { windowsHide: true, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** PIDs of running processes whose executable name is `image` (e.g. "ArmaReforgerServer.exe"). */
 export function findPids(image: string): number[] {
@@ -107,8 +127,9 @@ const WRITE_PATH_FLAGS = /^-(profile|logsdir|addondownloaddir|addontempdir|saved
 /** The first extra argument a tool must refuse (write-path flag, one of `own` flags, a quote or line break), or undefined. */
 export function refusedArg(args: string[], own?: RegExp): string | undefined {
   return args.find((a) => {
-    // Any leading run of quotes, dashes (also Unicode ones), slashes or zero-width characters, then the name up to = : space or a quote.
-    const m = a.replace(/[​-‍⁠﻿]/g, "").trim().match(/^['"‘’]*[-/‐-―−﹘﹣－]+([^=:\s'"’]*)/);
+    // Invisible characters dropped, then any leading run of quotes, dashes (also Unicode ones), slashes, backslashes or plus signs,
+    // then the name up to = : , space or a quote.
+    const m = a.replace(/[\u00AD\u034F\u180E\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFE0F\uFEFF]/g, "").trim().match(/^['"\u2018\u2019]*[-/\\+\u2010-\u2015\u2212\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+([^=:,\s'"\u2019]*)/);
     const flag = m ? `-${m[1]}` : "";
     return WRITE_PATH_FLAGS.test(flag) || !!own?.test(flag) || /["\r\n]/.test(a);
   });

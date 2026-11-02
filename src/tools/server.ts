@@ -10,7 +10,7 @@ import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { protectedAddonOf } from "../utils/game-paths.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg } from "../utils/process.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
 import { MISSION_ROOT } from "./mission-server.js";
 
@@ -220,7 +220,7 @@ export function registerServer(server: McpServer, config: Config): void {
           // Every MCP session defaults to the same profile folder, so a server there from any session would be clobbered.
           const busy = scan(serverProcesses()).filter((e) => e.cls === "own" || sameDir(argValue(e.proc.cmd, "-profile"), config.serverProfilePath));
           if (busy.length) return text(`A dedicated server using ${config.serverProfilePath} is already running (pid ${busy.map((e) => e.proc.pid).join(", ")}). Run \`server stop\` first.`, true);
-          const args = ["-profile", config.serverProfilePath, "-maxFPS", "60", "-logStats", "60000", "-noThrow"];
+          const args = ["-profile", config.serverProfilePath, "-maxFPS", "60", "-logStats", "60000", "-noThrow", DISABLE_CRASH_REPORTER];
           const guids: string[] = [];
           for (const name of a.addons ?? []) {
             const gproj = resolveGproj(config, name);
