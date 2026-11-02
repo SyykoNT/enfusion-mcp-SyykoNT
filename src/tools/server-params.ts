@@ -3,9 +3,10 @@ import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.js";
 import { findGproj } from "../utils/game-paths.js";
+import { workbenchProfileDir } from "../workbench/cli.js";
 
 const SHELL_FOLDERS = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders";
 
@@ -42,6 +43,40 @@ export function findMissionHeader(worldFile: string): { header?: string; addon?:
     return { addon, header: guid ? `{${guid}}${path}` : path };
   }
   return { addon };
+}
+
+/**
+ * Profile names the Dedicated Server Tool passes, from Workbench's settings dump (`ScriptTools\SCR_DedicatedServerPlugin=` line).
+ * The dump leaves out strings at their default, so a missing m_sProfile is "" (no -profile) and a missing peer Profile is "PeerPlugin".
+ * shortcut: one peer Profile name for all peers (the first one set); per-peer names would need the PeerConfig blocks parsed one by one.
+ */
+export function dstProfiles(dump: string): { server: string; peers: string } {
+  const line = dump.match(/^ScriptTools\\SCR_DedicatedServerPlugin=(.*)$/m)?.[1] ?? "";
+  const value = (re: RegExp) => line.match(re)?.[1]?.replace(/\\"/g, '"') ?? "";
+  return { server: value(/" m_sProfile \\"(.*?)\\""/), peers: value(/"\s+Profile \\"(.*?)\\""/) || "PeerPlugin" };
+}
+
+/**
+ * Profile folders of the Dedicated Server Tool's last setup: the server's, and every peer's (`<Profile><n>`, numbered from 1).
+ * A relative -profile lands in <Documents>\My Games\<name> (GI-14 probe, server log FileSystem lines); peers assumed the same (unverified).
+ * Workbench writes the settings dump itself, so a change in the tool shows here once Workbench has saved its settings.
+ */
+export function dstProfileDirs(config: Config, docs = documentsDir): { server?: string; peers: string[]; peerName: string; settings: string } {
+  const settings = join(workbenchProfileDir(config), "profile", "wbSettingsDump.ini");
+  const p = dstProfiles(existsSync(settings) ? readFileSync(settings, "utf-8") : "");
+  const at = (name: string) => (isAbsolute(name) ? name : join(docs(), "My Games", name));
+  const peerName = at(p.peers);
+  const stem = new RegExp(`^${basename(peerName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`, "i");
+  let peers: string[] = [];
+  try {
+    peers = readdirSync(dirname(peerName), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && stem.test(e.name))
+      .sort((a, b) => Number(stem.exec(a.name)![1]) - Number(stem.exec(b.name)![1]))
+      .map((e) => join(dirname(peerName), e.name));
+  } catch {
+    // no folder yet: no peer has run
+  }
+  return { server: p.server ? at(p.server) : undefined, peers, peerName, settings };
 }
 
 export interface ParamsArgs {
