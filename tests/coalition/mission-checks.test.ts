@@ -73,6 +73,16 @@ describe("progress (GI-03)", () => {
     expect(p.next).toMatch(/^All plugin steps are done/);
   });
 
+  it("counts a briefing shown for any faction as written for every slotted side", () => {
+    const allSides = `  COA_MissionDescriptor "{4000000000000001}" {\n   m_sTitle "Briefing"\n   m_sTextData "Hold the bridge."\n   m_bShowForAnyFaction 1\n  }\n`;
+    const m = mission({
+      [`${LAYERS}/_INIT.layer`]: `SCR_AIWorld X {\n}\n` + lobbyEntity(` m_iTimeLimitMinutes 1\n m_iBLUFORTickets 0\n m_BLUFORSlots {\n${group("1-1", ["MEDIC"])} }\n m_OPFORSlots {\n${group("2-1", ["MEDIC"])} }\n m_aMissionDescriptors {\n${allSides} }\n`),
+    });
+    const step = progress(m, nodesOf(m)).steps[5];
+    expect(step.done).toBe(true);
+    expect(step.detail).toBe("briefing written for BLUFOR, OPFOR");
+  });
+
   it("asks to delete the extra .conf when plugin 6 ran twice", () => {
     const [a, at] = conf("A"), [b, bt] = conf("B");
     const m = mission({ [`${LAYERS}/_INIT.layer`]: `SCR_AIWorld X {\n}\n` + lobbyEntity(" m_iTimeLimitMinutes 1\n m_iBLUFORTickets 0\n"), [a]: at, [b]: bt });

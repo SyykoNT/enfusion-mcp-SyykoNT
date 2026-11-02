@@ -54,7 +54,8 @@ export function progress(m: Lobby, nodes: EnfusionNode[]): { steps: Step[]; next
   const defaultsNode = firstOf(nodes.slice(1), (n) => (member(n, "m_aDefaultMissionDescriptors") ? n : undefined));
   const defaults = new Set(descriptors(defaultsNode, "m_aDefaultMissionDescriptors").map((d) => d.text));
   const written = descriptors(e, "m_aMissionDescriptors").filter((d) => d.text.trim() && !defaults.has(d.text));
-  const briefed = slotted.filter((s) => written.some((d) => d.keys.includes(s)));
+  // The Lobby UI lists a descriptor with m_bShowForAnyFaction for every faction (COA_MissionDescriptionUI.c:85-100)
+  const briefed = slotted.filter((s) => written.some((d) => d.any || d.keys.includes(s)));
   const gearscripts = SIDES.map((s) => `${s} ${prop(member(e, SETTINGS_FIELD[s]), "m_rGearScript") ? basename(stripGuid(prop(member(e, SETTINGS_FIELD[s]), "m_rGearScript")!)) : "(COA_Lobby.et default)"}`);
 
   const steps: Step[] = [
