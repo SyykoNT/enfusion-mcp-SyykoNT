@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, relative } from "node:path";
 
 // Real git (execFileSync) for mission_git; CRF's Python scripts (execFile) answer from fixtures
 const replies: Record<string, { code: number; stdout: string }> = {};
@@ -22,6 +22,8 @@ const { findPython } = await import("../../src/utils/python.js");
 const { formatPreflight, missionPreflight } = await import("../../src/tools/mission-preflight.js");
 const { missionNames } = await import("../../src/tools/mission-names.js");
 const { makeProjects, write } = await import("../coalition/fixture.js");
+const { buildTestPak } = await import("../pak/test-pak.js");
+const { LOBBY_GUID } = await import("../../src/utils/coalition-paths.js");
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const git = (dir: string, ...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "ignore" });
@@ -103,5 +105,21 @@ describe.skipIf(!hasGit)("mission_preflight", { timeout: 30_000 }, () => {
   it("an option-like base stops mission_git, which shows as not run, and nothing runs with it", async () => {
     const r = await missionPreflight(fx.config, { world: "Worlds/Test/Author_TVT_Fixture.ent", base: "--output=x" });
     expect(r.rows.find((x) => x.item.startsWith("mission_git"))).toMatchObject({ status: "not run", detail: expect.stringContaining("--output=x is not a commit") });
+  });
+
+  // Last: it moves the Lobby clone into a Workshop pak
+  it("reads the Lobby through its Workshop copy when no clone is beside CRF", async () => {
+    const files = readdirSync(fx.lobby, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(fx.lobby, join(e.parentPath, e.name)).replace(/\\/g, "/"));
+    const ws = join(fx.root, "workshop", `COALITIONLobby_${LOBBY_GUID}`);
+    mkdirSync(ws, { recursive: true });
+    writeFileSync(join(ws, "ServerData.json"), '{"name":"x","revision":{"version":"2.0.10"}}');
+    writeFileSync(join(ws, "data.pak"), buildTestPak(files.map((p) => ({ path: p, content: readFileSync(join(fx.lobby, p), "utf-8"), compress: false }))));
+    rmSync(fx.lobby, { recursive: true });
+    const r = await missionPreflight({ ...fx.config, workshopPath: join(fx.root, "workshop") }, { world: "Worlds/Test/Author_TVT_Fixture.ent" });
+    const row = (item: string) => r.rows.find((x) => x.item.startsWith(item))!;
+    expect(row("Names follow plugin 6").status).not.toBe("not run");
+    expect(row("mission_inspect rules")).toMatchObject({ status: "warn" });
+    // INDFOR's slots come from the Lobby's COA_Lobby.et, now read from the pak
+    expect(row("Spawn in").detail).toBe("files: BLUFOR has no safestart zone; INDFOR has no safestart zone");
   });
 });

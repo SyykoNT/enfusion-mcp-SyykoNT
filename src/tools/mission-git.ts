@@ -53,7 +53,11 @@ function missionConfs(crf: string): string[] {
 
 /** Read-only branch and change report for a mission branch in a CRF clone (git without optional locks; fetch only when asked). */
 export function missionGit(config: Config, opts: MissionGitOptions = {}): MissionGit {
-  const { crf } = resolveCoalitionRoots(config, opts.crfPath, opts.lobbyPath);
+  const roots = resolveCoalitionRoots(config, opts.crfPath, opts.lobbyPath);
+  if (roots.crf.kind !== "loose") {
+    throw new Error(`mission_git needs a CRF clone: it reads the branch with git (found ${roots.crf.label}). Clone CRF as the Coalition Mission Making Guide shows, or pass crfPath.`);
+  }
+  const crf = roots.crf.root;
   const top = gitOrNull(crf, ["rev-parse", "--show-toplevel"]);
   if (!top || resolve(top).toLowerCase() !== resolve(crf).toLowerCase()) throw new Error(`${crf} is not a git clone of its own.`);
   // Fetching writes refs and FETCH_HEAD, so it runs only when the caller asks

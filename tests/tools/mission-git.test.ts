@@ -1,11 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Config } from "../../src/config.js";
 import { changedWorld, formatMissionGit, missionGit, registerMissionGit } from "../../src/tools/mission-git.js";
+import { CRF_GUID, LOBBY_GUID } from "../../src/utils/coalition-paths.js";
 import { makeProjects, write } from "../coalition/fixture.js";
+
+// The guide's Documents\My Games folder is a temp folder, never the real one
+const myGames = mkdtempSync(join(tmpdir(), "mission-git-mygames-"));
+vi.mock("../../src/utils/game-paths.js", async (importActual) => ({
+  ...(await importActual<typeof import("../../src/utils/game-paths.js")>()),
+  myGamesDir: () => myGames,
+}));
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const git = (dir: string, ...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
@@ -89,6 +98,17 @@ describe.skipIf(!hasGit)("mission_git", { timeout: 30_000 }, () => {
     expect(changedWorld(missionGit(fx.config))).toBe("Worlds/Test/Author_TVT_Fixture.ent");
     write(fx.crf, "Worlds/Test/Second.ent", "SubScene {\n}\n");
     expect(() => changedWorld(missionGit(fx.config))).toThrow(/^Several worlds changed/);
+  });
+
+  it("refuses a Workshop copy of CRF: it needs a clone to read the branch", () => {
+    const root = mkdtempSync(join(tmpdir(), "mission-git-ws-"));
+    for (const [name, version] of [[`COALITIONFramework-CRF_${CRF_GUID}`, "1.8.19"], [`COALITIONLobby_${LOBBY_GUID}`, "2.0.10"]]) {
+      mkdirSync(join(root, "workshop", name), { recursive: true });
+      writeFileSync(join(root, "workshop", name, "ServerData.json"), `{"name":"x","revision":{"version":"${version}"}}`);
+    }
+    mkdirSync(join(root, "projects"));
+    const config = { projectPath: join(root, "projects"), workshopPath: join(root, "workshop") } as Config;
+    expect(() => missionGit(config)).toThrow(/^mission_git needs a CRF clone: it reads the branch with git \(found Workshop 1\.8\.19 \(/);
   });
 
   it("warns on a branch that is not mission/<name>", () => {

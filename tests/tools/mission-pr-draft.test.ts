@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { missionPrDraft, registerMissionPrDraft } from "../../src/tools/mission-pr-draft.js";
 import { makeProjects, write } from "../coalition/fixture.js";
+import { buildTestPak } from "../pak/test-pak.js";
+import { LOBBY_GUID } from "../../src/utils/coalition-paths.js";
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const git = (dir: string, ...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "ignore" });
@@ -55,10 +57,9 @@ GenericEntity Boat1 : "{5000000000000001}Prefabs/Vehicles/Naval/Sampan.et" {
 }
 `;
 
-describe.skipIf(!hasGit)("mission_pr_draft", { timeout: 30_000 }, () => {
-  let fx: ReturnType<typeof makeProjects>;
-  beforeAll(() => {
-    fx = makeProjects();
+/** The fixture CRF as a clone on mission/draft that adds the Draft world, a gearscript and a dependency. */
+function draftFixture() {
+    const fx = makeProjects();
     const profile = mkdtempSync(join(tmpdir(), "pr-draft-profile-"));
     write(profile, "logs/logs_2026-11-02_10-00-00/error.log", "10:00:02.000 SCRIPT    (E): Faction '12' is not a valid SCR_Faction\n");
     process.env.ENFUSION_WORKBENCH_PROFILE = profile;
@@ -78,6 +79,13 @@ describe.skipIf(!hasGit)("mission_pr_draft", { timeout: 30_000 }, () => {
     write(fx.crf, "Missions/Test/Draft.conf", 'SCR_MissionHeader {\n World "{8000000000000009}Worlds/Test/Draft.ent"\n}\n');
     write(fx.crf, "Configs/Gearscripts/Custom/Me/COA_GS_SeaTigers.conf", 'COA_GearScriptConfig {\n m_FactionName "Sea Tigers"\n}\n');
     write(fx.crf, "addon.gproj", 'GameProject {\n Dependencies {\n  "58D0FB3206B6F859"\n  "AAAA000000000001"\n }\n}\n');
+    return fx;
+}
+
+describe.skipIf(!hasGit)("mission_pr_draft", { timeout: 30_000 }, () => {
+  let fx: ReturnType<typeof makeProjects>;
+  beforeAll(() => {
+    fx = draftFixture();
   }, 30_000);
   afterAll(() => delete process.env.ENFUSION_WORKBENCH_PROFILE);
 
@@ -121,5 +129,25 @@ describe.skipIf(!hasGit)("mission_pr_draft", { timeout: 30_000 }, () => {
     const refused = await h({ world: "Worlds/Test/Draft.ent", base: "-x" });
     expect(refused.isError).toBeFalsy();
     expect(refused.content[0].text).toContain("- Links to Added Mods: -x is not a commit in");
+  });
+});
+
+describe.skipIf(!hasGit)("mission_pr_draft with the Lobby from the Workshop", { timeout: 30_000 }, () => {
+  it("reads gearscripts and Lobby prefabs through the Workshop copy when no Lobby clone is beside CRF", async () => {
+    const fx = draftFixture();
+    const rel = (e: { parentPath: string; name: string }) => relative(fx.lobby, join(e.parentPath, e.name)).replace(/\\/g, "/");
+    const files = readdirSync(fx.lobby, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map(rel);
+    const ws = join(fx.root, "workshop", `COALITIONLobby_${LOBBY_GUID}`);
+    mkdirSync(ws, { recursive: true });
+    writeFileSync(join(ws, "ServerData.json"), '{"name":"x","revision":{"version":"2.0.10"}}');
+    writeFileSync(join(ws, "data.pak"), buildTestPak([
+      ...files.map((p) => ({ path: p, content: readFileSync(join(fx.lobby, p), "utf-8"), compress: false })),
+      { path: "Configs/Gearscripts/Standard/COA_GS_NoName.conf", content: 'COA_GearScriptConfig {\n m_FactionName "Lobby Faction"\n}\n', compress: false },
+    ]));
+    rmSync(fx.lobby, { recursive: true });
+    const { text } = await missionPrDraft({ ...fx.config, workshopPath: join(fx.root, "workshop") });
+    expect(text).toContain("OPFOR - Lobby Faction - Attacking/Defending/NA");
+    // INDFOR slots come from the Lobby's COA_Lobby.et, now read from the pak
+    expect(text).toContain("INDFOR - (fill in faction) - Attacking/Defending/NA");
   });
 });

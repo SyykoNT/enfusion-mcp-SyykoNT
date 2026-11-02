@@ -3,15 +3,14 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { z } from "zod";
 import type { Config } from "../config.js";
-import { components, member, prop, SIDES, type Side } from "../coalition/mission-model.js";
+import { components, member, prop, SIDES, textOf, type Side } from "../coalition/mission-model.js";
 import { prefabClassifier, type PrefabKind } from "../coalition/mission-prefabs.js";
 import { taskEntries } from "../coalition/name-refs.js";
 import { installedAddons } from "../pak/stack.js";
 import { gitOrNull } from "../release/git.js";
-import { resolveCoalitionRoots } from "../utils/coalition-paths.js";
+import { resolveCoalitionRoots, type CoalitionCopy } from "../utils/coalition-paths.js";
 import { enumDefault, loadLobbyEnums } from "../utils/lobby-enums.js";
 import { stripGuid } from "../utils/prefab-ancestry.js";
-import { validateProjectPath } from "../utils/safe-path.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
 import { parseScriptErrors } from "../workbench/script-errors.js";
 import { SETTINGS_FIELD } from "./gearscript-inspect.js";
@@ -32,17 +31,9 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const deps = (gproj: string | null) => [...(gproj ?? "").matchAll(/"([0-9A-Fa-f]{16})"/g)].map((m) => m[1].toUpperCase());
 
 /** m_FactionName of the gearscript the Lobby sets for a side, read from CRF or the Lobby. */
-function factionOf(roots: string[], gearscript: string): string | undefined {
-  for (const root of roots) {
-    let file: string;
-    try {
-      file = validateProjectPath(root, stripGuid(gearscript));
-    } catch {
-      continue;
-    }
-    if (existsSync(file)) return readFileSync(file, "utf-8").match(/^\s*m_FactionName\s+"([^"]+)"/m)?.[1];
-  }
-  return undefined;
+function factionOf(copies: CoalitionCopy[], gearscript: string): string | undefined {
+  const text = copies.map((c) => textOf(c, stripGuid(gearscript))).find((t) => t !== undefined);
+  return text?.match(/^\s*m_FactionName\s+"([^"]+)"/m)?.[1];
 }
 
 /** Counts from the newest Workbench session log, or why there are none. */
@@ -58,7 +49,8 @@ export async function newestWorkbenchErrors(config: Config): Promise<{ session: 
 
 /** Text for the hand-filled sections of CRF's mission PR template. Reads files only; never posts. */
 export async function missionPrDraft(config: Config, opts: PrDraftOptions = {}): Promise<{ text: string; unfilled: string[] }> {
-  const { crf, lobby: lobbyRoot } = resolveCoalitionRoots(config, opts.crfPath, opts.lobbyPath);
+  const roots = resolveCoalitionRoots(config, opts.crfPath, opts.lobbyPath);
+  const { crf, lobby: lobbyCopy } = roots;
   const unfilled: string[] = [];
   let branch: ReturnType<typeof missionGit> | undefined;
   try {
@@ -68,8 +60,8 @@ export async function missionPrDraft(config: Config, opts: PrDraftOptions = {}):
     unfilled.push(`Links to Added Mods: ${(e as Error).message}`);
   }
   const world = opts.world ?? changedWorld(branch!);
-  const m = loadLobbyMission(config, crf, world);
-  const classify = prefabClassifier(config, [lobbyRoot, crf, m.root]);
+  const m = loadLobbyMission(config, roots, world);
+  const classify = prefabClassifier(config, [...new Set([lobbyCopy, crf, m.copy])]);
   const classes = m.entities.map((e) => ({ e, c: classify(e.prefab, e.className) }));
 
   // factions and assets
@@ -77,7 +69,7 @@ export async function missionPrDraft(config: Config, opts: PrDraftOptions = {}):
   const faction: string[] = [];
   for (const side of sides) {
     const gs = prop(member(m.lobby.node, SETTINGS_FIELD[side]), "m_rGearScript");
-    const name = gs && (factionOf([crf, lobbyRoot], gs) ?? basename(stripGuid(gs), ".conf"));
+    const name = gs && (factionOf([crf, lobbyCopy], gs) ?? basename(stripGuid(gs), ".conf"));
     if (!gs) unfilled.push(`${side} faction: no gearscript set in ${SETTINGS_FIELD[side]}`);
     if (!opts.roles?.[side]) unfilled.push(`${side}: Attacking, Defending or NA (your call)`);
     const assets = ASSETS.map(([kind, word]) => {
@@ -93,7 +85,7 @@ export async function missionPrDraft(config: Config, opts: PrDraftOptions = {}):
   // objectives
   const modes = components(m.lobby).map((c) => c.type).filter((t) => /game ?mode/i.test(t));
   const entries = taskEntries(m.entities);
-  const enums = entries.length ? loadLobbyEnums([lobbyRoot, crf]) : new Map();
+  const enums = entries.length ? loadLobbyEnums([lobbyCopy, crf]) : new Map();
   const unset = (e: string) => `${enumDefault(enums, e) ?? "?"} (default)`;
   const objectives = [
     ...modes.map((t) => `- Game mode: ${t}`),
@@ -107,8 +99,9 @@ export async function missionPrDraft(config: Config, opts: PrDraftOptions = {}):
   if (!testing) unfilled.push("Technical testing: no Workbench session log found");
   const links: string[] = [];
   if (branch) {
-    const before = new Set(deps(gitOrNull(crf, ["show", `${branch.baseCommit}:addon.gproj`])));
-    const now = deps(existsSync(join(crf, "addon.gproj")) ? readFileSync(join(crf, "addon.gproj"), "utf-8") : null);
+    // missionGit succeeded, so CRF is a clone
+    const before = new Set(deps(gitOrNull(crf.root, ["show", `${branch.baseCommit}:addon.gproj`])));
+    const now = deps(textOf(crf, "addon.gproj") ?? null);
     const added = now.filter((g) => !before.has(g));
     const removed = [...before].filter((g) => !now.includes(g));
     const names = added.length || removed.length ? installedAddons(config) : new Map();
