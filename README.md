@@ -121,10 +121,10 @@ The package is not published to npm under this name. Build it from source:
 git clone -b syyko/dev https://github.com/SyykoNT/enfusion-mcp-SyykoNT.git
 cd enfusion-mcp-SyykoNT
 npm ci
-npm run build
+node scripts/build-info.mjs && npx tsc -p tsconfig.build.json
 ```
 
-`npm ci` also runs the build once, through the `prepare` script. Run `npm run build` again after every pull.
+`npm ci` also builds once, through the `prepare` script, without the build stamp. Run the build command above again after every pull; it writes `dist/build-info.json`, so the server reports `<version>+<commit>` and `env_check` shows the build.
 If your environment sets `NODE_ENV=production`, npm skips dev dependencies and the build fails with
 `'tsc' is not recognized`; use `npm ci --include=dev` instead.
 
@@ -194,7 +194,7 @@ there are refused (see [COALITION CRF missions](#coalition-crf-missions-offline-
 
 ## Tool reference
 
-77 tools, 3 guided prompts and 3 resource templates.
+The tools, guided prompts and resource templates, by area.
 
 ### Knowledge (offline)
 | Tool | Purpose |
@@ -441,7 +441,7 @@ only read (apart from those git refs), so they are not affected. To write, name 
 ```bash
 npm run dev             # run the server from source (tsx)
 npm test                # vitest
-npm run build           # compile to dist/
+node scripts/build-info.mjs && npx tsc -p tsconfig.build.json   # compile to dist/ with the build stamp
 npm run scrape          # rebuild data/api from the local Workbench docs (scrape:remote uses the BI website)
 npm run check:recipes   # check prefab recipes against the installed game
 npm run tuning-server   # local web UI for vehicle engine values (port 5790)
@@ -466,7 +466,7 @@ tests/          vitest
 
 ## Status
 
-Version 0.13.1, 77 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
+Version 0.14.0 (`env_check` shows the exact build). Everything described here is merged on `syyko/dev`. Checks that need a running
 Workbench are still open for the newest work: loading files written by the new text writer, and the watchdog
 against live dialogs.
 
