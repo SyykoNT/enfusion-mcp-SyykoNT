@@ -244,6 +244,7 @@ export function checkGit(s: GitState): Finding[] {
   if (s.trackedForbidden.length) out.push({ id: "G2", level: "blocker", check: "git", message: `Tracked or staged: ${list(s.trackedForbidden)}`, fix: "git rm --cached (ask the user first)" });
   if (!s.ignoresHandlers) out.push({ id: "G3", level: "warning", check: "git", message: `${HANDLER_DIR}/ is not ignored`, fix: "Add it to .git/info/exclude (local) or .gitignore (own repos)" });
   if (!s.hasCommitMsgHook) out.push({ id: "G4", level: "warning", check: "git", message: "No commit-msg hook (strips AI tool attribution)", fix: "addon_git_guard install" });
+  if (s.scanError) out.push({ id: "G5", level: "blocker", check: "git", message: `Unpushed commit messages could not be scanned for AI attribution: ${s.scanError}`, fix: "Run git log in the repo to see why, then audit again" });
   if (s.aiMessages.length) out.push({ id: "G5", level: "blocker", check: "git", message: `${s.aiMessages.length} unpushed commits carry AI tool attribution: ${list(s.aiMessages)}`, fix: "Remove the lines (git commit --amend for the last commit, or an interactive rebase for older ones); for an AI author, recommit under your own name. Human Co-Authored-By lines are fine." });
   if (s.note) out.push({ id: "G6", level: "info", check: "git", message: s.note });
   if (s.unborn) out.push({ id: "G6", level: "info", check: "git", message: "No commit yet" });

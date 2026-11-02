@@ -60,7 +60,8 @@ export function releaseAudit(config: Config, opts: AuditOptions = {}): { report:
       try {
         findings.push(...fn());
       } catch (e) {
-        findings.push({ id: "U1", level: "warning", check, message: `${check} check failed: ${(e as Error).message}` });
+        // A git check that could not run is a blocker: its G1, G2 and G5 findings are exactly what a warning would hide.
+        findings.push({ id: "U1", level: check === "git" ? "blocker" : "warning", check, message: `${check} check failed: ${(e as Error).message}` });
       }
     };
     const scan = walkAddon(dir);
