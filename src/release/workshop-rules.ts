@@ -1,4 +1,4 @@
-/** Workshop publish dialog limits. Name and summary are Don's measurements of the 1.8 dialog; the rest are BI's documented limits. */
+/** Workshop publish dialog limits. Name and summary limits were measured in the 1.8 publish dialog; the rest are BI's documented limits. */
 export const NAME_MAX = 30;
 export const SUMMARY_MAX = 200; // BI's wiki says 1024; the dialog stopped at 200 when measured
 export const DESCRIPTION_MAX = 5000;
@@ -14,7 +14,10 @@ export function workshopNameIssues(title: string): string[] {
   return issues;
 }
 
-/** Don's writing rules for Workshop text: no en or em dashes, no AI names, ASCII only, no trailing spaces. Positions are 1-based characters. */
+/** The text style rules below are one author's house style: off unless ENFUSION_TEXT_STYLE=strict (release_audit T2 and workshop_info use this). */
+export const textStyleStrict = (): boolean => process.env.ENFUSION_TEXT_STYLE === "strict";
+
+/** Workshop text style rules: no en or em dashes, no AI names, ASCII only, no trailing spaces. Positions are 1-based characters. */
 export function workshopTextIssues(text: string): string[] {
   const chars = [...text];
   const at = (re: RegExp) => chars.flatMap((c, i) => (re.test(c) ? [`${c} at ${i + 1}`] : [])).slice(0, 10);

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -65,7 +65,7 @@ const bad = addon("Bad", {
   "Scripts/Game/Bom.c": "\uFEFFclass C {}\n",
   "Scripts/Game/Dev/Tool.c": "class D {}\n",
   "Scripts/Game/Diag.c": "#ifdef WORKBENCH\nclass E {}\n#endif\n",
-  "README.md": "Made with Claude \u2014 by Don\n",
+  "README.md": "Made with Claude \u2014 by the author\n",
 });
 
 const good = addon("Good", {
@@ -97,8 +97,16 @@ function all(dir: string, rdb: Map<string, RdbEntry> | null, preview?: string): 
 const ids = (fs: Finding[]) => fs.map((f) => `${f.id} ${f.level}${f.path ? ` ${f.path}` : ""}`);
 
 describe("release checks", () => {
+  vi.stubEnv("ENFUSION_TEXT_STYLE", "strict");
   const b = all(bad, badRdb);
   const g = all(good, goodRdb);
+  vi.unstubAllEnvs();
+  const off = all(bad, badRdb);
+
+  it("reports no T2 unless ENFUSION_TEXT_STYLE=strict", () => {
+    expect(ids(b)).toContain("T2 warning README.md");
+    expect(ids(off).filter((x) => x.startsWith("T2"))).toEqual([]);
+  });
 
   it("finds every problem in the bad fixture, with stable IDs and levels", () => {
     expect(ids(b)).toEqual(expect.arrayContaining([

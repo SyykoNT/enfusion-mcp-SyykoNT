@@ -175,6 +175,7 @@ there are refused (see [COALITION CRF missions](#coalition-crf-missions-offline-
 | `ENFUSION_WORKSHOP_PATH` | `workshopPath` | `Documents\My Games\ArmaReforger\addons`, the game's Workshop download cache. Read, never written |
 | `ENFUSION_DEFAULT_MOD` | `defaultMod` | None. Set at runtime to the addon `wb_launch` opens |
 | `ENFUSION_PROTECTED_ADDONS` | `protectedAddons` | None. Addons no tool writes into, by `.gproj` GUID, ID or folder name (comma-separated) |
+| `ENFUSION_GITHUB_OWNERS` | `githubOwners` | None. GitHub users or orgs (comma-separated) whose repos `addon_git_guard install` treats as yours; a repo with any other `origin` needs `sharedRepoOk` |
 | `ENFUSION_SERVER_PATH` | `serverPath` | Steam's `Arma Reforger Server` folder if installed, else `~/.enfusion-mcp/server` |
 | `ENFUSION_SERVER_PROFILE` | `serverProfilePath` | `~/.enfusion-mcp/server-profile` |
 | `ENFUSION_CLIENT_PROFILES` | `clientProfilesRoot` | `~/.enfusion-mcp/client-profiles`, where `game launch` records the clients it started |
@@ -186,6 +187,7 @@ there are refused (see [COALITION CRF missions](#coalition-crf-missions-offline-
 | `ENFUSION_FORBIDDEN_DIRS` | | None. Extra folders no tool writes into (comma-separated). The game and Tools installs, the game's Workshop cache and Workshop downloads (folders with `ServerData.json`) are always refused |
 | `ENFUSION_WORKBENCH_PROFILE` | | Workbench profile folder used to find its `logs/`; detected when not set |
 | `ENFUSION_WORKBENCH_LOCK` | | None. A shared lock file for Workbench; `mod compile`, `pack` and `build` name its `owner:` line when they refuse because Workbench is open |
+| `ENFUSION_TEXT_STYLE` | | Unset. `strict` turns on the text style checks: `release_audit` T2 (en or em dashes, the words Claude or Anthropic in public text) and `workshop_info` (the same, plus non-ASCII characters and trailing spaces in Workshop text). Length limits are always checked |
 | `ENFUSION_PYTHON` | | None. The `python.exe` for `mission_validate`; otherwise `py -3`, then `python`, then `python3`, the first that is 3.11 or later |
 | `ENFUSION_LOG_ROOTS` | `logRoots` | None. Extra folders `log_watch` may read logs under (comma-separated), besides the server profile, client profiles, Workbench and game log folders |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
@@ -402,7 +404,7 @@ only read (apart from those git refs), so they are not affected. To write, name 
 - `addon_git_guard install` writes only into the `.git/hooks` folder of one named addon under the project path
   or `ENFUSION_ADDONS_DIR`. It refuses protected addons, installs, the game's Workshop cache and Workshop
   downloads, a repo with `core.hooksPath` set, an existing pre-commit hook it did not write, and a repo whose
-  `origin` is not under `github.com/SyykoNT` unless `sharedRepoOk=true`.
+  `origin` is not under a GitHub owner listed in `ENFUSION_GITHUB_OWNERS` unless `sharedRepoOk=true`. A repo with no `origin` installs.
 - Workbench's NET API listens on all network interfaces (`0.0.0.0:5775`). Block inbound TCP 5775 in the
   Windows firewall unless you need remote access.
 - The server does not publish to the Workshop. Publishing stays a manual step in Workbench.

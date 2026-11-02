@@ -1,7 +1,8 @@
 /** Staged paths that must never be committed: the MCP's Workbench handlers, their folder .meta, and the rdb cache. Matched ignoring case: Windows paths do. */
 export const GUARDED_PATH = String.raw`^Scripts/WorkbenchGame/EnfusionMCP(/|\.meta$)|(^|/)resourceDatabase\.rdb$`;
 
-export const HOOK_VERSION = 2;
+// v3: the hook texts no longer name one person's file prefix or account; install replaces v2 hooks.
+export const HOOK_VERSION = 3;
 const MARKER = `# enfusion-mcp-syykont commit guard v${HOOK_VERSION} (local hook, not tracked)`;
 
 // Only sh builtins, grep, head and git: GitHub Desktop's embedded Git has no od or mktemp.
@@ -13,7 +14,7 @@ staged=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACM
 hits=$(printf '%s\n' "$staged" | grep -iE '${GUARDED_PATH}')
 if [ -n "$hits" ]; then
   printf '%s\n' "$hits" >&2
-  echo "commit guard: MCP handler files or resourceDatabase.rdb are staged (above). Local probes such as SYK_*.c in that folder are refused too: they never ship." >&2; fail=1
+  echo "commit guard: MCP handler files or resourceDatabase.rdb are staged (above). Other files in that folder are refused too: they never ship." >&2; fail=1
 fi
 while IFS= read -r f; do
   case "$f" in *.c)
@@ -27,7 +28,7 @@ LIST
 
 /** The attribution stripper the user's repos may already carry (without our marker line). */
 export const STRIPPER_COMMIT_MSG = String.raw`#!/bin/sh
-# Local hook (not tracked): strip Claude/Anthropic attribution so commits read as SyykoNT only.
+# Local hook (not tracked): strip Claude/Anthropic attribution lines from commit messages.
 sed -i -E "/^[Cc]o-[Aa]uthored-[Bb]y:.*([Cc]laude|[Aa]nthropic)/d; /[Gg]enerated with \[?[Cc]laude [Cc]ode/d; /^[Cc]laude-[Ss]ession:/d" "$1"
 # drop trailing blank lines left behind
 sed -i -e :a -e "/^\n*\$/{\$d;N;ba" -e "}" "$1"

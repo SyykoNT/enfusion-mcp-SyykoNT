@@ -8,7 +8,7 @@ import { findGproj, resolveAddonDir } from "../utils/game-paths.js";
 import { isContained } from "../utils/safe-path.js";
 import { buildStack, type LayerKind } from "../pak/stack.js";
 import { readPngJpegSize } from "../release/scan.js";
-import { CHANGE_NOTES_MAX, DESCRIPTION_MAX, NAME_MAX, SUMMARY_MAX, workshopNameIssues, workshopTextIssues } from "../release/workshop-rules.js";
+import { CHANGE_NOTES_MAX, DESCRIPTION_MAX, NAME_MAX, SUMMARY_MAX, textStyleStrict, workshopNameIssues, workshopTextIssues } from "../release/workshop-rules.js";
 
 export function registerWorkshopInfo(server: McpServer, config: Config): void {
   server.registerTool(
@@ -128,7 +128,7 @@ export function registerWorkshopInfo(server: McpServer, config: Config): void {
         lines.push("\n### Published state", cacheLine(config, guid));
         if (online) lines.push(...(await onlineLines(guid, depInfo.closure)));
 
-        lines.push("\nPublishing is done by Don in Workbench > Publish Project (first publish in the GUI). This tool does not publish.");
+        lines.push("\nPublishing is done by the user in Workbench > Publish Project (first publish in the GUI). This tool does not publish.");
 
         return { content: [{ type: "text", text: lines.join("\n") }] };
       } catch (e) {
@@ -161,7 +161,7 @@ function lintLines(addonDir: string, title: string, name: string, text: Partial<
     }
     if (t === undefined) continue;
     const n = [...t].length;
-    const issues = [...(n > TEXT_MAX[f] ? [`${n}/${TEXT_MAX[f]} characters`] : []), ...workshopTextIssues(t)];
+    const issues = [...(n > TEXT_MAX[f] ? [`${n}/${TEXT_MAX[f]} characters`] : []), ...(textStyleStrict() ? workshopTextIssues(t) : [])];
     const note = f === "summary" ? " (measured dialog limit; BI documents 1024)" : "";
     lines.push(`- ${f}: ${issues.length ? issues.join("; ") : `ok (${n}/${TEXT_MAX[f]})`}${note}`);
   }

@@ -43,6 +43,8 @@ export interface Config {
   addonsDir?: string;
   /** Addons no tool may write into, by .gproj GUID, ID or folder name. Set via ENFUSION_PROTECTED_ADDONS (comma-separated). */
   protectedAddons?: string[];
+  /** GitHub users or orgs whose repos addon_git_guard install treats as the user's own. Set via ENFUSION_GITHUB_OWNERS (comma-separated). */
+  githubOwners?: string[];
   /** Workshop download cache the addon stack reads (read only). Set via ENFUSION_WORKSHOP_PATH. */
   workshopPath?: string;
   /** Extra folders log_watch may read logs under. Set via ENFUSION_LOG_ROOTS (comma-separated). */
@@ -148,6 +150,9 @@ export function loadConfig(): Config {
   if (process.env.ENFUSION_WORKSHOP_PATH) config.workshopPath = process.env.ENFUSION_WORKSHOP_PATH;
   if (process.env.ENFUSION_PROTECTED_ADDONS) {
     config.protectedAddons = process.env.ENFUSION_PROTECTED_ADDONS.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  if (process.env.ENFUSION_GITHUB_OWNERS) {
+    config.githubOwners = process.env.ENFUSION_GITHUB_OWNERS.split(",").map((s) => s.trim()).filter(Boolean);
   }
   if (process.env.ENFUSION_LOG_ROOTS) {
     config.logRoots = process.env.ENFUSION_LOG_ROOTS.split(",").map((s) => s.trim()).filter(Boolean);
