@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { readGproj } from "../workbench/cli.js";
-import { argValue, clientProcesses, isAlive, killPids, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
+import { argValue, clientProcesses, isAlive, killPids, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, instanceTable, isUnder, planStop, scan, writeInstance, type Entry } from "../utils/instances.js";
 import { DEFAULT_FAIL_PATTERNS, resolveLogFile, waitFor } from "../utils/logwatch.js";
 import { findMissionHeader } from "./server-params.js";
@@ -84,13 +84,23 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addo
   return { port: a.port, gproj, world, header, addonsDirs: dirs, addons };
 }
 
-/** extraArgs that are plain tokens and leave the tool's own flags alone. */
+/** extraArgs that are plain tokens, leave the tool's own flags alone and point no writes anywhere. */
 export function checkExtra(extra: string[]): string | undefined {
-  const bad = extra.find((x) => OWN_FLAGS.test(x) || /["\r\n]/.test(x));
-  return bad ? `extraArgs may not contain ${bad} (the tool sets -profile, -addr, -addonsDir, -addons, -server, -client, -gproj itself; no quotes)` : undefined;
+  const bad = refusedArg(extra, OWN_FLAGS);
+  return bad
+    ? `extraArgs may not contain ${bad} (the tool sets -profile, -addr, -addonsDir, -addons, -server, -client, -gproj itself; no write-path flags such as -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg; no quotes)`
+    : undefined;
 }
 
 const portDir = (port: number) => join(MISSION_ROOT, String(port));
+
+/** The logs folder of every server and peer profile this tool has made (for log_watch's allowed roots). */
+export function missionLogRoots(): string[] {
+  const list = (d: string) => (existsSync(d) ? readdirSync(d) : []);
+  return list(MISSION_ROOT)
+    .filter((port) => /^\d+$/.test(port))
+    .flatMap((port) => list(join(MISSION_ROOT, port)).filter((p) => /^(server|peer\d+)$/.test(p)).map((p) => join(MISSION_ROOT, port, p, "logs")));
+}
 const readRun = (port: number): Run | undefined => {
   try {
     return JSON.parse(readFileSync(join(portDir(port), "run.json"), "utf-8")) as Run;

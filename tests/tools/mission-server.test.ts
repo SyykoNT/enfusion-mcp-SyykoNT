@@ -27,6 +27,9 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
 
 const { planRun, serverArgs, peerArgs, checkExtra, registerMissionServer, MISSION_ROOT } = await import("../../src/tools/mission-server.js");
 const { INSTANCE_FILE, OWNER } = await import("../../src/utils/instances.js");
+const { registerServer } = await import("../../src/tools/server.js");
+const { registerGame } = await import("../../src/tools/game.js");
+const { logRoots } = await import("../../src/tools/log-watch.js");
 
 type Result = { content: { text: string }[]; isError?: boolean };
 
@@ -138,5 +141,43 @@ describe("mission_server start and stop", () => {
     expect(sys.killed).toEqual([502, 501]);
     expect(existsSync(join(MISSION_ROOT, "2522", "server", INSTANCE_FILE))).toBe(false);
     expect(existsSync(join(home, ".enfusion-mcp", "server-profile", INSTANCE_FILE))).toBe(true);
+  });
+});
+
+describe("write-path flags and the other server tools (review MM-SERVER-3)", () => {
+  const handler = (register: (s: McpServer, c: Config) => void, c: Config) => {
+    let h: (a: Record<string, unknown>) => Promise<Result> = async () => ({ content: [] });
+    register({ registerTool: (_n: string, _d: unknown, fn: typeof h) => (h = fn) } as unknown as McpServer, c);
+    return h;
+  };
+  const CRF = "C:\\Arma Reforger Modding\\projects\\Coalition-Reforger-Framework";
+
+  it("mission_server, server start and game launch refuse flags that point writes elsewhere (B1)", async () => {
+    for (const bad of [["-logsDir", CRF], ["-ADDONDOWNLOADDIR", "C:\\Arma Reforger\\addons"], ["-addonTempDir=C:\\x"], ["-cfg", "C:\\x.conf"], ["-saveDir", "C:\\x"]]) {
+      expect(checkExtra(bad)).toMatch(/may not contain/);
+    }
+    const c = { ...config(home), serverPath: join(home, "srv"), serverProfilePath: join(home, "prof"), clientProfilesRoot: join(home, "cli") } as Config;
+    const srv = await handler(registerServer, c)({ action: "start", extraArgs: ["-logsDir", CRF] });
+    expect(srv.isError).toBe(true);
+    expect(srv.content[0].text).toContain("extraArgs may not contain -logsDir");
+    const game = await handler(registerGame, c)({ action: "launch", extraArgs: ["-profile", CRF], lines: 80 });
+    expect(game.isError).toBe(true);
+    expect(game.content[0].text).toContain("extraArgs may not contain -profile");
+    expect(sys.spawned).toEqual([]);
+  });
+
+  it("server stop leaves a mission_server run to mission_server (N4); log_watch may read its logs folders (N1)", async () => {
+    const write = (pid: number, dir: string) => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, INSTANCE_FILE), JSON.stringify({ kind: "server", name: `s${pid}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: 1000, exe: "x" }));
+      return { pid, ppid: 1, cmd: `x.exe -profile "${dir}"`, created: 1000 };
+    };
+    const c = { ...config(home), serverProfilePath: join(home, "srv-profile") } as Config;
+    sys.servers = [write(601, join(MISSION_ROOT, "2524", "server")), write(602, c.serverProfilePath)];
+    const r = await handler(registerServer, c)({ action: "stop", graceSec: 0 });
+    expect(r.content[0].text).toContain("Stopped 1 of 1");
+    expect(sys.killed).toEqual([602]);
+    expect(logRoots(c)).toContain(join(MISSION_ROOT, "2524", "server", "logs"));
+    expect(logRoots(c)).not.toContain(MISSION_ROOT);
   });
 });

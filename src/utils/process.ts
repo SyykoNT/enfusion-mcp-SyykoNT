@@ -97,6 +97,21 @@ export function isAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Startup flags that point the game or server at a folder or file it writes to (BI "Startup Parameters": -profile, -logsDir,
+ * -addonDownloadDir, -addonTempDir, -saveDir; -cfg; Workbench pack and publish), so extraArgs could aim writes into CRF, Lobby,
+ * a Workshop cache or an install folder.
+ */
+const WRITE_PATH_FLAGS = /^-(profile|logsdir|addondownloaddir|addontempdir|savedir|cfg|backendlocalstorage|createdb|scriptauthorizeall|packaddon\w*|publishaddon\w*)$/i;
+
+/** The first extra argument a tool must refuse (write-path flag, one of `own` flags, a quote or line break), or undefined. */
+export function refusedArg(args: string[], own?: RegExp): string | undefined {
+  return args.find((a) => {
+    const flag = a.split("=")[0];
+    return WRITE_PATH_FLAGS.test(flag) || !!own?.test(flag) || /["\r\n]/.test(a);
+  });
+}
+
 /** Value of `flag` (e.g. "-profile") in a command line, quoted or bare. */
 export function argValue(cmd: string, flag: string): string | undefined {
   const m = cmd.match(new RegExp(`(?:^|\\s)${flag}\\s+(?:"([^"]*)"|(\\S+))`, "i"));

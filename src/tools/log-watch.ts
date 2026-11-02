@@ -6,6 +6,7 @@ import type { Config } from "../config.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
 import { myGamesDir } from "../utils/game-paths.js";
 import { dstProfileDirs } from "./server-params.js";
+import { missionLogRoots } from "./mission-server.js";
 import { DEFAULT_FAIL_PATTERNS, isUnderRoots, resolveLogFile, scan, waitFor, type LogSpec } from "../utils/logwatch.js";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
@@ -25,6 +26,7 @@ export function logRoots(config: Config): string[] {
     // Only each profile's logs folder: the profile names come from a settings file, not from the user (review GI-14 B1).
     ...(dst.server ? [join(dst.server, "logs")] : []),
     ...dst.peers.map((p) => join(p, "logs")),
+    ...missionLogRoots(),
     config.serverProfilePath,
     join(workbenchProfileDir(config), "logs"),
     join(myGamesDir(), "ArmaReforger", "logs"),

@@ -10,8 +10,9 @@ import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { protectedAddonOf } from "../utils/game-paths.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue } from "../utils/process.js";
-import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, type Entry } from "../utils/instances.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg } from "../utils/process.js";
+import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
+import { MISSION_ROOT } from "./mission-server.js";
 
 const IS_WIN = process.platform === "win32";
 const SERVER_APP_ID = "1874900"; // Arma Reforger Dedicated Server (anonymous login)
@@ -213,6 +214,8 @@ export function registerServer(server: McpServer, config: Config): void {
         }
 
         if (a.action === "start") {
+          const badArg = refusedArg(a.extraArgs ?? []);
+          if (badArg) return text(`extraArgs may not contain ${badArg}: write-path flags (-profile, -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg) and quotes are refused.`, true);
           if (!existsSync(exe)) return text(`Dedicated server not installed at ${config.serverPath}. Run \`server install\` first (or set ENFUSION_SERVER_PATH).`, true);
           // Every MCP session defaults to the same profile folder, so a server there from any session would be clobbered.
           const busy = scan(serverProcesses()).filter((e) => e.cls === "own" || sameDir(argValue(e.proc.cmd, "-profile"), config.serverProfilePath));
@@ -266,7 +269,8 @@ export function registerServer(server: McpServer, config: Config): void {
         }
 
         if (a.action === "stop") {
-          const entries = scan(serverProcesses());
+          // mission_server stops its own runs, clients first; ending only its server here would leave the clients behind.
+          const entries = scan(serverProcesses()).filter((e) => !(e.file && isUnder(e.file, MISSION_ROOT)));
           const plan = planStop(entries, { instance: a.instance, adoptOrphans: a.adoptOrphans, roots: [config.serverProfilePath] });
           const others = entries.filter((e) => !plan.stop.includes(e));
           const untouched = others.length
