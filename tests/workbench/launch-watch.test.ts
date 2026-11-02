@@ -9,11 +9,12 @@ const home = mkdtempSync(join(tmpdir(), "emcp-lw-home-"));
 process.env.USERPROFILE = process.env.HOME = home;
 
 // spawn is a stub (no Workbench starts), the watcher spawn is recorded, no Workbench counts as running.
-const sys = vi.hoisted(() => ({ spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][] }));
+const sys = vi.hoisted(() => ({ spawnEnv: [] as NodeJS.ProcessEnv[], spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][] }));
 vi.mock("node:child_process", async (orig) => ({
   ...(await orig<typeof import("node:child_process")>()),
-  spawn: vi.fn((_exe: string, args: string[]) => {
+  spawn: vi.fn((_exe: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
     sys.spawnArgs.push(args);
+    sys.spawnEnv.push(opts.env ?? {});
     return { pid: 4242, unref: () => {}, on: (ev: string) => sys.listeners.push(ev) };
   }),
 }));
@@ -48,6 +49,7 @@ function client() {
 }
 
 beforeEach(() => {
+  sys.spawnEnv = [];
   sys.spawnArgs = [];
   sys.listeners = [];
   sys.watcher = [];
@@ -72,6 +74,13 @@ describe("launchWorkbench records and watches what it starts", () => {
     // Owned only while the live process has the recorded start time.
     expect(isOwned(4242, WORKBENCH_INSTANCES, { pid: 4242, ppid: 0, cmd: "", created: inst.startedAt + 500 })).toBe(true);
     expect(isOwned(4242, WORKBENCH_INSTANCES, { pid: 4242, ppid: 0, cmd: "", created: inst.startedAt + 60_000 })).toBe(false);
+  });
+
+  it("starts Workbench as the Tools app in Steam and keeps the rest of the environment", async () => {
+    const { c, gproj } = client();
+    await c.ensureRunning(gproj);
+    expect(sys.spawnEnv[0]).toMatchObject({ SteamAppId: "1874910", SteamGameId: "1874910", USERPROFILE: home });
+    expect(sys.spawnEnv[0].PATH ?? sys.spawnEnv[0].Path).toBe(process.env.PATH ?? process.env.Path);
   });
 
   it("adds -noThrow only for an unattended launch", async () => {
