@@ -1,14 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Config } from "../config.js";
 import { parseAll } from "../formats/enfusion-text.js";
-import { loadMission, prop, slotRoles, SIDES } from "../coalition/mission-model.js";
+import { prop, slotRoles, SIDES } from "../coalition/mission-model.js";
 import { gitOrNull } from "../release/git.js";
 import { resolveCoalitionRoots } from "../utils/coalition-paths.js";
 import { loadLobbyEnums } from "../utils/lobby-enums.js";
-import { validateProjectPath } from "../utils/safe-path.js";
+import { loadLobbyMission } from "./mission-inspect.js";
 
 /**
  * The five names the COALITION guide asks for (Name Your Mission), built and checked with the rules
@@ -146,15 +146,7 @@ export function missionNames(config: Config, p: NamesParams, now = new Date()): 
   }
 
   if (!p.world) throw new Error("check needs world (the mission .ent).");
-  const candidates = isAbsolute(p.world) ? [p.world] : [join(crf, p.world), join(config.projectPath, p.world)];
-  let worldPath: string;
-  try {
-    worldPath = validateProjectPath(config.projectPath, candidates.find((c) => existsSync(c)) ?? candidates[0]);
-  } catch {
-    throw new Error(`World must be inside the project path ${config.projectPath}.`);
-  }
-  const m = loadMission(config, worldPath);
-  if (!m.lobby) throw new Error(`${m.worldRel} has no COA_Lobby entity: plugin 6 needs one to count slots (run plugin 1 first).`);
+  const m = loadLobbyMission(config, crf, p.world);
   const slots = SIDES.reduce((n, s) => n + slotRoles(m.slots[s]).length, 0);
   const confs: Header[] = m.confs.map((conf) => {
     const header = parseAll(readFileSync(join(m.root, conf), "utf-8")).find((n) => n.type === "SCR_MissionHeader");
