@@ -167,6 +167,10 @@ ${indent(weapon("100000000000000F", "Revolver.et", [["RevolverAmmo.et", 3]]), " 
 }
 `;
 
+const lobbyEntity = (body: string) => `COA_Gamemode COA_Lobby : "{7000000000000001}Prefabs/!Systems/!Lobby/COA_Lobby.et" {\n${body}\n}\n`;
+const slotsField = (field: string, roles: string[]) =>
+  ` ${field} {\n  COA_SlottingGroup "{6000000000000002}" {\n   m_aSlots {\n${roles.map((r) => `    ${r}`).join("\n")}\n   }\n  }\n }`;
+
 const settings = (side: string) =>
   ` m_${side}GearScriptSettings COA_GearScriptContainer "{6000000000000001}" {\n  m_rGearScript "{${GUID}}Configs/Gearscripts/Test/GS_Alpha.conf"\n  m_bEnableGIRadios 0\n }`;
 
@@ -198,10 +202,18 @@ beforeAll(() => {
   put("COALITION-Lobby/Scripts/Game/Systems/Core/Managers/Gamemode/Gearscript/COA_GearscriptManager.c", MANAGER);
   put("COALITION-Lobby/Configs/Gearscripts/COA_Global_Roles_Config.conf", GLOBAL_ROLES);
   put("COALITION-Lobby/Configs/Gearscripts/Extra/CVON_Roles.conf", CVON_ROLES);
-  put("COALITION-Lobby/Prefabs/!Systems/!Lobby/COA_Lobby.et", `COA_Lobby {\n${settings("OPFOR")}\n}\n`);
+  put("COALITION-Lobby/Prefabs/!Systems/!Lobby/COA_Lobby.et", `COA_Lobby {\n components {\n  CVON_VONGameModeComponent "{6000000000000009}" {\n  }\n }\n${settings("OPFOR")}\n}\n`);
+  // CVON switched off with CIV settings in the mission; and a mission that inherits OPFOR settings and CVON from COA_Lobby.et
+  put("CRF/Worlds/Testland/CivOff.ent", "SubScene {\n}\n");
+  put("CRF/Worlds/Testland/CivOff_Layers/_INIT.layer", lobbyEntity(
+    ` m_bUseCVON 0\n${slotsField("m_CIVSlots", ["MEDIC", "SQUAD_LEAD", "MEDIC"])}\n m_CIVILIANGearScriptSettings COA_GearScriptContainer "{6000000000000003}" {\n  m_rGearScript "{${GUID}}Configs/Gearscripts/Test/GS_Alpha.conf"\n  m_bEnableGIRadios 1\n }`
+  ));
+  put("CRF/Worlds/Testland/Cvon.ent", "SubScene {\n}\n");
+  // Old missions place the Lobby from a path that no longer exists
+  put("CRF/Worlds/Testland/Cvon_Layers/_INIT.layer", lobbyEntity(slotsField("m_OPFORSlots", ["RIFLEMAN"])).replace("!Systems/!Lobby", "Systems/!Lobby"));
   registerGearscriptInspect(
     { registerTool: (_n: string, _d: unknown, h: Handler) => void (handler = h) } as unknown as McpServer,
-    { projectPath: root } as Config
+    { projectPath: root, gamePath: join(root, "no-game") } as Config
   );
 });
 
@@ -332,7 +344,7 @@ describe("gearscript_inspect lookup and output", () => {
 
   it("usedBy lists mission files with their side field and the Lobby default", async () => {
     const text = (await call({ usedBy: true, roles: ["MEDIC"] })).content[0].text;
-    expect(text).toContain("- Used by: 2 mission file(s)");
+    expect(text).toContain("- Used by: 3 mission file(s)");
     expect(text).toContain("  - CRF/Worlds/Testland/Mission_Layers/_INIT.layer: m_CIVILIANGearScriptSettings");
     expect(text).toContain("  - Other/Worlds/Stray.ent: (GUID found outside a gearscript settings field)");
     expect(text).toContain("- Lobby default (COA_Lobby.et): m_OPFORGearScriptSettings");
@@ -344,5 +356,28 @@ describe("gearscript_inspect lookup and output", () => {
     expect(text).toContain("- AR_MAG (m_AR.m_MagazineArray): 0 x Belt.et (adds nothing), 2 x Box.et");
     expect(text).toContain("- no SR radio (role m_aItems): GI radios off, leadership radios on, MEDIC slot (not a leadership slot)");
     expect(text).toContain("- no m_sAssistantBinocularsPrefab (m_sAssistantBinocularsPrefab): not set in the gearscript");
+  });
+});
+
+describe("gearscript_inspect from a mission world and side", () => {
+  const mission = (world: string, side: string, p: Record<string, unknown> = {}) => handler({ world, side, usedBy: false, format: "json", ...p });
+
+  it("reads the CIV settings field and slotted roles, and the global roles config when m_bUseCVON is 0", async () => {
+    const text = (await mission("Worlds/Testland/CivOff.ent", "CIV", { format: "markdown" })).content[0].text;
+    expect(text).toContain("Mission Worlds/Testland/CivOff.ent, CIV: 3 slots, 2 roles; gearscript and radios from m_CIVILIANGearScriptSettings; CVON_VONGameModeComponent present, m_bUseCVON 0.");
+    expect(text).toContain("(from COALITION-Lobby + override in CRF; cvon: false)");
+    expect(text).toContain("Radios: leadership on, GI on, RTO on (from m_CIVILIANGearScriptSettings)");
+    const j = JSON.parse((await mission("Worlds/Testland/CivOff.ent", "CIV")).content[0].text);
+    expect(j.loadouts.map((l: Loadout) => l.role)).toEqual(["MEDIC", "SQUAD_LEAD"]);
+  });
+
+  it("falls back to the COA_Lobby.et settings, also from an old prefab path, and picks the CVON roles config from its component", async () => {
+    const j = JSON.parse((await mission("Worlds/Testland/Cvon.ent", "OPFOR")).content[0].text);
+    expect(j.gearscript).toBe(`{${GUID}}Configs/Gearscripts/Test/GS_Alpha.conf`);
+    expect(j.mission).toMatchObject({ side: "OPFOR", settings: "m_OPFORGearScriptSettings", slots: 1, cvonFrom: "CVON_VONGameModeComponent present, m_bUseCVON 1 (default)" });
+    expect([j.cvon, j.rolesConfig]).toEqual([true, "{5555666677778888}Configs/Gearscripts/Extra/CVON_Roles.conf"]);
+    expect(j.radios).toEqual({ leadership: true, gi: false, rto: true });
+    expect(j.loadouts.map((l: Loadout) => l.role)).toEqual(["RIFLEMAN"]);
+    expect((await handler({ world: "Worlds/Testland/Cvon.ent", usedBy: false, format: "json" })).content[0].text).toBe("Pass world and side together.");
   });
 });
