@@ -44,16 +44,19 @@ const descriptors = (n: EnfusionNode | undefined, field: string) =>
   }));
 
 /** Which of the guide's build steps (plugins 1 to 6, the AI World) a mission's saved files show as done, and the next one. */
-export function progress(m: Lobby, nodes: EnfusionNode[]): { steps: Step[]; next: string } {
+export function progress(m: Lobby, nodes: EnfusionNode[]): { steps: Step[]; next: string; warnings: string[] } {
   const e = m.lobby.node;
   const layers = new Set(m.layers.map((l) => l.name.toLowerCase()));
   const missingLayers = GUIDE_LAYERS.filter((l) => !layers.has(l.toLowerCase()));
   const slotted = SIDES.filter((s) => m.slots[s]);
   const own = (field: string) => member(e, field) !== undefined || prop(e, field) !== undefined;
-  // A briefing counts when its text is not empty and not the COA_Lobby.et default (validate_mission.py:887-921)
+  // A briefing counts when its text is not empty and its (title, text) pair is not a COA_Lobby.et default, as CRF's
+  // PR check reads it (Tools/Validation/mission_synopsis.py:561-566, validate_mission.py:887-921)
   const defaultsNode = firstOf(nodes.slice(1), (n) => (member(n, "m_aDefaultMissionDescriptors") ? n : undefined));
-  const defaults = new Set(descriptors(defaultsNode, "m_aDefaultMissionDescriptors").map((d) => d.text));
-  const written = descriptors(e, "m_aMissionDescriptors").filter((d) => d.text.trim() && !defaults.has(d.text));
+  const pair = (d: { title: string; text: string }) => `${d.title}\u0000${d.text}`;
+  const defaults = new Set(descriptors(defaultsNode, "m_aDefaultMissionDescriptors").map(pair));
+  const all = descriptors(e, "m_aMissionDescriptors");
+  const written = all.filter((d) => d.text && !defaults.has(pair(d)));
   // The Lobby UI lists a descriptor with m_bShowForAnyFaction for every faction (COA_MissionDescriptionUI.c:85-100)
   const briefed = slotted.filter((s) => written.some((d) => d.any || d.keys.includes(s)));
   const gearscripts = SIDES.map((s) => `${s} ${prop(member(e, SETTINGS_FIELD[s]), "m_rGearScript") ? basename(stripGuid(prop(member(e, SETTINGS_FIELD[s]), "m_rGearScript")!)) : "(COA_Lobby.et default)"}`);
@@ -72,6 +75,15 @@ export function progress(m: Lobby, nodes: EnfusionNode[]): { steps: Step[]; next
     },
     { step: "6 Generate Config File", done: m.confs.length === 1, detail: m.confs.length > 1 ? `${m.confs.length} .conf files: run once only` : m.confs[0] ?? "no .conf yet" },
   ];
+  // CRF's "Side-based briefings" tick wants a filled descriptor keyed to every slotted side; show-for-any does not count (mission_synopsis.py:573-580)
+  const warnings = slotted.filter((s) => !written.some((d) => d.keys.includes(s))).map((s) =>
+    all.some((d) => d.keys.includes(s))
+      ? `${s}: the side briefing is still the template text (CRF's PR check leaves "Side-based briefings" unticked)`
+      : `${s}: no side briefing (only all-sides or other sides' briefings); CRF's PR check leaves "Side-based briefings" unticked`
+  );
+  for (const d of written.filter((d) => !d.keys.length && !d.any)) {
+    warnings.push(`Briefing "${d.title}" is shown to nobody: it has no faction key and Show For Any Faction is off (Lobby UI, COA_MissionDescriptionUI.c:85-100)`);
+  }
   const todo = steps.find((s) => !s.done);
   const next = !todo
     ? "All plugin steps are done: test it with the Dedicated Server Tool (guide section 5)."
@@ -80,7 +92,7 @@ export function progress(m: Lobby, nodes: EnfusionNode[]): { steps: Step[]; next
       : todo.step.startsWith("6") && m.confs.length > 1
         ? "Delete the extra mission .conf: plugin 6 was run more than once."
         : `Run plugin ${todo.step} (Plugins > Coalition Lobby Mission Plugins).`;
-  return { steps, next };
+  return { steps, next, warnings };
 }
 
 // ── GI-04 settings ──────────────────────────────────────────────────────────
