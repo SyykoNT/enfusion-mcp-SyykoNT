@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { freemem } from "node:os";
+import { availableParallelism, freemem } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
@@ -49,9 +49,19 @@ export interface PeerState {
   failLine?: string;
 }
 
-/** Why another client must not start now: a peer that failed, or fewer players counted by the server than peers running. Empty when healthy. */
-export function peerProblems(counted: number, peers: PeerState[]): string[] {
-  const out = peers.filter((p) => p.failLine).map((p) => `peer ${p.n} (PID ${p.pid}) is hung or crashed: ${p.failLine!.trim()}`);
+/** The first engine failure line ("Application hangs", "(F):", ...) in a log's text. */
+export const firstFailure = (text: string) => text.split(/\r?\n/).find((l) => DEFAULT_FAIL_PATTERNS.some((re) => re.test(l)));
+
+/**
+ * Why another client must not start now: the server is not online or shows a failure, a peer failed, or fewer players are counted
+ * by the server than peers running. Empty when healthy. `serverLog` is the server's console log text.
+ */
+export function peerProblems(counted: number, peers: PeerState[], serverLog = "Entered online game state"): string[] {
+  const serverFail = firstFailure(serverLog);
+  const out = serverFail
+    ? [`the server is hung or crashed: ${serverFail.trim()}`]
+    : ONLINE.test(serverLog) ? [] : ["the server is not online yet (no \"Entered online game state\" in its log)"];
+  out.push(...peers.filter((p) => p.failLine).map((p) => `peer ${p.n} (PID ${p.pid}) is hung or crashed: ${p.failLine!.trim()}`));
   if (counted < peers.length) {
     const detail = peers
       .map((p) => `peer ${p.n} (PID ${p.pid}) ${p.ageSec === undefined ? "has no log" : p.ageSec > STALL_SEC ? `looks hung, log silent for ${p.ageSec} s` : `still loading, log written ${p.ageSec} s ago`}`)
@@ -80,12 +90,16 @@ export interface Run {
  * serverCpuMask and clientCpuMask as hex ("0x3000"): both or neither, and no shared core. Game clients on the server's cores
  * starved each other in the 2026-11-02 Boat Patrol run. shortcut: 32-bit masks only, so no cores above 31.
  */
-export function cpuMasks(server?: string, client?: string): Run["cpu"] | string {
+export function cpuMasks(server?: string, client?: string, cores = availableParallelism()): Run["cpu"] | string {
   if (server === undefined && client === undefined) return undefined;
   const parse = (v?: string) => (v && /^(0x)?[0-9a-f]{1,8}$/i.test(v) ? parseInt(v.replace(/^0x/i, ""), 16) : 0);
   const s = parse(server);
   const c = parse(client);
   if (!s || !c) return "serverCpuMask and clientCpuMask must both be given as hex masks, for example 0x3000 and 0x0C00";
+  // A bit for a core this PC lacks makes the pin fail (0x30000 on 16 cores), which would leave the clients on the server's cores.
+  for (const [name, m] of [["serverCpuMask", s], ["clientCpuMask", c]] as const) {
+    if (31 - Math.clz32(m) >= cores) return `${name} 0x${m.toString(16)} names core ${31 - Math.clz32(m)}, but this PC has ${cores} logical cores (0 to ${cores - 1})`;
+  }
   if (s & c) return `clientCpuMask 0x${c.toString(16)} shares cores with serverCpuMask 0x${s.toString(16)}: game clients must run on other cores`;
   return { server: s, client: c };
 }
@@ -183,27 +197,30 @@ function peerStates(port: number): PeerState[] {
         n: Number(/peer(\d+)$/.exec(e.inst!.name)?.[1] ?? 0),
         pid: e.proc.pid,
         ageSec: log ? Math.round((Date.now() - statSync(log).mtimeMs) / 1000) : undefined,
-        failLine: text.split(/\r?\n/).find((l) => DEFAULT_FAIL_PATTERNS.some((re) => re.test(l))),
+        failLine: firstFailure(text),
       };
     })
     .sort((a, b) => a.n - b.n);
 }
 
-/** End the given peers, which this call just started: only PIDs that still carry this tool's instance file for this run. */
-async function stopOwnPeers(port: number, started: { n: number; pid: number }[]): Promise<string> {
+/**
+ * End the given processes (peers, or the server), which this call just started: only PIDs that still carry this tool's instance
+ * file for this run and a matching start time. `peersOnly` adds the note that the server was left running.
+ */
+async function stopOwn(port: number, started: { pid: number }[], peersOnly = true): Promise<string> {
   if (!started.length) return "";
-  const own = mine(portDir(port)).filter((e) => e.cls === "own" && e.inst?.kind === "client" && started.some((s) => s.pid === e.proc.pid));
+  const own = mine(portDir(port)).filter((e) => e.cls === "own" && started.some((s) => s.pid === e.proc.pid));
   killPids(own.map((e) => e.proc.pid), true, true);
   for (let i = 0; i < 20 && own.some((e) => isAlive(e.proc.pid)); i++) await sleep(500);
   const gone = own.filter((e) => !isAlive(e.proc.pid));
   for (const e of gone) rmSync(e.file!, { force: true });
-  const label = (e: Entry) => `peer ${/peer(\d+)$/.exec(e.inst!.name)?.[1]} (PID ${e.proc.pid})`;
+  const label = (e: Entry) => (e.inst!.kind === "server" ? "server" : `peer ${/peer(\d+)$/.exec(e.inst!.name)?.[1]}`) + ` (PID ${e.proc.pid})`;
   const left = own.filter((e) => isAlive(e.proc.pid));
   return (
-    `\nStopped ${gone.length ? gone.map(label).join(", ") : "no peer"}` +
+    `\nStopped ${gone.length ? gone.map(label).join(", ") : "nothing"}` +
     (started.length > own.length ? `; ${started.length - own.length} had already ended` : "") +
     (left.length ? `; still running: ${left.map(label).join(", ")}` : "") +
-    ". The server was left running."
+    (peersOnly ? ". The server was left running." : ".")
   );
 }
 
@@ -283,6 +300,11 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           });
           writeFileSync(join(portDir(port), "run.json"), JSON.stringify(run, null, 2));
           const serverPinned = run.cpu ? limitProcess(pid, run.cpu.server) : undefined;
+          if (run.cpu && !serverPinned) {
+            // An unpinned server would let the clients share its cores (run 2): end it and start nothing else.
+            const stopped = await stopOwn(port, [{ pid }], false);
+            return text(`**Server stopped**: serverCpuMask 0x${run.cpu.server.toString(16)} could not be applied to server PID ${pid}.${stopped} No peers were started.`, true);
+          }
           const w = await waitFor({
             log: () => resolveLogFile({ dir: profile, file: "console", newerThan: started - 5000 }),
             patterns: [{ name: "online", regex: ONLINE }],
@@ -305,15 +327,19 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           for (let i = 0; i < a.peers; i++) {
             const p = startPeer(run, config);
             if (typeof p === "string") {
-              const stopped = await stopOwnPeers(port, startedPeers);
+              const stopped = await stopOwn(port, startedPeers);
               return text(`**Server online**, but a peer could not start: ${p}${stopped}\n\n${head}\n${peers.join("\n")}`, true);
             }
             startedPeers.push(p);
-            peers.push(`Peer ${p.n}: PID ${p.pid}${p.pinned === undefined ? "" : p.pinned ? " (pinned)" : " (NOT pinned)"}`);
+            if (p.pinned === false) {
+              const stopped = await stopOwn(port, startedPeers);
+              return text(`**Server online**, but clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to peer ${p.n} (PID ${p.pid}).${stopped}\n\n${head}\n${peers.join("\n")}`, true);
+            }
+            peers.push(`Peer ${p.n}: PID ${p.pid}${p.pinned === undefined ? "" : " (pinned)"}`);
             await sleep(2000);
           }
           const joined = a.peers > 0 && (await waitPlayers(w.file!, offset, a.peers, pid, a.joinTimeoutSec));
-          const stopped = a.peers > 0 && !joined ? await stopOwnPeers(port, startedPeers) : "";
+          const stopped = a.peers > 0 && !joined ? await stopOwn(port, startedPeers) : "";
           const joinLine = a.peers === 0 ? "" : joined
             ? `\nAll ${a.peers} peer(s) joined (Players connected: ${a.peers}).`
             : `\nNot all peers joined within ${a.joinTimeoutSec} s: players connected ${playersConnected(readFileSync(w.file!, "utf-8"))} of ${a.peers}.${stopped}`;
@@ -330,15 +356,20 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           if (!run || !srv) return text(`No mission_server run of this MCP session on port ${port}.`, true);
           const log = resolveLogFile({ dir: join(portDir(port), "server"), file: "console" });
           if (!log) return text(`No server log for port ${port} yet.`, true);
-          const before = playersConnected(readFileSync(log, "utf-8"));
-          // An earlier peer that is hung, or that the server has not counted, would only add load to a stuck run (2026-11-02 run 2).
-          const problems = peerProblems(before, peerStates(port));
+          const serverText = readFileSync(log, "utf-8");
+          const before = playersConnected(serverText);
+          // A hung server, or an earlier peer that is hung or not counted, would only add load to a stuck run (2026-11-02 run 2).
+          const problems = peerProblems(before, peerStates(port), serverText);
           if (problems.length) return text(`join refused: ${problems.join("; ")}. No client was started; mission_server stop ends this run.`, true);
           const offset = statSync(log).size;
           const p = startPeer(run, config);
           if (typeof p === "string") return text(p, true);
+          if (p.pinned === false) {
+            const stopped = await stopOwn(port, [p]);
+            return text(`clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to the new peer ${p.n} (PID ${p.pid}).${stopped}`, true);
+          }
           const joined = await waitPlayers(log, offset, before + 1, srv.proc.pid, a.joinTimeoutSec);
-          const stopped = joined ? "" : await stopOwnPeers(port, [p]);
+          const stopped = joined ? "" : await stopOwn(port, [p]);
           return text(
             (joined
               ? `**Peer ${p.n} joined** (PID ${p.pid}): players connected ${before + 1}.`

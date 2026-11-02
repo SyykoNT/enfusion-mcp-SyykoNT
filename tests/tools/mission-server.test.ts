@@ -17,12 +17,15 @@ const sys = vi.hoisted(() => ({
   onSpawn: undefined as undefined | ((args: string[], pid: number) => void),
   pids: [] as number[],
   limited: [] as [number, number][],
+  failPins: new Set<number>(),
   freeBytes: 64 * 2 ** 30,
+  cores: 16,
 }));
 // Free RAM is a stub; the rest of node:os (tmpdir, homedir) is real.
 vi.mock("node:os", async (orig) => {
   const actual = await orig<typeof import("node:os")>();
-  return { ...actual, freemem: () => sys.freeBytes, default: { ...actual, freemem: () => sys.freeBytes } };
+  const stubs = { freemem: () => sys.freeBytes, availableParallelism: () => sys.cores };
+  return { ...actual, ...stubs, default: { ...actual, ...stubs } };
 });
 vi.mock("../../src/utils/process.js", async (orig) => ({
   ...(await orig<typeof import("../../src/utils/process.js")>()),
@@ -37,7 +40,7 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
     sys.onSpawn?.(args, pid);
     return pid;
   },
-  limitProcess: (pid: number, mask: number) => (sys.limited.push([pid, mask]), true),
+  limitProcess: (pid: number, mask: number) => (sys.limited.push([pid, mask]), !sys.failPins.has(pid)),
   sleep: async () => {},
 }));
 
@@ -72,7 +75,9 @@ beforeEach(() => {
   sys.onSpawn = undefined;
   sys.pids = [];
   sys.limited = [];
+  sys.failPins = new Set();
   sys.freeBytes = 64 * 2 ** 30;
+  sys.cores = 16;
 });
 
 describe("mission_server run plan and command lines", () => {
@@ -217,7 +222,9 @@ describe("write-path flags and the other server tools (review MM-SERVER-3)", () 
       // Recheck 2 N13: more dashes or slashes, a colon value, Unicode dashes, zero-width characters, single quotes.
       "---logsDir", "//logsDir", "-logsDir:C:\\x", "\u2013logsDir", "\u2212profile", "\u200B-logsDir", "-\u200BlogsDir", "'-logsDir'", "\u2018-profile\u2019",
       // Recheck 3 N15: a leading backslash or plus, a comma value, soft hyphen, combining grapheme joiner, Mongolian vowel separator.
-      "\\logsDir", "+logsDir", "-logsDir,C:\\x", "\u00AD-logsDir", "-\u034FlogsDir", "\u180E-logsDir"];
+      "\\logsDir", "+logsDir", "-logsDir,C:\\x", "\u00AD-logsDir", "-\u034FlogsDir", "\u180E-logsDir",
+      // Recheck 4 N2: left-to-right mark, right-to-left override, variation selector 16 inside the name, two-em dash.
+      "\u200E-logsDir", "\u202E-logsDir", "-logs\uFE0FDir", "\u2E3AlogsDir"];
     for (const form of forms) expect(refusedArg([form])).toBe(form);
     // Plain values are not flags, even when they spell a flag's name.
     expect(refusedArg(["-maxFPS", "60", "-jobsysShortWorkerCount", "2", "profile", "logsDir"])).toBeUndefined();
@@ -265,17 +272,17 @@ describe("client gates after the 2026-11-02 freeze (join health, RAM, cores, sto
   const FAIL = "01:23:09.071 ENGINE    (F): Application hangs (force crash) 305 s";
 
   /** A running server on `port` with `counted` players in its log, and peers (own, alive) whose logs were written ageSec ago. */
-  function run(port: number, counted: number, peers: { ageSec: number; log?: string }[]) {
+  function run(port: number, counted: number, peers: { ageSec: number; log?: string }[], opts: { cpu?: { server: number; client: number }; serverLog?: string } = {}) {
     const t = addon();
     const dir = join(MISSION_ROOT, String(port));
     const serverDir = join(dir, "server");
     const log = join(serverDir, "logs", "logs_x", "console.log");
     mkdirSync(dirname(log), { recursive: true });
-    writeFileSync(log, "00:00:01.000 DEFAULT      : Entered online game state.\r\n" + (counted ? `00:00:09.000   NETWORK      : Players connected: ${counted} / ${counted}\r\n` : ""));
+    writeFileSync(log, opts.serverLog ?? "00:00:01.000 DEFAULT      : Entered online game state.\r\n" + (counted ?`00:00:09.000   NETWORK      : Players connected: ${counted} / ${counted}\r\n` : ""));
     const inst = (kind: string, name: string, pid: number, profileDir: string) =>
       writeFileSync(join(profileDir, INSTANCE_FILE), JSON.stringify({ kind, name, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: now(), exe: "x", profileDir }));
     inst("server", `mission-${port}`, 701, serverDir);
-    writeFileSync(join(dir, "run.json"), JSON.stringify({ port, gproj: join(t.dir, "addon.gproj"), world: "Worlds/Map/Me_TVT_Test.ent", addonsDirs: [t.root], addons: ["TestMission"] }));
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ port, gproj: join(t.dir, "addon.gproj"), world: "Worlds/Map/Me_TVT_Test.ent", addonsDirs: [t.root], addons: ["TestMission"], cpu: opts.cpu }));
     sys.servers = [{ pid: 701, ppid: 1, cmd: `x.exe -profile "${serverDir}"`, created: now() }];
     sys.clients = [];
     peers.forEach((p, i) => {
@@ -402,6 +409,92 @@ describe("client gates after the 2026-11-02 freeze (join health, RAM, cores, sto
     expect(ok.isError).toBeUndefined();
     expect(sys.limited).toEqual([[801, 0x3000], [802, 0xc00]]);
     expect(ok.content[0].text).toContain("CPU: server 0x3000 applied, clients 0xc00, BelowNormal");
+  });
+
+  /** Spawn stub: a server writes its log (online) and shows up as a process; a peer shows up as a process and, if `counted`, joins. */
+  function fakeSpawns(counted: boolean) {
+    let serverLog = "";
+    sys.onSpawn = (args, pid) => {
+      const profile = args[args.indexOf("-profile") + 1];
+      const proc = { pid, ppid: 1, cmd: `x.exe -profile "${profile}"`, created: now() };
+      if (args.includes("-server")) {
+        serverLog = join(profile, "logs", "logs_x", "console.log");
+        mkdirSync(dirname(serverLog), { recursive: true });
+        writeFileSync(serverLog, "00:00:01.000 DEFAULT      : Entered online game state.\r\n");
+        sys.servers.push(proc);
+      } else {
+        sys.clients.push(proc);
+        if (counted) appendFileSync(serverLog, "00:00:09.000   NETWORK      : Players connected: 1 / 1\r\n");
+      }
+    };
+  }
+  const startWithMasks = (t: { world: string; root: string }, port: number, extra: Record<string, unknown> = {}) => {
+    writeFileSync(join(home, "ArmaReforgerServerDiag.exe"), "");
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+    return handler(config(home))({ action: "start", world: t.world, port, peers: 1, addonsDirs: [t.root], timeoutSec: 10, joinTimeoutSec: 2, serverCpuMask: "0x3000", clientCpuMask: "0x0C00", ...extra });
+  };
+
+  it("cpuMasks refuses a core this PC does not have (review MM-SERVER-4 B1)", async () => {
+    expect(cpuMasks("0x3000", "0x0C00", 16)).toEqual({ server: 0x3000, client: 0xc00 });
+    expect(cpuMasks("0x30000", "0x0C00", 16)).toBe("serverCpuMask 0x30000 names core 17, but this PC has 16 logical cores (0 to 15)");
+    expect(cpuMasks("0x3000", "0x80000000", 16)).toMatch(/^clientCpuMask 0x80000000 names core 31, but this PC has 16/);
+    expect(cpuMasks("0x3000", "0x0C00", 8)).toMatch(/^serverCpuMask 0x3000 names core 13, but this PC has 8 logical cores/);
+    // The same through the tool: refused before anything is started.
+    const t = addon();
+    const r = await startWithMasks(t, 2540, { serverCpuMask: "0x30000" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("names core 17");
+    expect(sys.spawned).toEqual([]);
+  });
+
+  it("a server that cannot be pinned is ended at once and no peer is started (B1)", async () => {
+    const t = addon();
+    sys.pids = [801, 802];
+    sys.failPins = new Set([801]);
+    fakeSpawns(false);
+    const r = await startWithMasks(t, 2541);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("**Server stopped**: serverCpuMask 0x3000 could not be applied to server PID 801.");
+    expect(r.content[0].text).toContain("Stopped server (PID 801). No peers were started.");
+    expect(sys.killed).toEqual([801]);
+    expect(sys.spawned).toHaveLength(1);
+    expect(existsSync(join(MISSION_ROOT, "2541", "server", INSTANCE_FILE))).toBe(false);
+  });
+
+  it("a peer that cannot be pinned is ended at once, in start and in join, and the server keeps running (B1)", async () => {
+    const t = addon();
+    sys.pids = [801, 802];
+    sys.failPins = new Set([802]);
+    fakeSpawns(true);
+    const r = await startWithMasks(t, 2542);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("clientCpuMask 0xc00 could not be applied to peer 1 (PID 802).");
+    expect(r.content[0].text).toContain("Stopped peer 1 (PID 802). The server was left running.");
+    expect(sys.killed).toEqual([802]);
+    expect(existsSync(join(MISSION_ROOT, "2542", "server", INSTANCE_FILE))).toBe(true);
+
+    sys.killed = [];
+    sys.pids = [730];
+    sys.failPins = new Set([730]);
+    run(2545, 0, [], { cpu: { server: 0x3000, client: 0xc00 } });
+    fakeSpawns(false);
+    const j = await handler(config(home))({ action: "join", port: 2545, joinTimeoutSec: 1 });
+    expect(j.isError).toBe(true);
+    expect(j.content[0].text).toContain("clientCpuMask 0xc00 could not be applied to the new peer 1 (PID 730).");
+    expect(sys.killed).toEqual([730]);
+  });
+
+  it("join also refuses when the server itself is not online or shows a failure (review MM-SERVER-4 N1)", async () => {
+    expect(peerProblems(0, [], "00:00:01.000 ENGINE       : loading")).toEqual(['the server is not online yet (no "Entered online game state" in its log)']);
+    run(2543, 0, [], { serverLog: "00:00:01.000 ENGINE       : loading\r\n" });
+    const a = await handler(config(home))({ action: "join", port: 2543, joinTimeoutSec: 1 });
+    expect(a.isError).toBe(true);
+    expect(a.content[0].text).toMatch(/^join refused: the server is not online yet/);
+    run(2544, 0, [], { serverLog: "00:00:01.000 DEFAULT      : Entered online game state.\r\n" + FAIL + "\r\n" });
+    const b = await handler(config(home))({ action: "join", port: 2544, joinTimeoutSec: 1 });
+    expect(b.isError).toBe(true);
+    expect(b.content[0].text).toContain("the server is hung or crashed: 01:23:09.071 ENGINE    (F): Application hangs");
+    expect(sys.spawned).toEqual([]);
   });
 
   it("the Crash Reporter is switched off in every command line the tool builds", () => {

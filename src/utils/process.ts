@@ -129,7 +129,7 @@ export function refusedArg(args: string[], own?: RegExp): string | undefined {
   return args.find((a) => {
     // Invisible characters dropped, then any leading run of quotes, dashes (also Unicode ones), slashes, backslashes or plus signs,
     // then the name up to = : , space or a quote.
-    const m = a.replace(/[\u00AD\u034F\u180E\u200B-\u200D\u2060\uFEFF]/g, "").trim().match(/^['"\u2018\u2019]*[-/\\+\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]+([^=:,\s'"\u2019]*)/);
+    const m = a.replace(/[\u00AD\u034F\u180E\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFE0F\uFEFF]/g, "").trim().match(/^['"\u2018\u2019]*[-/\\+\u2010-\u2015\u2212\u2E3A\u2E3B\uFE58\uFE63\uFF0D]+([^=:,\s'"\u2019]*)/);
     const flag = m ? `-${m[1]}` : "";
     return WRITE_PATH_FLAGS.test(flag) || !!own?.test(flag) || /["\r\n]/.test(a);
   });
