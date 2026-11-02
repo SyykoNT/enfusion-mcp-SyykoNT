@@ -178,7 +178,7 @@ export function checkText(addonDir: string, scan: AddonScan): Finding[] {
   const has = (re: RegExp) => scan.files.filter((f) => re.test(f.rel)).map((f) => f.rel);
   if (!has(/^license\.txt$/i).length) out.push({ id: "C1", level: "info", check: "text", message: "No license.txt (needed only for a Custom licence)" });
   const credits = has(/^(readme|credits)[^/]*$/i);
-  if (credits.length) out.push({ id: "C1", level: "info", check: "text", message: `${credits.join(", ")} are not packed: put credits in the Workshop description` });
+  if (credits.length) out.push({ id: "C1", level: "info", check: "text", message: `${credits.join(", ")} ${credits.length > 1 ? "are" : "is"} not packed: put credits in the Workshop description` });
   return out;
 }
 
