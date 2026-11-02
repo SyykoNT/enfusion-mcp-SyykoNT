@@ -7,6 +7,7 @@ import { myGamesDir } from "./game-paths.js";
 import { validateProjectPath } from "./safe-path.js";
 
 export const CRF_MARKER = join("Tools", "Validation", "validate_mission.py");
+export const LOBBY_PREFAB = "Prefabs/!Systems/!Lobby/COA_Lobby.et";
 // Workshop GUIDs (their .gproj GUIDs); Workshop folders end in _<GUID>
 export const CRF_GUID = "5EB3564A02CE294F";
 export const LOBBY_GUID = "69EA43E490A50DBE";
@@ -67,7 +68,10 @@ function workshopCopy(config: Config, guid: string, what: string): CoalitionCopy
  */
 export function resolveCoalitionRoots(config: Config, crfPath?: string, lobbyPath?: string, source?: "clone" | "workshop"): CoalitionRoots {
   if (source === "workshop") {
-    if (crfPath || lobbyPath) throw new Error(`source "workshop" reads the Workshop copies, but ${crfPath ? "crfPath" : "lobbyPath"} names a clone. Drop one of them.`);
+    if (crfPath || lobbyPath) {
+      const named = [crfPath && "crfPath", lobbyPath && "lobbyPath"].filter(Boolean);
+      throw new Error(`source "workshop" reads the Workshop copies, but ${named.join(" and ")} ${named.length > 1 ? "name clones" : "names a clone"}. Drop ${named.length > 1 ? "them" : "it"} or source.`);
+    }
     try {
       return { crf: workshopCopy(config, CRF_GUID, "CRF"), lobby: workshopCopy(config, LOBBY_GUID, "COALITION-Lobby") };
     } catch (e) {

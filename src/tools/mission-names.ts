@@ -181,7 +181,7 @@ export function registerMissionNames(server: McpServer, config: Config): void {
         name: z.string().optional().describe("build: mission name, e.g. 'The Patrol'"),
         terrain: z.string().optional().describe("build: terrain folder under Worlds/, e.g. 'Arland'"),
         slots: z.number().int().min(0).max(999).optional().describe("build: slot count (all sides); NN when omitted"),
-        world: z.string().optional().describe("check: mission world .ent, CRF-relative, project-relative or absolute, inside the project path"),
+        world: z.string().optional().describe("check: mission world .ent, CRF-relative (also a published mission in the Workshop CRF), project-relative or absolute, inside the project path or the guide's Projects folder"),
         crfPath: z.string().optional().describe(CRF_PATH_HELP),
         lobbyPath: z.string().optional().describe(LOBBY_PATH_HELP),
       },
