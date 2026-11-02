@@ -131,12 +131,13 @@ describe("standards (GI-05)", () => {
 
 describe("safe composition replacements (GI-06)", () => {
   it("maps each avoid-list category and slot size to the guide's safe list", () => {
-    expect(replacements("Prefabs/Compositions/Slotted/SlotRoadLarge/Barricade_L_US_01.et")).toEqual(["COAL_Barricade_L"]);
+    expect(replacements("Prefabs/Compositions/Slotted/SlotRoadLarge/Barricade_L_US_01.et")).toEqual(["COAL_Barricade_L", "COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotRoadLarge/Checkpoint_L_USSR_01.et")).toEqual(["COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"]);
     expect(replacements("PrefabsEditable/Auto/Compositions/Slotted/SlotRoadMedium/E_Checkpoint_M_US_01.et")).toEqual(["CheckpointUnderConstruction_M_US"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotFlatMedium/VehicleMaintenance_M_US_01.et")).toEqual(["COAL_FieldHospital_M"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotFlatSmall/AmmoStorage_S_FIA_01.et")).toEqual(["COAL_SandbagPos_S"]);
     expect(replacements("Prefabs/Compositions/Slotted/SlotFlatLarge/LivingArea_L_US_01.et")).toEqual(["COAL_Barracks_L"]);
+    expect(replacements("Prefabs/Compositions/Slotted/SlotFlatLarge/FieldHospital_L_US_01.et")).toEqual(["COAL_Barracks_L", "COAL_Helipad_L"]);
   });
 });
 

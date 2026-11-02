@@ -206,10 +206,10 @@ export function standards(m: Mission): Note[] {
 
 // Guide, Safe Compositions: replacements by avoid category and slot size, then by slot row
 const SAFE: Record<string, string[]> = {
-  Barricade_L: ["COAL_Barricade_L"], Checkpoint_L: ["COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"],
+  Barricade_L: ["COAL_Barricade_L", "COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"], Checkpoint_L: ["COAL_Checkpoint_L_USSR", "CheckpointUnderConstruction_L_US"],
   LivingArea_L: ["COAL_Barracks_L"], Helipad_L: ["COAL_Helipad_L"],
   road_M: ["CheckpointUnderConstruction_M_US"], road_S: ["CheckpointUnderConstruction_S_US"],
-  flat_M: ["COAL_FieldHospital_M"], flat_S: ["COAL_SandbagPos_S"],
+  flat_L: ["COAL_Barracks_L", "COAL_Helipad_L"], flat_M: ["COAL_FieldHospital_M"], flat_S: ["COAL_SandbagPos_S"],
 };
 /** Every name on the guide's safe list. */
 export const SAFE_NAMES = [...new Set(Object.values(SAFE).flat())];
