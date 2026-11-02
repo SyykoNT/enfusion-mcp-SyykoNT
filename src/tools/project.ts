@@ -1,10 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { relative, extname } from "node:path";
+import { relative, extname, resolve } from "node:path";
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Config } from "../config.js";
-import { validateProjectPath } from "../utils/safe-path.js";
+import { isContained, validateProjectPath } from "../utils/safe-path.js";
+import { findGproj, resolveWriteAddon } from "../utils/game-paths.js";
 import { listDirectory, formatSize } from "../utils/dir-listing.js";
 
 /** Extensions safe to read as text. Mirrors game_read's list. */
@@ -32,7 +33,8 @@ export function registerProject(server: McpServer, config: Config): void {
           .describe(
             "(browse) Subdirectory to list within the project (e.g., 'Scripts/Game', 'Prefabs'). Omit for project root. " +
             "(read) Relative path within the project (e.g., 'Scripts/Game/MyScript.c', 'MyMod.gproj'). " +
-            "(write) Relative path within the project (e.g., 'Scripts/Game/MyScript.c')."
+            "(write) Relative path within the project (e.g., 'MyMod/Scripts/Game/MyScript.c'); it must land inside an addon " +
+            "(a folder with a .gproj) that is not protected, a Workshop cache or an install."
           ),
         pattern: z
           .string()
@@ -188,6 +190,14 @@ export function registerProject(server: McpServer, config: Config): void {
 
         try {
           const fullPath = validateProjectPath(basePath, inputPath);
+          // The file's addon is the nearest folder up to the base with a .gproj, and it must pass the write guard.
+          const base = resolve(basePath);
+          let addonDir = dirname(fullPath);
+          while (addonDir !== base && isContained(base, addonDir) && !findGproj(addonDir)) addonDir = dirname(addonDir);
+          const target = resolveWriteAddon(config, { projectPath: addonDir });
+          if ("error" in target) {
+            return { content: [{ type: "text", text: target.error }], isError: true };
+          }
           const shouldCreateDirs = createDirectories !== false;
 
           if (shouldCreateDirs) {
