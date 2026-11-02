@@ -162,9 +162,9 @@ export function loadConfig(): Config {
   if (process.env.ENFUSION_DEFAULT_MOD) {
     config.defaultMod = process.env.ENFUSION_DEFAULT_MOD;
   }
-  if (process.env.ENFUSION_COALITION_TOOLS) {
-    config.coalitionTools = /^(on|1|true)$/i.test(process.env.ENFUSION_COALITION_TOOLS.trim());
-  }
+  // The config file can hold any JSON value, so the file and the environment variable are read by one rule.
+  const coalition: unknown = process.env.ENFUSION_COALITION_TOOLS || config.coalitionTools;
+  if (coalition !== undefined) config.coalitionTools = coalition === true || (typeof coalition === "string" && /^(on|1|true)$/i.test(coalition.trim()));
 
   // Auto-derive gamePath from workbenchPath if not explicitly set.
   //

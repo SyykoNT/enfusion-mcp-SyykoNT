@@ -1,10 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerTools } from "../../src/server.js";
 import { loadConfig } from "../../src/config.js";
 import { serverInstructions } from "../../src/server-instructions.js";
+
+// loadConfig reads ~/.enfusion-mcp/config.json: point it at an empty folder so a real config cannot change the results.
+const home = vi.hoisted(() => ({ dir: "" }));
+vi.mock("node:os", async (orig) => {
+  const actual = await orig<typeof import("node:os")>();
+  home.dir = `${actual.tmpdir()}/emcp-coalition-tools-home-${process.pid}`;
+  return { ...actual, homedir: () => home.dir };
+});
 
 const NINE = [
   "coalition_doctor", "mission_inspect", "mission_validate", "gearscript_inspect", "mission_names",
@@ -54,5 +64,29 @@ describe("ENFUSION_COALITION_TOOLS", () => {
     expect((await connect("off")).instructions).toContain(OFF_SENTENCE);
     expect((await connect("on")).instructions).not.toContain("COALITION");
     expect((await connect()).instructions.length).toBeLessThan(4096);
+  });
+});
+
+describe("coalitionTools in the config file", () => {
+  const file = () => join(home.dir, ".enfusion-mcp", "config.json");
+  const write = (value: unknown) => {
+    mkdirSync(join(home.dir, ".enfusion-mcp"), { recursive: true });
+    writeFileSync(file(), JSON.stringify({ coalitionTools: value }));
+  };
+  afterEach(() => { rmSync(file(), { force: true }); delete process.env.ENFUSION_COALITION_TOOLS; });
+
+  it.each([["off", false], ["false", false], ["0", false], [false, false], ["on", true], ["True", true], [1, false], [true, true]])(
+    "%j in the file gives %s", (value, expected) => {
+      write(value);
+      expect(loadConfig().coalitionTools).toBe(expected);
+    });
+
+  it("is overridden by the environment variable", () => {
+    write(true);
+    process.env.ENFUSION_COALITION_TOOLS = "off";
+    expect(loadConfig().coalitionTools).toBe(false);
+    write(false);
+    process.env.ENFUSION_COALITION_TOOLS = "on";
+    expect(loadConfig().coalitionTools).toBe(true);
   });
 });
