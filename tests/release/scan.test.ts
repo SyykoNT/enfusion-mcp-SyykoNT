@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readPngJpegSize } from "../../src/release/scan.js";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { readPngJpegSize, walkAddon } from "../../src/release/scan.js";
 
 /** PNG signature and IHDR only: enough for the header reader, not a real image. */
 function pngHeader(w: number, h: number): Buffer {
@@ -11,6 +14,30 @@ function pngHeader(w: number, h: number): Buffer {
   b.writeUInt32BE(h, 20);
   return b;
 }
+
+describe("walkAddon", () => {
+  const dir = mkdtempSync(join(tmpdir(), "emcp-walk-"));
+  const put = (rel: string, text: string) => { mkdirSync(join(dir, dirname(rel)), { recursive: true }); writeFileSync(join(dir, rel), text); };
+  put("Prefabs/Moved.et", "GenericEntity {\n}\n");
+  put("Prefabs/Moved.et.meta", 'MetaFileClass {\n Name "{1111111111111111}Prefabs/Old/Moved.et"\n}\n');
+  put("NavMesh/.NavData/x.ntile", "tile");
+  put(".git/HEAD", "ref: refs/heads/main\n");
+  put("NoName.conf.meta", "MetaFileClass {\n}\n");
+  const outside = mkdtempSync(join(tmpdir(), "emcp-walk-out-"));
+  writeFileSync(join(outside, "secret.txt"), "x");
+  symlinkSync(outside, join(dir, "Linked"), "junction");
+
+  it("walks dot folders that ship, skips .git and links, and reads meta names", () => {
+    const s = walkAddon(dir);
+    expect(s.files.map((f) => f.rel).sort()).toEqual(["NavMesh/.NavData/x.ntile", "NoName.conf.meta", "Prefabs/Moved.et", "Prefabs/Moved.et.meta"]);
+    expect(s.files.find((f) => f.rel === "NavMesh/.NavData/x.ntile")?.size).toBe(4);
+    expect(s.metas).toEqual([
+      { rel: "NoName.conf.meta", guid: "", namePath: "" },
+      { rel: "Prefabs/Moved.et.meta", guid: "1111111111111111", namePath: "Prefabs/Old/Moved.et" },
+    ]);
+    expect(s.unreadable).toEqual([]);
+  });
+});
 
 describe("readPngJpegSize", () => {
   it("reads PNG IHDR", () => {
