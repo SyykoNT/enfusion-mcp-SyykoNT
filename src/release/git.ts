@@ -10,6 +10,7 @@ export function git(dir: string, args: string[]): string {
     encoding: "utf-8",
     windowsHide: true,
     timeout: 30_000,
+    maxBuffer: 256 * 1024 * 1024, // the default 1 MiB made a long git log throw ENOBUFS, which gitOrNull read as "nothing"
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -66,6 +67,8 @@ export interface GitState {
   hasCommitMsgHook: boolean;
   /** "<hash> <subject>: <why>" of scanned commits with an AI attribution line in the message or an AI author or committer */
   aiMessages: string[];
+  /** Why the unpushed commit messages could not be read; G5 then blocks instead of reporting nothing */
+  scanError?: string;
 }
 
 /** One G5 entry for a git log record ("%h %s\0%an\0%ae\0%cn\0%ce\0%B"), or none. */
@@ -97,8 +100,16 @@ export function gitState(dir: string, base?: string): GitState {
   // Without an upstream, "unpushed" means on no remote-tracking branch
   const from = base ? baseSha : upstream;
   const range = unborn || (base && !baseSha) ? null : from ? [`${from}..HEAD`] : ["HEAD", "--not", "--remotes"];
-  const log = range ? gitOrNull(dir, ["log", ...range, "--format=%h %s%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x00%x1e"]) : "";
-  const commits = (log ?? "").split("\0\x1e").map((c) => c.trim()).filter(Boolean);
+  let log = "";
+  let scanError: string | undefined;
+  if (range) {
+    try {
+      log = git(dir, ["log", ...range, "--format=%h %s%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x00%x1e"]).trim();
+    } catch (e) {
+      scanError = (e as Error).message.split("\n")[0];
+    }
+  }
+  const commits = log.split("\0\x1e").map((c) => c.trim()).filter(Boolean);
 
   const porcelain: string[] = [];
   const entries = git(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).split("\0");
@@ -120,5 +131,6 @@ export function gitState(dir: string, base?: string): GitState {
     ignoresHandlers: gitOrNull(dir, ["check-ignore", "-q", "Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c"]) !== null,
     hasCommitMsgHook: existsSync(join(hooksDir(dir), "commit-msg")),
     aiMessages: commits.flatMap(aiReason),
+    scanError,
   };
 }

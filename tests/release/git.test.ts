@@ -108,6 +108,21 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", { timeout: 30_000
     expect(hits[0]).toMatch(/ odd\x1eby design: matched "Co-authored-by: Codex <noreply@openai\.com>"$/);
   });
 
+  it("a message over 1 MiB is still scanned, and a failed scan is a G5 blocker, not a clean result", () => {
+    const d = repo();
+    const big = join(d, "..", `big-${Date.now()}.txt`);
+    writeFileSync(big, `${"x".repeat(79)}\n`.repeat(14_000) + "\nCo-authored-by: Codex <noreply@openai.com>\n");
+    execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-F", big], { stdio: "ignore" });
+    const s = gitState(d);
+    expect(s.scanError).toBeUndefined();
+    expect(s.aiMessages).toHaveLength(1);
+    expect(s.aiMessages[0]).toMatch(/matched "Co-authored-by: Codex <noreply@openai\.com>"$/);
+
+    const failed = checkGit({ ...s, aiMessages: [], scanError: "spawnSync git ENOBUFS" }).find((x) => x.id === "G5")!;
+    expect(failed).toMatchObject({ level: "blocker" });
+    expect(failed.message).toBe("Unpushed commit messages could not be scanned for AI attribution: spawnSync git ENOBUFS");
+  });
+
   it("a clean repo with ignore rule and hook gives only G6; an unborn repo says no commit yet", () => {
     const d = repo();
     writeFileSync(join(d, ".gitignore"), "Scripts/WorkbenchGame/EnfusionMCP/\n");
