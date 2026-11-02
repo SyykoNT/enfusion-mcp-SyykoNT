@@ -247,6 +247,6 @@ export function checkGit(s: GitState): Finding[] {
   if (s.aiMessages.length) out.push({ id: "G5", level: "blocker", check: "git", message: `${s.aiMessages.length} unpushed commit messages mention Claude, Anthropic or Co-Authored-By: ${list(s.aiMessages)}`, fix: "Reword them before pushing" });
   if (s.note) out.push({ id: "G6", level: "info", check: "git", message: s.note });
   if (s.unborn) out.push({ id: "G6", level: "info", check: "git", message: "No commit yet" });
-  else out.push({ id: "G6", level: "info", check: "git", message: s.upstream ? `Branch ${s.branch}, upstream ${s.upstream}, ${s.ahead} commits not pushed` : `Branch ${s.branch} has no upstream; ${s.ahead} commits on no remote branch` });
+  else out.push({ id: "G6", level: "info", check: "git", message: s.note ? `Branch ${s.branch}` : s.upstream ? `Branch ${s.branch}, upstream ${s.upstream}, ${s.ahead} commits not pushed` : `Branch ${s.branch} has no upstream; ${s.ahead} commits on no remote branch` });
   return out;
 }

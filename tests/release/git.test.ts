@@ -95,7 +95,7 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", () => {
       const s = gitState(d, base);
       expect(readdirSync(out)).toEqual([]);
       expect(s.aiMessages).toEqual([]);
-      expect(checkGit(s).map((x) => x.message)).toContain(`gitBase ${JSON.stringify(base)} is not a commit in this repo: commit messages not scanned`);
+      expect(checkGit(s).filter((x) => x.id === "G6").map((x) => x.message)).toEqual([`gitBase ${JSON.stringify(base)} is not a commit in this repo: commit messages not scanned`, `Branch ${s.branch}`]);
     }
     expect(gitState(d, "HEAD~1")).toMatchObject({ ahead: 1, note: undefined });
     expect(gitState(d, "HEAD~1").aiMessages).toHaveLength(1);
