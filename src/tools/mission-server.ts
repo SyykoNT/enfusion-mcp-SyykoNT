@@ -1,11 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { freemem } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { readGproj } from "../workbench/cli.js";
-import { argValue, clientProcesses, isAlive, killPids, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
+import { DISABLE_CRASH_REPORTER, argValue, clientProcesses, isAlive, killPids, limitProcess, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, instanceTable, isUnder, planStop, scan, writeInstance, type Entry } from "../utils/instances.js";
 import { DEFAULT_FAIL_PATTERNS, resolveLogFile, waitFor } from "../utils/logwatch.js";
 import { findMissionHeader } from "./server-params.js";
@@ -17,7 +18,15 @@ const ONLINE = /Entered online game state/;
 const GAME_STATE = /OnGameStateChanged = GAME\b/;
 // The engine logs this on every join and leave (seen 2026-11-02: "NETWORK : Players connected: 2 / 2").
 const PLAYERS = /Players connected: (\d+) \//g;
-const JOIN_WAIT_MS = 120_000;
+/**
+ * Free RAM needed before each game client starts: the broker's rule for a server plus clients (12 GB). The 2026-11-02 runs used about
+ * 2 GB per Arma process (32.1 to 28.3 GB free for a server and one client), so 12 GB covers a server and 4 peers with margin.
+ * Run 2 froze the PC with 18 GB still free, so this gate alone would not have prevented it.
+ */
+export const MIN_FREE_GB_CLIENT = 12;
+/** A peer whose log has not been written for this long, and is not counted yet, looks hung (run 2: silent from 01:18:04 on). */
+const STALL_SEC = 60;
+const DEFAULT_JOIN_SEC = 120;
 
 /** The last "Players connected" count in a server log, 0 when there is none yet. */
 export function playersConnected(log: string): number {
@@ -26,9 +35,30 @@ export function playersConnected(log: string): number {
 }
 
 /** Wait for "Players connected: <count>" in lines written after `offset`; false on timeout or when the server exits. */
-async function waitPlayers(logFile: string, offset: number, count: number, serverPid: number): Promise<boolean> {
-  const w = await waitFor({ log: () => logFile, patterns: [{ name: "joined", regex: new RegExp(`Players connected: ${count} /`) }], failPatterns: [], from: offset, pid: serverPid, timeoutMs: JOIN_WAIT_MS });
+async function waitPlayers(logFile: string, offset: number, count: number, serverPid: number, seconds: number): Promise<boolean> {
+  const w = await waitFor({ log: () => logFile, patterns: [{ name: "joined", regex: new RegExp(`Players connected: ${count} /`) }], failPatterns: [], from: offset, pid: serverPid, timeoutMs: seconds * 1000 });
   return w.status === "matched";
+}
+
+export interface PeerState {
+  n: number;
+  pid: number;
+  /** Seconds since the peer's console log was last written; undefined when it has no log. */
+  ageSec?: number;
+  /** First engine failure line in the peer's log ("Application hangs", "(F):", ...). */
+  failLine?: string;
+}
+
+/** Why another client must not start now: a peer that failed, or fewer players counted by the server than peers running. Empty when healthy. */
+export function peerProblems(counted: number, peers: PeerState[]): string[] {
+  const out = peers.filter((p) => p.failLine).map((p) => `peer ${p.n} (PID ${p.pid}) is hung or crashed: ${p.failLine!.trim()}`);
+  if (counted < peers.length) {
+    const detail = peers
+      .map((p) => `peer ${p.n} (PID ${p.pid}) ${p.ageSec === undefined ? "has no log" : p.ageSec > STALL_SEC ? `looks hung, log silent for ${p.ageSec} s` : `still loading, log written ${p.ageSec} s ago`}`)
+      .join(", ");
+    out.push(`the server has counted ${counted} of ${peers.length} earlier peer(s) (${detail})`);
+  }
+  return out;
 }
 // Flags the tool sets itself; extraArgs may not override them.
 const OWN_FLAGS = /^-(profile|addr|addonsdir|addons|server|client|gproj|config|missionheader|bindport)$/i;
@@ -42,6 +72,22 @@ export interface Run {
   header?: string;
   addonsDirs: string[];
   addons: string[];
+  /** Hex-parsed CPU masks, set when the caller gave them: BelowNormal priority and these cores for the server and for every client. */
+  cpu?: { server: number; client: number };
+}
+
+/**
+ * serverCpuMask and clientCpuMask as hex ("0x3000"): both or neither, and no shared core. Game clients on the server's cores
+ * starved each other in the 2026-11-02 Boat Patrol run. shortcut: 32-bit masks only, so no cores above 31.
+ */
+export function cpuMasks(server?: string, client?: string): Run["cpu"] | string {
+  if (server === undefined && client === undefined) return undefined;
+  const parse = (v?: string) => (v && /^(0x)?[0-9a-f]{1,8}$/i.test(v) ? parseInt(v.replace(/^0x/i, ""), 16) : 0);
+  const s = parse(server);
+  const c = parse(client);
+  if (!s || !c) return "serverCpuMask and clientCpuMask must both be given as hex masks, for example 0x3000 and 0x0C00";
+  if (s & c) return `clientCpuMask 0x${c.toString(16)} shares cores with serverCpuMask 0x${s.toString(16)}: game clients must run on other cores`;
+  return { server: s, client: c };
 }
 
 /**
@@ -53,7 +99,7 @@ export function serverArgs(r: Run, profile: string, extra: string[] = []): strin
   return [
     "-gproj", r.gproj, "-server", r.header ?? r.world,
     "-addonsDir", r.addonsDirs.join(","), "-addons", r.addons.join(","),
-    "-addr", `127.0.0.1:${r.port}`, "-profile", profile, "-nothrow", "-maxFPS", "60", ...extra,
+    "-addr", `127.0.0.1:${r.port}`, "-profile", profile, "-nothrow", "-maxFPS", "60", DISABLE_CRASH_REPORTER, ...extra,
   ];
 }
 
@@ -61,7 +107,7 @@ export function serverArgs(r: Run, profile: string, extra: string[] = []): strin
 export function peerArgs(r: Run, profile: string): string[] {
   return [
     "-gproj", r.gproj, "-addonsDir", r.addonsDirs.join(","), "-addons", r.addons.join(","),
-    "-window", "-forceupdate", "-nofocus", "-client", `127.0.0.1:${r.port}`, "-rpl-reconnect", "-rpl-timeout-disable", "-profile", profile,
+    "-window", "-forceupdate", "-nofocus", "-client", `127.0.0.1:${r.port}`, "-rpl-reconnect", "-rpl-timeout-disable", "-profile", profile, DISABLE_CRASH_REPORTER,
   ];
 }
 
@@ -126,7 +172,46 @@ const readRun = (port: number): Run | undefined => {
 /** This tool's processes (instance file under MISSION_ROOT, or under one port's folder). */
 const mine = (root = MISSION_ROOT): Entry[] => [...scan(serverProcesses()), ...scan(clientProcesses())].filter((e) => e.file && isUnder(e.file, root));
 
-function startPeer(r: Run, config: Config): { n: number; pid: number; args: string[] } | string {
+/** The peers of one run that are still running and ours, with how their logs look. */
+function peerStates(port: number): PeerState[] {
+  return mine(portDir(port))
+    .filter((e) => e.cls === "own" && e.inst?.kind === "client")
+    .map((e) => {
+      const log = resolveLogFile({ dir: e.inst!.profileDir ?? "", file: "console" });
+      const text = log ? readFileSync(log, "utf-8") : "";
+      return {
+        n: Number(/peer(\d+)$/.exec(e.inst!.name)?.[1] ?? 0),
+        pid: e.proc.pid,
+        ageSec: log ? Math.round((Date.now() - statSync(log).mtimeMs) / 1000) : undefined,
+        failLine: text.split(/\r?\n/).find((l) => DEFAULT_FAIL_PATTERNS.some((re) => re.test(l))),
+      };
+    })
+    .sort((a, b) => a.n - b.n);
+}
+
+/** End the given peers, which this call just started: only PIDs that still carry this tool's instance file for this run. */
+async function stopOwnPeers(port: number, started: { n: number; pid: number }[]): Promise<string> {
+  if (!started.length) return "";
+  const own = mine(portDir(port)).filter((e) => e.cls === "own" && e.inst?.kind === "client" && started.some((s) => s.pid === e.proc.pid));
+  killPids(own.map((e) => e.proc.pid), true, true);
+  for (let i = 0; i < 20 && own.some((e) => isAlive(e.proc.pid)); i++) await sleep(500);
+  const gone = own.filter((e) => !isAlive(e.proc.pid));
+  for (const e of gone) rmSync(e.file!, { force: true });
+  const label = (e: Entry) => `peer ${/peer(\d+)$/.exec(e.inst!.name)?.[1]} (PID ${e.proc.pid})`;
+  const left = own.filter((e) => isAlive(e.proc.pid));
+  return (
+    `\nStopped ${gone.length ? gone.map(label).join(", ") : "no peer"}` +
+    (started.length > own.length ? `; ${started.length - own.length} had already ended` : "") +
+    (left.length ? `; still running: ${left.map(label).join(", ")}` : "") +
+    ". The server was left running."
+  );
+}
+
+function startPeer(r: Run, config: Config): { n: number; pid: number; args: string[]; pinned?: boolean } | string {
+  const free = freemem() / 2 ** 30;
+  if (free < MIN_FREE_GB_CLIENT) {
+    return `Not enough free RAM for another game client: ${free.toFixed(1)} GB free, ${MIN_FREE_GB_CLIENT} GB needed (about 2 GB per Arma process).`;
+  }
   const exe = join(config.gamePath, "ArmaReforgerSteamDiag.exe");
   if (!existsSync(exe)) return `Not found: ${exe} (set ENFUSION_GAME_PATH)`;
   const used = existsSync(portDir(r.port)) ? readdirSync(portDir(r.port)).map((f) => /^peer(\d+)$/.exec(f)?.[1]).filter(Boolean).map(Number) : [];
@@ -139,7 +224,7 @@ function startPeer(r: Run, config: Config): { n: number; pid: number; args: stri
   writeInstance(join(profile, INSTANCE_FILE), {
     kind: "client", name: `mission-${r.port}-peer${n}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe, port: r.port, profileDir: profile,
   });
-  return { n, pid, args };
+  return { n, pid, args, pinned: r.cpu ? limitProcess(pid, r.cpu.client) : undefined };
 }
 
 export function registerMissionServer(server: McpServer, config: Config): void {
@@ -150,7 +235,10 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         "Run a mission the way Workbench's Dedicated Server Tool does, without Workbench: an ArmaReforgerServerDiag server on the mission world and " +
         "its Mission Header, with unpacked addons from -addonsDir, on its own loopback port and profile, plus Diag game clients that join it. " +
         "start (server, waits until it accepts clients, then peers), join (one more client, the guide's Start only clients), status, stop (only its own processes). " +
-        "Starts processes: ask the user (or the Workbench lock owner) first, and keep within the CPU and port slots they give.",
+        "Starts processes: ask the user (or the Workbench lock owner) first, and keep within the CPU and port slots they give. " +
+        "Every client needs at least 12 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
+        "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority. " +
+        "The Crash Reporter is switched off for everything it starts (-disableCrashReporter).",
       inputSchema: {
         action: z.enum(["start", "join", "status", "stop"]),
         world: z.string().optional().describe("(start) Absolute path of the mission .ent inside an unpacked addon"),
@@ -161,6 +249,9 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         peers: z.number().int().min(0).max(4).default(0).describe("(start) Game clients to start once the server is online"),
         extraArgs: z.array(z.string()).optional().describe("(start) Extra server args, e.g. ['-jobsysShortWorkerCount','2']"),
         timeoutSec: z.number().int().min(10).max(600).default(180).describe("(start) How long to wait for the server to come online"),
+        joinTimeoutSec: z.number().int().min(1).max(600).default(DEFAULT_JOIN_SEC).describe("(start, join) How long to wait for clients to be counted by the server; start stops the peers it started when they are not"),
+        serverCpuMask: z.string().optional().describe("(start) Hex CPU mask for the server, e.g. 0x3000; needs clientCpuMask"),
+        clientCpuMask: z.string().optional().describe("(start) Hex CPU mask for every game client, e.g. 0x0C00; must not share a core with serverCpuMask"),
         adoptOrphans: z.boolean().optional().describe("(stop) Also stop processes this tool started from an MCP session that has ended"),
       },
     },
@@ -169,8 +260,11 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         const port = a.port ?? 2521;
         if (a.action === "start") {
           if (!a.world) return text("start needs world", true);
-          const run = planRun({ world: a.world, missionHeader: a.missionHeader, addons: a.addons, addonsDirs: a.addonsDirs, port }, config);
-          if (typeof run === "string") return text(run, true);
+          const planned = planRun({ world: a.world, missionHeader: a.missionHeader, addons: a.addons, addonsDirs: a.addonsDirs, port }, config);
+          if (typeof planned === "string") return text(planned, true);
+          const cpu = cpuMasks(a.serverCpuMask, a.clientCpuMask);
+          if (typeof cpu === "string") return text(cpu, true);
+          const run: Run = { ...planned, cpu };
           const extraErr = checkExtra(a.extraArgs ?? []);
           if (extraErr) return text(extraErr, true);
           const exe = join(config.serverPath, "ArmaReforgerServerDiag.exe");
@@ -188,6 +282,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             kind: "server", name: `mission-${port}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe, port, profileDir: profile,
           });
           writeFileSync(join(portDir(port), "run.json"), JSON.stringify(run, null, 2));
+          const serverPinned = run.cpu ? limitProcess(pid, run.cpu.server) : undefined;
           const w = await waitFor({
             log: () => resolveLogFile({ dir: profile, file: "console", newerThan: started - 5000 }),
             patterns: [{ name: "online", regex: ONLINE }],
@@ -196,23 +291,32 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             pid,
             timeoutMs: a.timeoutSec * 1000,
           });
-          const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}`;
+          const cpuNote = run.cpu
+            ? `\nCPU: server 0x${run.cpu.server.toString(16)} ${serverPinned ? "applied" : "NOT applied"}, clients 0x${run.cpu.client.toString(16)}, BelowNormal`
+            : "";
+          const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}${cpuNote}`;
           if (w.status !== "matched") {
             const why = w.status === "failed" ? `stopped on: ${w.fatal[0]?.line}` : w.status === "exited" ? "the server exited" : `not online within ${a.timeoutSec} s`;
             return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}`, true);
           }
           const peers: string[] = [];
+          const startedPeers: { n: number; pid: number }[] = [];
           const offset = statSync(w.file!).size;
           for (let i = 0; i < a.peers; i++) {
             const p = startPeer(run, config);
-            if (typeof p === "string") return text(`**Server online**, but a peer could not start: ${p}\n\n${head}\n${peers.join("\n")}`, true);
-            peers.push(`Peer ${p.n}: PID ${p.pid}`);
+            if (typeof p === "string") {
+              const stopped = await stopOwnPeers(port, startedPeers);
+              return text(`**Server online**, but a peer could not start: ${p}${stopped}\n\n${head}\n${peers.join("\n")}`, true);
+            }
+            startedPeers.push(p);
+            peers.push(`Peer ${p.n}: PID ${p.pid}${p.pinned === undefined ? "" : p.pinned ? " (pinned)" : " (NOT pinned)"}`);
             await sleep(2000);
           }
-          const joined = a.peers > 0 && (await waitPlayers(w.file!, offset, a.peers, pid));
+          const joined = a.peers > 0 && (await waitPlayers(w.file!, offset, a.peers, pid, a.joinTimeoutSec));
+          const stopped = a.peers > 0 && !joined ? await stopOwnPeers(port, startedPeers) : "";
           const joinLine = a.peers === 0 ? "" : joined
             ? `\nAll ${a.peers} peer(s) joined (Players connected: ${a.peers}).`
-            : `\nNot all peers joined within ${JOIN_WAIT_MS / 1000} s: players connected ${playersConnected(readFileSync(w.file!, "utf-8"))} of ${a.peers}.`;
+            : `\nNot all peers joined within ${a.joinTimeoutSec} s: players connected ${playersConnected(readFileSync(w.file!, "utf-8"))} of ${a.peers}.${stopped}`;
           return text(
             `**Server online** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})${run.header ? "" : "\nNo Mission Header: the world started without one."}${joinLine}\n\n${head}` +
               (peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : ""),
@@ -227,14 +331,18 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const log = resolveLogFile({ dir: join(portDir(port), "server"), file: "console" });
           if (!log) return text(`No server log for port ${port} yet.`, true);
           const before = playersConnected(readFileSync(log, "utf-8"));
+          // An earlier peer that is hung, or that the server has not counted, would only add load to a stuck run (2026-11-02 run 2).
+          const problems = peerProblems(before, peerStates(port));
+          if (problems.length) return text(`join refused: ${problems.join("; ")}. No client was started; mission_server stop ends this run.`, true);
           const offset = statSync(log).size;
           const p = startPeer(run, config);
           if (typeof p === "string") return text(p, true);
-          const joined = await waitPlayers(log, offset, before + 1, srv.proc.pid);
+          const joined = await waitPlayers(log, offset, before + 1, srv.proc.pid, a.joinTimeoutSec);
+          const stopped = joined ? "" : await stopOwnPeers(port, [p]);
           return text(
             (joined
               ? `**Peer ${p.n} joined** (PID ${p.pid}): players connected ${before + 1}.`
-              : `**Peer ${p.n} started** (PID ${p.pid}) but did not join within ${JOIN_WAIT_MS / 1000} s: players connected ${playersConnected(readFileSync(log, "utf-8"))}.`) +
+              : `**Peer ${p.n} did not join** within ${a.joinTimeoutSec} s (PID ${p.pid}): players connected ${playersConnected(readFileSync(log, "utf-8"))}.${stopped}`) +
               `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}`,
             !joined
           );

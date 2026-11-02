@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { myGamesDir } from "../utils/game-paths.js";
 import type { Config } from "../config.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive, refusedArg } from "../utils/process.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive, refusedArg, DISABLE_CRASH_REPORTER } from "../utils/process.js";
 import { OWNER, pidInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
 
 const GAME_EXE = "ArmaReforgerSteam.exe";
@@ -53,7 +53,7 @@ export function registerGame(server: McpServer, config: Config): void {
           const diag = !!(a.connect || a.world);
           const exe = join(config.gamePath, diag ? GAME_DIAG_EXE : GAME_EXE);
           if (!existsSync(exe)) return text(`Not found: ${exe} (set ENFUSION_GAME_PATH)`, true);
-          const args: string[] = ["-noSplash"];
+          const args: string[] = ["-noSplash", DISABLE_CRASH_REPORTER];
           const guids: string[] = [];
           for (const name of a.addons ?? []) {
             const gproj = resolveGproj(config, name);

@@ -1,8 +1,28 @@
 import { execFileSync, spawn } from "node:child_process";
 import { openSync, closeSync, existsSync, readdirSync, statSync } from "node:fs";
+import { constants, setPriority } from "node:os";
 import { join } from "node:path";
 
 const IS_WIN = process.platform === "win32";
+
+/**
+ * Documented startup flag (BI wiki "Arma Reforger:Startup_Parameters": "disables the Crash Reporter from appearing/sending reports
+ * automatically"; the Server Config page says its disableCrashReporter option "has the same effect as -disableCrashReporter").
+ * The Enfusion CLI table spells it -disableCrashReport. Not verified on a live crash, so check a crash.log after the first one.
+ */
+export const DISABLE_CRASH_REPORTER = "-disableCrashReporter";
+
+/** BelowNormal priority and a CPU affinity mask for one process (Windows). False when the process is gone or PowerShell fails. */
+export function limitProcess(pid: number, mask: number): boolean {
+  if (!IS_WIN || !Number.isInteger(pid) || !Number.isInteger(mask) || mask < 1) return false;
+  try {
+    setPriority(pid, constants.priority.PRIORITY_BELOW_NORMAL);
+    execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).ProcessorAffinity = ${mask}`], { windowsHide: true, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** PIDs of running processes whose executable name is `image` (e.g. "ArmaReforgerServer.exe"). */
 export function findPids(image: string): number[] {

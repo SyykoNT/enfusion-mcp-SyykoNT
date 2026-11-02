@@ -118,6 +118,7 @@ describe("server start ports", () => {
   it("-server mode binds 127.0.0.1 with -addr and prints that port", async () => {
     const t = (await h({ action: "start", addons: ["TestAddon"], scenarioId: "{ECC61978EDCC2B5A}Missions/23_Campaign.conf", port: 2302 })).content[0].text;
     expect(t).toContain("-addr 127.0.0.1:2302");
+    expect(t).toContain("-disableCrashReporter");
     expect(t).not.toContain("-bindPort");
     expect(t).toContain("connect=127.0.0.1:2302");
   });
