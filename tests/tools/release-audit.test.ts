@@ -83,10 +83,11 @@ describe("release_audit", () => {
     expect(report).toContain("## Passed\nhandlers, leftovers");
   });
 
-  it("M5 reads dependency rdbs: same GUID and path is an override, another path a clash", () => {
+  it("M5 reads dependency rdbs: same GUID and path is an override (info), another path a warning", () => {
     const { json } = audit({ addonName: "Boat", checks: ["meta"] });
-    expect(ids(json).sort()).toEqual(["M5 blocker Prefabs/Mine.et", "M5 info Prefabs/Same.et"]);
-    expect(json.findings.find((f) => f.level === "blocker")?.message).toBe("GUID 6000000000000002 is also Dep's Prefabs/Theirs.et");
+    expect(ids(json).sort()).toEqual(["M5 info Prefabs/Same.et", "M5 warning Prefabs/Mine.et"]);
+    expect(json.findings.find((f) => f.level === "warning")?.message).toBe("Same GUID 6000000000000002 as Dep's Prefabs/Theirs.et: a deliberate override by GUID, or a copied meta");
+    expect(json.verdict).toBe("warnings");
   });
 
   it("S2 only with compareOverrides: the file Dep already ships byte for byte", () => {

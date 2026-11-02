@@ -54,6 +54,8 @@ const bad = addon("Bad", {
   "UI/Img.edds.meta": meta("EEEE000000000001", "UI/Img.edds"),
   "Missions/M.conf": 'SCR_MissionHeader {\n m_sIcon "{EEEE000000000001}UI/Img.edds"\n}\n',
   "Missions/M.conf.meta": meta("EEEE000000000002", "Missions/M.conf"),
+  "Configs/Gear.conf": 'COA_GearScriptConfig {\n m_FactionIcon "{EEEE000000000001}UI/Img.edds"\n}\n',
+  "Configs/Gear.conf.meta": meta("EEEE000000000003", "Configs/Gear.conf"),
   "Models/M.fbx": "fbx",
   "Models/M.xob.meta": `MetaFileClass {\n Name "{DDDD000000000001}Models/M.xob"\n MaterialAssigns {\n  MaterialAssignClass "{5B1D0000000000A0}" {\n   SourceMaterial "Mat1"\n   AssignedMaterial "{DDDD000000000002}Models/Data/Mat1.emat"\n  }\n }\n}\n`,
   "temp/x.txt": "x",
@@ -111,7 +113,7 @@ describe("release checks", () => {
       "M3 warning Textures/Orphan.edds.meta",
       "M3 info Textures/Odd.weird.meta",
       "M4 blocker",
-      "M5 blocker Prefabs/Clash.et",
+      "M5 warning Prefabs/Clash.et",
       "M5 info Prefabs/Override.et",
       "M6 warning Prefabs/NoMeta.et",
       "M7 blocker Missions/M.conf",
@@ -128,6 +130,9 @@ describe("release checks", () => {
       "V1 warning",
     ]));
     expect(ids(b)).toContain("P4 warning");
+    // Only mission headers: the gearscript pointing at the same compiled-only image is not M7
+    expect(ids(b).filter((x) => x.startsWith("M7"))).toEqual(["M7 blocker Missions/M.conf"]);
+    expect(b.find((f) => f.id === "M2" && f.path === "Prefabs/Dup.et")?.fix).toMatch(/^Headless rescan: -gproj/);
     expect(b.find((f) => f.path === "Prefabs/B.et.meta")?.message).toContain("(case only)");
     expect(b.find((f) => f.id === "T2")?.message).toBe("Public text has en or em dash, Claude");
     expect(b.find((f) => f.id === "T3")?.message).toMatch(/Scripts\/Game\/Dev\/.*Scripts\/Game\/Diag\.c/);

@@ -17,6 +17,7 @@ const HANDLER_DIR = "Scripts/WorkbenchGame/EnfusionMCP";
 const SOURCE_IMAGES = [".png", ".tga", ".tif", ".tiff", ".dds", ".jpg"];
 const PLATFORMS = ["PC", "XBOX_ONE", "XBOX_SERIES", "PS4", "PS5", "HEADLESS"];
 const PREVIEW_MAX = 2 * 1024 * 1024;
+const RESCAN = "Headless rescan: -gproj <gproj> -addonsDir <dirs> -wbModule=ResourceManager -wbSilent -exitAfterInit";
 const list = (xs: string[], n = 10) => xs.slice(0, n).join(", ") + (xs.length > n ? `, and ${xs.length - n} more` : "");
 const lower = (s: string) => s.toLowerCase();
 
@@ -58,14 +59,14 @@ export function checkGprojFindings(addonDir: string): Finding[] {
 /** Owners of resource GUIDs outside this addon (base game and dependencies): GUID to path and addon name. */
 export type GuidOwners = Map<string, { path: string; addon: string }>;
 
-/** M1 to M7: meta names, rdb registration, orphans, duplicate and clashing GUIDs, missing metas, mission images. */
+/** M1 to M7: meta names, rdb registration, orphans, duplicate and shared GUIDs, missing metas, mission config images. */
 export function checkMeta(addonDir: string, scan: AddonScan, rdb: Map<string, RdbEntry> | null, owners?: GuidOwners): Finding[] {
   const out: Finding[] = [];
   const files = new Set(scan.files.map((f) => lower(f.rel)));
   const dirs = new Set(scan.files.flatMap((f) => f.rel.split("/").slice(0, -1).map((_, i, a) => lower(a.slice(0, i + 1).join("/")))));
   const exists = (rel: string) => files.has(lower(rel)) || dirs.has(lower(rel));
   const hasSource = (stem: string, exts: string[]) => exts.some((e) => files.has(lower(stem + e)));
-  if (!rdb) out.push({ id: "M2", level: "warning", check: "meta", message: "No resourceDatabase.rdb: registration not checked", fix: "Headless rescan: -gproj <gproj> -addonsDir <dirs> -wbModule=ResourceManager -wbSilent -exitAfterInit" });
+  if (!rdb) out.push({ id: "M2", level: "warning", check: "meta", message: "No resourceDatabase.rdb: registration not checked", fix: RESCAN });
 
   const byGuid = new Map<string, string[]>();
   for (const m of scan.metas) {
@@ -89,14 +90,15 @@ export function checkMeta(addonDir: string, scan: AddonScan, rdb: Map<string, Rd
     // Scripts sit in the rdb with an all-zero GUID, which the parser drops
     if (rdb && m.guid && files.has(lower(actual)) && !/\.c$/i.test(actual)) {
       const e = rdb.get(lower(actual));
-      if (!e) out.push({ id: "M2", level: "warning", check: "meta", path: actual, message: "Not in resourceDatabase.rdb", fix: "Headless rescan (see the M2 fix above), or open the addon in Workbench" });
+      if (!e) out.push({ id: "M2", level: "warning", check: "meta", path: actual, message: "Not in resourceDatabase.rdb", fix: `${RESCAN}, or open the addon in Workbench` });
       else if (e.guid !== m.guid) out.push({ id: "M2", level: "warning", check: "meta", path: actual, message: `rdb GUID ${e.guid} differs from the meta's ${m.guid}` });
     }
     const o = m.guid ? owners?.get(m.guid) : undefined;
     if (o) {
       out.push(lower(o.path) === lower(actual)
         ? { id: "M5", level: "info", check: "meta", path: actual, message: `Overrides ${o.addon}'s ${o.path} (same GUID and path)` }
-        : { id: "M5", level: "blocker", check: "meta", path: actual, message: `GUID ${m.guid} is also ${o.addon}'s ${o.path}`, fix: "Give this resource a new GUID" });
+        // Whether a same-GUID file at another path works as an override is unverified, so this cannot block
+        : { id: "M5", level: "warning", check: "meta", path: actual, message: `Same GUID ${m.guid} as ${o.addon}'s ${o.path}: a deliberate override by GUID, or a copied meta`, fix: "If it is a copy, give it a new GUID" });
     }
   }
   for (const [guid, rels] of byGuid) {
@@ -115,6 +117,8 @@ export function checkMeta(addonDir: string, scan: AddonScan, rdb: Map<string, Rd
     } catch {
       continue; // listed as unreadable by the walk
     }
+    // BI names mission config images; gearscripts pointing at compiled-only flag images publish fine (CRF)
+    if (!/^\uFEFF?\s*\w*MissionHeader\b/.test(text)) continue;
     for (const r of text.matchAll(/\{([0-9A-Fa-f]{16})\}[^"\s{}]*\.edds/gi)) {
       const stem = eddsMetas.get(r[1].toUpperCase());
       if (stem !== undefined && !hasSource(stem, SOURCE_IMAGES)) {
