@@ -216,7 +216,7 @@ export const SAFE_NAMES = [...new Set(Object.values(SAFE).flat())];
 
 /** The guide's replacement names for one avoid-list composition (category and size from its file name). */
 export function replacements(path: string): string[] {
-  const m = /(?:E_)?(Barricade|Checkpoint|LivingArea|Helipad|FieldHospital|VehicleMaintenance|FiringRange|AmmoStorage)_([LMS])_/.exec(basename(path));
+  const m = /(Barricade|Checkpoint|LivingArea|Helipad|FieldHospital|VehicleMaintenance|FiringRange|AmmoStorage)_([LMS])_/.exec(basename(path));
   if (!m) return [];
   const road = m[1] === "Barricade" || m[1] === "Checkpoint";
   return SAFE[`${m[1]}_${m[2]}`] ?? SAFE[`${road ? "road" : "flat"}_${m[2]}`] ?? [];
