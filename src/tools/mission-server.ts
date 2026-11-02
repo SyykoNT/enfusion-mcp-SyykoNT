@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
@@ -15,6 +15,21 @@ export const MISSION_ROOT = join(MCP_HOME, "mission-server");
 // The server accepts clients from here on; GAME comes later and only from some game modes (COALITION's lobby waits for players).
 const ONLINE = /Entered online game state/;
 const GAME_STATE = /OnGameStateChanged = GAME\b/;
+// The engine logs this on every join and leave (seen 2026-11-02: "NETWORK : Players connected: 2 / 2").
+const PLAYERS = /Players connected: (\d+) \//g;
+const JOIN_WAIT_MS = 120_000;
+
+/** The last "Players connected" count in a server log, 0 when there is none yet. */
+export function playersConnected(log: string): number {
+  const all = [...log.matchAll(PLAYERS)];
+  return all.length ? Number(all[all.length - 1][1]) : 0;
+}
+
+/** Wait for "Players connected: <count>" in lines written after `offset`; false on timeout or when the server exits. */
+async function waitPlayers(logFile: string, offset: number, count: number, serverPid: number): Promise<boolean> {
+  const w = await waitFor({ log: () => logFile, patterns: [{ name: "joined", regex: new RegExp(`Players connected: ${count} /`) }], failPatterns: [], from: offset, pid: serverPid, timeoutMs: JOIN_WAIT_MS });
+  return w.status === "matched";
+}
 // Flags the tool sets itself; extraArgs may not override them.
 const OWN_FLAGS = /^-(profile|addr|addonsdir|addons|server|client|gproj|config|missionheader|bindport)$/i;
 
@@ -187,22 +202,42 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}`, true);
           }
           const peers: string[] = [];
+          const offset = statSync(w.file!).size;
           for (let i = 0; i < a.peers; i++) {
             const p = startPeer(run, config);
             if (typeof p === "string") return text(`**Server online**, but a peer could not start: ${p}\n\n${head}\n${peers.join("\n")}`, true);
             peers.push(`Peer ${p.n}: PID ${p.pid}`);
             await sleep(2000);
           }
-          return text(`**Server online** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})${run.header ? "" : "\nNo Mission Header: the world started without one."}\n\n${head}${peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : ""}`);
+          const joined = a.peers > 0 && (await waitPlayers(w.file!, offset, a.peers, pid));
+          const joinLine = a.peers === 0 ? "" : joined
+            ? `\nAll ${a.peers} peer(s) joined (Players connected: ${a.peers}).`
+            : `\nNot all peers joined within ${JOIN_WAIT_MS / 1000} s: players connected ${playersConnected(readFileSync(w.file!, "utf-8"))} of ${a.peers}.`;
+          return text(
+            `**Server online** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})${run.header ? "" : "\nNo Mission Header: the world started without one."}${joinLine}\n\n${head}` +
+              (peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : ""),
+            a.peers > 0 && !joined
+          );
         }
 
         if (a.action === "join") {
           const run = readRun(port);
           const srv = mine(portDir(port)).find((e) => e.inst?.kind === "server" && e.cls === "own");
           if (!run || !srv) return text(`No mission_server run of this MCP session on port ${port}.`, true);
+          const log = resolveLogFile({ dir: join(portDir(port), "server"), file: "console" });
+          if (!log) return text(`No server log for port ${port} yet.`, true);
+          const before = playersConnected(readFileSync(log, "utf-8"));
+          const offset = statSync(log).size;
           const p = startPeer(run, config);
           if (typeof p === "string") return text(p, true);
-          return text(`**Peer ${p.n} started** (PID ${p.pid}) and joins 127.0.0.1:${port}.\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}`);
+          const joined = await waitPlayers(log, offset, before + 1, srv.proc.pid);
+          return text(
+            (joined
+              ? `**Peer ${p.n} joined** (PID ${p.pid}): players connected ${before + 1}.`
+              : `**Peer ${p.n} started** (PID ${p.pid}) but did not join within ${JOIN_WAIT_MS / 1000} s: players connected ${playersConnected(readFileSync(log, "utf-8"))}.`) +
+              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}`,
+            !joined
+          );
         }
 
         if (a.action === "status") {
@@ -211,7 +246,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const rows = ports.map((port) => {
             const log = resolveLogFile({ dir: join(MISSION_ROOT, port, "server"), file: "console" });
             const t = log ? readFileSync(log, "utf-8") : "";
-            const game = GAME_STATE.test(t) ? "online, GAME reached" : ONLINE.test(t) ? "online (no GAME state: a lobby game mode waits for players)" : "not online";
+            const players = `, players connected ${playersConnected(t)}`;
+            const game = GAME_STATE.test(t) ? `online, GAME reached${players}` : ONLINE.test(t) ? `online (no GAME state: a lobby game mode waits for players)${players}` : "not online";
             const live = entries.filter((e) => e.file && isUnder(e.file, join(MISSION_ROOT, port)));
             return live.length
               ? `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`

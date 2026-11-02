@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 
@@ -14,6 +14,7 @@ const sys = vi.hoisted(() => ({
   clients: [] as { pid: number; ppid: number; cmd: string; created: number }[],
   killed: [] as number[],
   spawned: [] as string[][],
+  onSpawn: undefined as undefined | (() => void),
 }));
 vi.mock("../../src/utils/process.js", async (orig) => ({
   ...(await orig<typeof import("../../src/utils/process.js")>()),
@@ -21,11 +22,11 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
   clientProcesses: () => sys.clients,
   killPids: (pids: number[]) => sys.killed.push(...pids),
   isAlive: (pid: number) => !sys.killed.includes(pid),
-  spawnDetached: (_exe: string, args: string[]) => (sys.spawned.push(args), 99999),
+  spawnDetached: (_exe: string, args: string[]) => (sys.spawned.push(args), sys.onSpawn?.(), 99999),
   sleep: async () => {},
 }));
 
-const { planRun, serverArgs, peerArgs, checkExtra, registerMissionServer, MISSION_ROOT } = await import("../../src/tools/mission-server.js");
+const { planRun, serverArgs, peerArgs, checkExtra, playersConnected, registerMissionServer, MISSION_ROOT } = await import("../../src/tools/mission-server.js");
 const { INSTANCE_FILE, OWNER } = await import("../../src/utils/instances.js");
 const { registerServer } = await import("../../src/tools/server.js");
 const { registerGame } = await import("../../src/tools/game.js");
@@ -53,6 +54,7 @@ beforeEach(() => {
   sys.clients = [];
   sys.killed = [];
   sys.spawned = [];
+  sys.onSpawn = undefined;
 });
 
 describe("mission_server run plan and command lines", () => {
@@ -112,6 +114,31 @@ describe("mission_server start and stop", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("already used by server PID 4242");
     expect(sys.spawned).toEqual([]);
+  });
+
+  it("join starts one more peer and waits for the server's player count to go up (client half)", async () => {
+    // Lines as the 2026-11-02 JailKitTest run logged them.
+    expect(playersConnected("01:08:48.165   NETWORK      : Players connected: 1 / 1\r\n01:11:35.079   NETWORK      : Players connected: 2 / 2\r\n")).toBe(2);
+    expect(playersConnected("no players yet")).toBe(0);
+    const t = addon();
+    const port = 2525;
+    const serverDir = join(MISSION_ROOT, String(port), "server");
+    const log = join(serverDir, "logs", "logs_2026-11-02_01-08-26", "console.log");
+    mkdirSync(dirname(log), { recursive: true });
+    writeFileSync(log, "01:08:36.211 DEFAULT      : Entered online game state.\r\n01:08:48.165   NETWORK      : Players connected: 1 / 1\r\n");
+    writeFileSync(join(serverDir, INSTANCE_FILE), JSON.stringify({ kind: "server", name: `mission-${port}`, pid: 701, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: 1000, exe: "x" }));
+    writeFileSync(join(MISSION_ROOT, String(port), "run.json"), JSON.stringify({ port, gproj: join(t.dir, "addon.gproj"), world: "Worlds/Map/Me_TVT_Test.ent", addonsDirs: [t.root], addons: ["TestMission"] }));
+    mkdirSync(join(MISSION_ROOT, String(port), "peer1"), { recursive: true });
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+    sys.servers = [{ pid: 701, ppid: 1, cmd: `x.exe -profile "${serverDir}"`, created: 1000 }];
+    // The new client "joins": the server logs the engine's count line.
+    sys.onSpawn = () => appendFileSync(log, "01:11:35.079   NETWORK      : Players connected: 2 / 2\r\n");
+    const r = await tool(config(home))({ action: "join", port });
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("**Peer 2 joined** (PID 99999): players connected 2.");
+    expect(sys.spawned[0]).toEqual(expect.arrayContaining(["-client", `127.0.0.1:${port}`, "-profile", join(MISSION_ROOT, String(port), "peer2")]));
+    const s = await tool(config(home))({ action: "status" });
+    expect(s.content[0].text).toContain(`- port ${port}: 1 process(es) running, online (no GAME state: a lobby game mode waits for players), players connected 2`);
   });
 
   it("status reads online from the log and says when nothing of a run is still running", async () => {
