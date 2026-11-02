@@ -17,18 +17,18 @@ import { loadLobbyMission } from "./mission-inspect.js";
 // citations are to that file unless another is named. If the Lobby changes them, this drifts.
 
 // Fallbacks for the constants at COA_GearscriptManager.c:8-9, which are read at run time
-const ROLES_CONFIG = "{4388548E9F600148}Configs/Gearscripts/COA_Global_Roles_Config.conf";
-const CVON_ROLES_CONFIG = "{F04F02DBFC65553E}Configs/Gearscripts/Additional Configs/COA_CVON_Global_Roles_Config.conf";
-const MANAGER = "Scripts/Game/Systems/Core/Managers/Gamemode/Gearscript/COA_GearscriptManager.c";
-const LOBBY_PREFAB = "Prefabs/!Systems/!Lobby/COA_Lobby.et";
+export const ROLES_CONFIG = "{4388548E9F600148}Configs/Gearscripts/COA_Global_Roles_Config.conf";
+export const CVON_ROLES_CONFIG = "{F04F02DBFC65553E}Configs/Gearscripts/Additional Configs/COA_CVON_Global_Roles_Config.conf";
+export const MANAGER = "Scripts/Game/Systems/Core/Managers/Gamemode/Gearscript/COA_GearscriptManager.c";
+export const LOBBY_PREFAB = "Prefabs/!Systems/!Lobby/COA_Lobby.et";
 
 // ApplyDefaultWeapons :287-384: these four pick one weapon at random, the rest are single fields
-const POOLS: Record<string, string> = { RIFLE: "m_Rifles", RIFLEUGL: "m_RifleUGLs", CARBINE: "m_Carbines", PISTOL: "m_Pistols" };
-const SINGLES: Record<string, string> = {
+export const POOLS: Record<string, string> = { RIFLE: "m_Rifles", RIFLEUGL: "m_RifleUGLs", CARBINE: "m_Carbines", PISTOL: "m_Pistols" };
+export const SINGLES: Record<string, string> = {
   SNIPER: "m_SNIPER", AR: "m_AR", MMG: "m_MMG", HMG: "m_HMG", AT: "m_AT", MAT: "m_MAT", HAT: "m_HAT", AA: "m_AA",
 };
 // ApplyInventoryItems :532-536: slot types that get an SR radio when only leadership radios are on
-const LEADER_SLOTS = ["TEAM_LEADER", "SQUAD_LEADER", "SPECIALTY", "SPECIALTY_ASSISTANT"];
+export const LEADER_SLOTS = ["TEAM_LEADER", "SQUAD_LEADER", "SPECIALTY", "SPECIALTY_ASSISTANT"];
 
 export interface Radios {
   leadership: boolean;
@@ -38,7 +38,7 @@ export interface Radios {
 // COA_GearScriptContainer attribute defaults (COA_GearscriptConfig.c:14-24)
 const DEFAULT_RADIOS: Radios = { leadership: true, gi: false, rto: true };
 // COA_Gamemode.c:183-195: CIV is m_CIVILIANGearScriptSettings
-const SETTINGS_FIELD: Record<Side, string> = {
+export const SETTINGS_FIELD: Record<Side, string> = {
   BLUFOR: "m_BLUFORGearScriptSettings", OPFOR: "m_OPFORGearScriptSettings", INDFOR: "m_INDFORGearScriptSettings", CIV: "m_CIVILIANGearScriptSettings",
 };
 

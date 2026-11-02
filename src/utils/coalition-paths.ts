@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { Config } from "../config.js";
 import { validateProjectPath } from "./safe-path.js";
 
-const CRF_MARKER = join("Tools", "Validation", "validate_mission.py");
+export const CRF_MARKER = join("Tools", "Validation", "validate_mission.py");
 
 export interface CoalitionRoots {
   crf: string;

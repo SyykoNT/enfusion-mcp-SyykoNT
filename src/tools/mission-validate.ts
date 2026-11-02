@@ -13,7 +13,7 @@ import { validateProjectPath } from "../utils/safe-path.js";
 const PY_FLAGS = ["-I", "-B", "-X", "utf8"];
 const TIMEOUT_MS = 120_000;
 
-const SCRIPTS = {
+export const SCRIPTS = {
   qa: "validate_mission.py",
   synopsis: "mission_synopsis.py",
   resources: "validate_resources.py",

@@ -21,10 +21,10 @@ export interface NameRef {
 export interface NameNote { level: "warning" | "info"; text: string }
 
 // Field suffixes from the FindEntityByName call sites (e.g. CRF_TaskCreatorComponent.c:321, CRF_CTF_Game.c:157)
-const NAME_FIELD = /^m_s\w*(EntityName|BaseName|FlagName|BoundaryName|SpawnName|TriggerName|ZoneName)$/;
-const NAME_LIST = /^m_a\w*Names$/;
+export const NAME_FIELD = /^m_s\w*(EntityName|BaseName|FlagName|BoundaryName|SpawnName|TriggerName|ZoneName)$/;
+export const NAME_LIST = /^m_a\w*Names$/;
 // Look like names but are labels: Rush m_sZoneName "does NOT do anything outside of MM organization" (CRF_Rush_Game.c:38)
-const NOT_NAMES = new Set(["m_sZoneName"]);
+export const NOT_NAMES = new Set(["m_sZoneName"]);
 
 const label = (e: MissionEntity) => e.name ?? `${e.className} in ${e.layer}`;
 
