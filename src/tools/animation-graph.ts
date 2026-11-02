@@ -4,6 +4,7 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, extname } from "node:path";
 import type { Config } from "../config.js";
 import { validateProjectPath } from "../utils/safe-path.js";
+import { resolveWriteAddon } from "../utils/game-paths.js";
 import { PakVirtualFS } from "../pak/vfs.js";
 import {
   parseAgrToStruct, parseAgfToStruct, parseAstToStruct,
@@ -763,7 +764,8 @@ export function registerAnimationGraph(server: McpServer, config: Config): void 
         seatTypes: z.array(z.enum(["driver", "gunner", "commander", "passenger"])).default(["driver"]).describe("(author/setup) Seat types for the vehicle."),
         dialList: z.array(z.string()).default([]).describe("(author/setup) Variable names to use as dials (e.g. ['Engine_RPM', 'SPEED'])."),
         outputPath: z.string().optional().describe("(author/setup) Destination folder within mod project (e.g. 'Assets/Vehicles/MyTruck/workspaces'). Defaults to 'Assets/Vehicles/<vehicleName>/workspaces'."),
-        projectPath: z.string().optional().describe("(author/inspect/setup) Mod project root. Uses default if omitted."),
+        projectPath: z.string().optional().describe("(author/inspect/setup) Addon root. author/setup write only with modName or projectPath (wins); inspect reads from the project path if omitted."),
+        modName: z.string().optional().describe("(author/setup) Addon folder under the project path or ENFUSION_ADDONS_DIR."),
 
         // ── inspect params ──
         path: z.string().optional().describe(
@@ -803,10 +805,11 @@ export function registerAnimationGraph(server: McpServer, config: Config): void 
 
       // ── author handler ──────────────────────────────────────────────────────
       if (opts.action === "author") {
-        const basePath = opts.projectPath || config.projectPath;
-        if (!basePath) {
-          return { content: [{ type: "text", text: "No project path configured." }], isError: true };
+        const target = resolveWriteAddon(config, { projectPath: opts.projectPath, modName: opts.modName });
+        if ("error" in target) {
+          return { content: [{ type: "text", text: target.error }], isError: true };
         }
+        const basePath = target.dir;
 
         if (!opts.vehicleName) {
           return { content: [{ type: "text", text: "author action requires vehicleName." }], isError: true };
@@ -1032,8 +1035,9 @@ export function registerAnimationGraph(server: McpServer, config: Config): void 
         const parts: string[] = [];
 
         if (opts.step === "all" || opts.step === "agr") {
-          const basePath = opts.projectPath || config.projectPath;
-          if (basePath) {
+          const target = resolveWriteAddon(config, { projectPath: opts.projectPath, modName: opts.modName });
+          if (!("error" in target)) {
+            const basePath = target.dir;
             try {
               const agrContent = generateAgrAuthor(cfg);
               const astContent = generateAstAuthor(cfg);
@@ -1057,7 +1061,7 @@ export function registerAnimationGraph(server: McpServer, config: Config): void 
             }
           } else {
             parts.push(
-              `## Step 1: AGR + AST — Skipped\nNo project path configured. Set ENFUSION_PROJECT_PATH or provide projectPath.`
+              `## Step 1: AGR + AST, not written\n${target.error}`
             );
           }
         }
