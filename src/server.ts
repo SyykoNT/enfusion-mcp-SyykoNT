@@ -13,6 +13,7 @@ import { registerMissionValidate } from "./tools/mission-validate.js";
 import { registerGearscriptInspect } from "./tools/gearscript-inspect.js";
 import { registerMissionInspect } from "./tools/mission-inspect.js";
 import { registerMissionGit } from "./tools/mission-git.js";
+import { registerMissionPrDraft } from "./tools/mission-pr-draft.js";
 import { registerLayoutCreate } from "./tools/layout-create.js";
 import { registerLayoutRecipe } from "./tools/layout-recipe.js";
 import { registerMenuCreate } from "./tools/menu-create.js";
@@ -93,6 +94,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerGearscriptInspect(server, config);
   registerMissionInspect(server, config);
   registerMissionGit(server, config);
+  registerMissionPrDraft(server, config);
   registerLayoutCreate(server, config);
   registerLayoutRecipe(server, config);
   registerMenuCreate(server, config);
