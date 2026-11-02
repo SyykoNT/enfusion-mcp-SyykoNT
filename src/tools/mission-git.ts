@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Config } from "../config.js";
 import { git, gitOrNull } from "../release/git.js";
 import { resolveCoalitionRoots } from "../utils/coalition-paths.js";
+import { realPathOf } from "../utils/safe-path.js";
 
 export type FileGroup = "world" | "conf" | "gearscripts" | "prefabs" | "other";
 export interface ChangedFile { path: string; status: string; where: ("committed" | "uncommitted" | "untracked")[]; group: FileGroup }
@@ -59,7 +60,8 @@ export function missionGit(config: Config, opts: MissionGitOptions = {}): Missio
   }
   const crf = roots.crf.root;
   const top = gitOrNull(crf, ["rev-parse", "--show-toplevel"]);
-  if (!top || resolve(top).toLowerCase() !== resolve(crf).toLowerCase()) throw new Error(`${crf} is not a git clone of its own.`);
+  // git prints the long real path, so compare real paths: crf may be an 8.3 short path or a link
+  if (!top || realPathOf(top) !== realPathOf(crf)) throw new Error(`${crf} is not a git clone of its own.`);
   // Fetching writes refs and FETCH_HEAD, so it runs only when the caller asks
   if (opts.fetch) git(crf, ["fetch", "origin", "release"]);
   const base = opts.base ?? "origin/release";
