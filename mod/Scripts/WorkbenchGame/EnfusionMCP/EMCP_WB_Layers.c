@@ -92,6 +92,20 @@ class EMCP_WB_Layers : NetApiHandler
 		return new EMCP_WB_LayersRequest();
 	}
 
+	//! The name becomes <World>_Layers\<name>.layer on save: letters, digits and '_' only (COALITION's layer names fit), 1 to 64 characters.
+	static bool IsLayerName(string s)
+	{
+		if (s.Length() < 1 || s.Length() > 64)
+			return false;
+		for (int i = 0; i < s.Length(); i++)
+		{
+			int c = s.ToAscii(i);
+			if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95))
+				return false;
+		}
+		return true;
+	}
+
 	//! GetSubsceneLayerId returns an id >= 0 even for an unknown path (live 1.8), so check the sub-scene's own list.
 	protected bool HasLayer(WorldEditorAPI api, int sub, string path)
 	{
@@ -141,6 +155,12 @@ class EMCP_WB_Layers : NetApiHandler
 		int sub = req.subScene;
 		if (sub < 0)
 			sub = resp.currentSubScene;
+		if (sub >= api.GetNumSubScenes())
+		{
+			resp.status = "error";
+			resp.message = "subScene " + sub.ToString() + " does not exist (this world has " + api.GetNumSubScenes().ToString() + "; the edited one is " + resp.currentSubScene.ToString() + ")";
+			return resp;
+		}
 		resp.activeLayer = api.GetActiveSubsceneLayer(sub);
 
 		if (req.action == "list")
@@ -187,8 +207,8 @@ class EMCP_WB_Layers : NetApiHandler
 		else if (req.action == "create")
 		{
 			resp.status = "error";
-			if (req.name == "" || req.name.Contains("/"))
-				resp.message = "name parameter required for create: one layer name without '/'";
+			if (!IsLayerName(req.name))
+				resp.message = "name for create must be 1 to 64 letters, digits or '_' (it becomes the .layer file name): " + req.name;
 			// Live 1.8: a layer created under another layer was not written by Save(), and its entities were lost
 			else if (req.parentPath != "")
 				resp.message = "Nested layers are not offered: a layer created under another layer through the script API is not saved (Save() returned false and its entities were lost, live check 2026-11-02). Create a top-level layer.";
@@ -217,6 +237,11 @@ class EMCP_WB_Layers : NetApiHandler
 			if (req.layerPath == "")
 			{
 				resp.message = "layerPath parameter required for setActive";
+			}
+			// New entities go to the active layer of the edited sub-scene only
+			else if (sub != resp.currentSubScene)
+			{
+				resp.message = "setActive works only in the sub-scene being edited (" + resp.currentSubScene.ToString() + "), not in " + sub.ToString();
 			}
 			else if (!HasLayer(api, sub, req.layerPath))
 			{

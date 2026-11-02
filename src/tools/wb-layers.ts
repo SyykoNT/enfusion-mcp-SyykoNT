@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
-const MUTATING_LAYER_ACTIONS = new Set(["create", "delete", "rename", "toggleLock", "setActive"]);
+const MUTATING_LAYER_ACTIONS = new Set(["create", "toggleLock", "setActive"]);
+// Becomes <World>_Layers\<name>.layer on save; COALITION's layer names (_INIT, MARKERS, GameBorderS ...) fit
+const LAYER_NAME = /^[A-Za-z0-9_]{1,64}$/;
 // Handlers older than WE-SAVEAS answer these with "Unknown action"
 const NEW_HANDLER_ACTIONS = new Set(["create", "setActive"]);
 
@@ -19,27 +21,14 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         "create, setActive and toggleLock only work in edit mode.",
       inputSchema: {
         action: z
-          .enum([
-            "list",
-            "getActive",
-            "create",
-            "delete",
-            "rename",
-            "setActive",
-            "setVisibility",
-            "lock",
-            "unlock",
-            "isVisible",
-            "getInfo",
-            "toggleLock",
-          ])
+          .enum(["list", "getActive", "create", "setActive", "isVisible", "getInfo", "toggleLock"])
           .describe("Layer management action to perform"),
         subScene: z
           .number()
           .int()
           .min(0)
           .optional()
-          .describe("Sub-scene index (default: the sub-scene being edited; 0 is the terrain's base world). create works only in the edited one"),
+          .describe("Sub-scene index (default: the sub-scene being edited; 0 is the terrain's base world). create and setActive work only in the edited one"),
         layerPath: z
           .string()
           .optional()
@@ -47,14 +36,24 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         name: z
           .string()
           .optional()
-          .describe("Layer name for create (one name, no '/'; layers are top-level)"),
-        visible: z
-          .boolean()
+          .describe("Layer name for create: 1 to 64 letters, digits or '_' (it becomes the .layer file name)"),
+        parentPath: z
+          .string()
           .optional()
-          .describe("Visibility state for setVisibility (true = visible, false = hidden)"),
+          .describe("Not supported: nested layers made through the script API are not saved, so any parentPath is refused"),
       },
     },
-    async ({ action, subScene, layerPath, name, visible }) => {
+    async ({ action, subScene, layerPath, name, parentPath }) => {
+      const refuse = (text: string) => ({ content: [{ type: "text" as const, text: text + formatConnectionStatus(client) }], isError: true as const });
+      if (action === "create") {
+        // Refused here, not dropped: a nested request must not quietly become a top-level layer
+        if (parentPath) {
+          return refuse("Nested layers are not offered: a layer created under another layer through the script API is not saved (Save() returned false and its entities were lost, live check 2026-11-02). Create a top-level layer. Nothing was changed.");
+        }
+        if (!name || !LAYER_NAME.test(name)) {
+          return refuse(`Layer name must be 1 to 64 letters, digits or '_' (it becomes the .layer file name): "${name ?? ""}". Nothing was changed.`);
+        }
+      }
       if (MUTATING_LAYER_ACTIONS.has(action)) {
         const modeErr = await ensureMode(client, "edit", `${action} layer`);
         if (modeErr) {
@@ -66,7 +65,6 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         if (subScene !== undefined) params.subScene = subScene;
         if (layerPath) params.layerPath = layerPath;
         if (name) params.name = name;
-        if (visible !== undefined) params.visible = visible;
 
         const result = await client.call<Record<string, unknown>>("EMCP_WB_Layers", params);
 
@@ -122,35 +120,8 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
           return done(`**Active Layer Set**\n\n- **Active layer:** ${active}\n\nNew entities go to this layer.`);
         }
 
-        if (action === "toggleLock") {
-          const nowLocked = result.layerLocked;
-          return {
-            content: [{
-              type: "text" as const,
-              text: `**Layer Lock Toggled**\n\nLayer "${layerPath}" is now ${nowLocked ? "locked" : "unlocked"}${formatConnectionStatus(client)}`,
-            }],
-          };
-        }
-
-        const actionLabels: Record<string, string> = {
-          delete: `Deleted layer "${layerPath}"`,
-          rename: `Renamed layer "${layerPath}" to "${name}"`,
-          setVisibility: `Set "${layerPath}" visibility to ${visible ? "visible" : "hidden"}`,
-          lock: `Locked layer "${layerPath}"`,
-          unlock: `Unlocked layer "${layerPath}"`,
-          isVisible: `Queried visibility of layer "${layerPath}"`,
-          getInfo: `Got info for layer "${layerPath}"`,
-          toggleLock: `Toggled lock on layer "${layerPath}"`,
-        };
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `**Layer Updated**\n\n${actionLabels[action] || action}${result.message ? `\n${result.message}` : ""}${formatConnectionStatus(client)}`,
-            },
-          ],
-        };
+        // toggleLock, the one action left
+        return done(`**Layer Lock Toggled**\n\nLayer "${layerPath}" is now ${result.layerLocked ? "locked" : "unlocked"}`);
       } catch (e) {
         let msg = e instanceof Error ? e.message : String(e);
         if (msg.startsWith("Unknown action") && NEW_HANDLER_ACTIONS.has(action)) {

@@ -18,11 +18,29 @@ function layers(answer: Record<string, unknown> | Error) {
 }
 
 describe("wb_layers", () => {
-  it("create sends the name, no sub-scene unless given and no parent, and prints the path the handler made", async () => {
-    const t = layers({ status: "ok", layerPath: "OBJECTIVES", activeLayer: "default", currentSubScene: 2 });
+  it("create refuses a nested request instead of making a top-level layer, without calling Workbench", async () => {
+    const t = layers({ status: "ok", layerPath: "OBJECTIVES" });
     const r = await t.run({ action: "create", name: "OBJECTIVES", parentPath: "MISSION" });
-    expect(t.call).toHaveBeenCalledWith("EMCP_WB_Layers", { action: "create", name: "OBJECTIVES" });
-    expect(r.content[0].text).toContain("- **Layer:** OBJECTIVES\n");
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("Nested layers are not offered");
+    expect(t.call).not.toHaveBeenCalled();
+  });
+
+  it("create refuses a name that is not letters, digits or '_' (it becomes a file name), without calling Workbench", async () => {
+    for (const name of ["..\\x", "a/b", "A B", "", "x".repeat(65)]) {
+      const t = layers({ status: "ok", layerPath: name });
+      const r = await t.run({ action: "create", name });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain("Layer name must be 1 to 64 letters, digits or '_'");
+      expect(t.call).not.toHaveBeenCalled();
+    }
+  });
+
+  it("create sends the name, no sub-scene unless given, and prints the path the handler made", async () => {
+    const t = layers({ status: "ok", layerPath: "_INIT", activeLayer: "default", currentSubScene: 2 });
+    const r = await t.run({ action: "create", name: "_INIT" });
+    expect(t.call).toHaveBeenCalledWith("EMCP_WB_Layers", { action: "create", name: "_INIT" });
+    expect(r.content[0].text).toContain("- **Layer:** _INIT\n");
     expect(r.content[0].text).toContain("Written to disk on the next wb_save.");
   });
 
