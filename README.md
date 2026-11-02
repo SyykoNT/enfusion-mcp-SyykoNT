@@ -95,10 +95,10 @@ Added since that test pass:
   resulting `data.pak`.
 - `server install` and `server update` leave Steam's own server install to Steam.
 - New tools: `resource_resolve`, `wb_watch`, `addon_git_guard`, `addon_deps`, `release_audit`,
-  `script_errors`, `log_watch`, and read-only tools for COALITION CRF missions: `mission_inspect`,
+  `script_errors`, `log_watch`, `wb_handlers`, and read-only tools for COALITION CRF missions: `mission_inspect`,
   `mission_validate`, `gearscript_inspect`, `mission_names` and `server_params`.
 
-Test suite: 1209 passed, 14 skipped.
+Test suite: 1222 passed, 14 skipped.
 
 ## Requirements
 
@@ -160,7 +160,9 @@ then `enfusion-mcp.config.json` in the repository root (see `enfusion-mcp.config
 defaults.
 
 With `ENFUSION_PROJECT_PATH` unset, tools write into addons under `My Games\ArmaReforgerWorkbench\addons`, but
-never into Workshop downloads there (folders with `ServerData.json`) or into the game's Workshop cache.
+never into Workshop downloads there (folders with `ServerData.json`) or into the game's Workshop cache. This
+works only when that folder is a real folder: where it is the guide's link to the game's Workshop cache, writes
+there are refused (see [COALITION CRF missions](#coalition-crf-missions-offline-read-only)).
 
 | Environment variable | Config key | Default |
 |---|---|---|
@@ -189,7 +191,7 @@ never into Workshop downloads there (folders with `ServerData.json`) or into the
 
 ## Tool reference
 
-72 tools, 3 guided prompts and 3 resource templates.
+73 tools, 3 guided prompts and 3 resource templates.
 
 ### Knowledge (offline)
 | Tool | Purpose |
@@ -293,6 +295,7 @@ only read, so they are not affected. To write, name an addon of your own with `g
 | `wb_state` | Mode, entity counts, selection, terrain bounds |
 | `wb_close` | Save the open world and exit Workbench |
 | `wb_cleanup` | Remove the handler scripts from an addon |
+| `wb_handlers` | `install`, `remove` and `status` of the server's own `EMCP_*` handler scripts in one addon; the only tool that writes them into a protected addon, such as a CRF clone |
 | `wb_play` / `wb_stop` | Enter and leave play mode |
 | `wb_save` | Save the world, optionally to a new path |
 | `wb_undo_redo` | Undo or redo in the World Editor |
@@ -349,6 +352,11 @@ only read, so they are not affected. To write, name an addon of your own with `g
   path, skipping those and `ENFUSION_PROTECTED_ADDONS`.
 - `wb_launch` opens a protected addon (`ENFUSION_PROTECTED_ADDONS`) only when its handlers are already in place, and
   never writes into it; `wb_cleanup` keeps them.
+- `wb_handlers` is the one way to put the handlers into a protected addon. It writes only the `EMCP_*` files and
+  the local `.git/info/exclude` line, and `remove` deletes only `EMCP_*` files. It refuses an addon whose handler
+  files are committed, one inside an install, a Workshop cache or `ENFUSION_FORBIDDEN_DIRS`, and a protected git
+  repo when git is not on `PATH`. Only run it on a protected addon when its owner agrees. Workbench registers
+  handlers at start, so restart it after an install.
 - Only `wb_launch` starts Workbench. `wb_cleanup`, `wb_diagnose` and `wb_knowledge` work without it, and
   `wb_close` reports that it is not running. Every other `wb_*` tool returns an error when Workbench is not
   running. Tools that need edit or play mode read the mode right before they act, and a refusal names the mode
@@ -440,7 +448,7 @@ tests/          vitest
 
 ## Status
 
-Version 0.13.1, 72 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
+Version 0.13.1, 73 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
 Workbench are still open for the newest work: loading files written by the new text writer, and the watchdog
 against live dialogs.
 
