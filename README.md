@@ -227,7 +227,7 @@ never into Workshop downloads there (folders with `ServerData.json`) or into the
 | `game` | Game client: `launch` (addons, connect, world), `stop`, `status`, `logs` |
 | `env_check` | Check the setup and say what to set for anything missing |
 | `addon_git_guard` | Local git commit guard for addon repos: `status`, `check` (both read-only) and `install` |
-| `release_audit` | Read-only release report for one addon before a commit, test pack or publish: handler files, git state and commit messages, `.gproj`, meta and `resourceDatabase.rdb` registration, GUID clashes with dependencies, leftovers, BOM and public-text rules, size, preview image. Stable finding IDs and a verdict (blocked, warnings, clean) |
+| `release_audit` | Read-only release report for one addon before a commit, test pack or publish: handler files, git state and commit messages, `.gproj`, meta and `resourceDatabase.rdb` registration, GUIDs shared with dependencies (a warning at another path, info when it overrides the same path), mission config images without a source, leftovers, BOM and public-text rules, size, preview image. Stable finding IDs (U1 marks an unreadable file or a check that failed) and a verdict (blocked, warnings, clean) |
 
 ### COALITION CRF missions (offline, read-only)
 Both tools read a CRF clone and its COALITION-Lobby clone, inside the project path.
