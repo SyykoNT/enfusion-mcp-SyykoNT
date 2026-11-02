@@ -18,9 +18,14 @@ const H = join("Scripts", "WorkbenchGame", "EnfusionMCP");
 const bundled = fileURLToPath(new URL("../../mod/Scripts/WorkbenchGame/EnfusionMCP", import.meta.url));
 type Result = { content: { text: string }[]; isError?: boolean };
 
-afterEach(() => { delete process.env.ENFUSION_FORBIDDEN_DIRS; });
+const made: string[] = [];
+const tmp = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); made.push(d); return d; };
+afterEach(() => {
+  delete process.env.ENFUSION_FORBIDDEN_DIRS;
+  for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
-function setup(projects = join(mkdtempSync(join(tmpdir(), "emcp-hf-")), "projects")) {
+function setup(projects = join(tmp("emcp-hf-"), "projects")) {
   const addon = join(projects, "MyAddon");
   mkdirSync(addon, { recursive: true });
   writeFileSync(join(addon, "addon.gproj"), `GameProject {\n ID "MyAddon"\n GUID "3333333333333333"\n}\n`);
@@ -32,7 +37,7 @@ function setup(projects = join(mkdtempSync(join(tmpdir(), "emcp-hf-")), "project
 }
 // A forbidden folder (ENFUSION_FORBIDDEN_DIRS) holding the target of a junction made at the addon's handler folder.
 function junctionIntoForbidden(addon: string, withHandlers: boolean) {
-  const denied = mkdtempSync(join(tmpdir(), "emcp-hf-denied-"));
+  const denied = tmp("emcp-hf-denied-");
   const target = join(denied, "handlers");
   mkdirSync(target);
   if (withHandlers) cpSync(bundled, target, { recursive: true });
@@ -65,7 +70,7 @@ describe("B-027: a junction at the handler folder into a forbidden root", () => 
 
 describe("B-028: wb_cleanup on an unprotected addon inside a forbidden root", () => {
   it("refuses and keeps the handler files", async () => {
-    const denied = mkdtempSync(join(tmpdir(), "emcp-hf-denied-"));
+    const denied = tmp("emcp-hf-denied-");
     const { addon, tools } = setup(join(denied, "projects"));
     cpSync(bundled, join(addon, H), { recursive: true });
     process.env.ENFUSION_FORBIDDEN_DIRS = denied;
