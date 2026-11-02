@@ -107,8 +107,9 @@ const WRITE_PATH_FLAGS = /^-(profile|logsdir|addondownloaddir|addontempdir|saved
 /** The first extra argument a tool must refuse (write-path flag, one of `own` flags, a quote or line break), or undefined. */
 export function refusedArg(args: string[], own?: RegExp): string | undefined {
   return args.find((a) => {
-    // " -x", "-x=v", "-x v" in one token, "--x" and "/x" all name the flag -x.
-    const flag = a.trim().split(/[=\s]/)[0].replace(/^(--|\/)/, "-");
+    // Any leading run of quotes, dashes (also Unicode ones), slashes or zero-width characters, then the name up to = : space or a quote.
+    const m = a.replace(/[​-‍⁠﻿]/g, "").trim().match(/^['"‘’]*[-/‐-―−﹘﹣－]+([^=:\s'"’]*)/);
+    const flag = m ? `-${m[1]}` : "";
     return WRITE_PATH_FLAGS.test(flag) || !!own?.test(flag) || /["\r\n]/.test(a);
   });
 }

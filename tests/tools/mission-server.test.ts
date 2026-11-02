@@ -168,8 +168,12 @@ describe("write-path flags and the other server tools (review MM-SERVER-3)", () 
 
   it("refusedArg names the flag in every spelling the engine could read (recheck N10)", async () => {
     const { refusedArg } = await import("../../src/utils/process.js");
-    for (const form of [" -logsDir", "--logsDir", "/logsDir", "-logsDir C:\\x", "-LOGSDIR=C:\\x", "-diagMenu"]) expect(refusedArg([form])).toBe(form);
-    expect(refusedArg(["-maxFPS", "60", "-jobsysShortWorkerCount", "2"])).toBeUndefined();
+    const forms = [" -logsDir", "--logsDir", "/logsDir", "-logsDir C:\\x", "-LOGSDIR=C:\\x", "-diagMenu",
+      // Recheck 2 N13: more dashes or slashes, a colon value, Unicode dashes, zero-width characters, single quotes.
+      "---logsDir", "//logsDir", "-logsDir:C:\\x", "\u2013logsDir", "\u2212profile", "\u200B-logsDir", "-\u200BlogsDir", "'-logsDir'", "\u2018-profile\u2019"];
+    for (const form of forms) expect(refusedArg([form])).toBe(form);
+    // Plain values are not flags, even when they spell a flag's name.
+    expect(refusedArg(["-maxFPS", "60", "-jobsysShortWorkerCount", "2", "profile", "logsDir"])).toBeUndefined();
   });
 
   it("game launch checks connect and world before they reach the argv (recheck N12)", async () => {
@@ -178,6 +182,13 @@ describe("write-path flags and the other server tools (review MM-SERVER-3)", () 
     expect((await game({ action: "launch", connect: '127.0.0.1" -profile "C:\\x', lines: 80 })).content[0].text).toMatch(/^connect must be host or host:port/);
     expect((await game({ action: "launch", world: "worlds/../../x.ent", lines: 80 })).content[0].text).toMatch(/^world must be a \.ent resource path/);
     expect((await game({ action: "launch", world: "C:\\x\\y.ent", lines: 80 })).content[0].text).toMatch(/^world must be a \.ent resource path/);
+    // Recheck 2 B2 and N14: a value that starts like a flag, a port out of range, a space, a drive-relative path.
+    for (const connect of ["-scriptAuthorizeAll", "-createDB", "127.0.0.1:0", "127.0.0.1:70000"]) {
+      expect((await game({ action: "launch", connect, lines: 80 })).content[0].text).toMatch(/^connect must be host or host:port/);
+    }
+    for (const world of ["-createDB.ent", "worlds/My World.ent", "C:x.ent", "/worlds/x.ent"]) {
+      expect((await game({ action: "launch", world, lines: 80 })).content[0].text).toMatch(/^world must be a \.ent resource path/);
+    }
     expect(sys.spawned).toEqual([]);
   });
 

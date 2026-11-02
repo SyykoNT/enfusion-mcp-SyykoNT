@@ -39,8 +39,12 @@ export function registerGame(server: McpServer, config: Config): void {
       try {
         if (a.action === "launch") {
           // connect and world reach the argv too: a host[:port] and a .ent resource path, nothing else.
-          if (a.connect && !/^[\w.-]+(:\d{1,5})?$/.test(a.connect)) return text(`connect must be host or host:port, e.g. 127.0.0.1:2001: ${a.connect}`, true);
-          if (a.world && (!/^(\{[0-9A-Fa-f]{16}\})?[\w ./-]+\.ent$/i.test(a.world) || a.world.split("/").includes(".."))) {
+          // A letter or digit first, so neither can be read as a flag (-createDB, -logsDir).
+          const port = a.connect?.match(/^[A-Za-z0-9][\w.-]*(?::(\d{1,5}))?$/);
+          if (a.connect && (!port || (port[1] !== undefined && (Number(port[1]) < 1 || Number(port[1]) > 65535)))) {
+            return text(`connect must be host or host:port (port 1-65535), e.g. 127.0.0.1:2001: ${a.connect}`, true);
+          }
+          if (a.world && (!/^(\{[0-9A-Fa-f]{16}\})?[A-Za-z0-9][\w./-]*\.ent$/i.test(a.world) || a.world.split("/").includes(".."))) {
             return text(`world must be a .ent resource path, e.g. worlds/MP/MPTest.ent: ${a.world}`, true);
           }
           const badArg = refusedArg(a.extraArgs ?? []);
