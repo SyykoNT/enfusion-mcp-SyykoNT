@@ -81,8 +81,11 @@ export function gitState(dir: string, base?: string): GitState {
 
   const unborn = gitOrNull(dir, ["rev-parse", "--verify", "-q", "HEAD"]) === null;
   const upstream = unborn ? null : gitOrNull(dir, ["rev-parse", "--abbrev-ref", "@{u}"]);
+  // base comes from the caller: a leading "-" would be read as an option (--output writes a file), so only a commit it resolves to reaches git log
+  const baseSha = base && !base.startsWith("-") && !unborn ? gitOrNull(dir, ["rev-parse", "--verify", "-q", "--end-of-options", `${base}^{commit}`]) : null;
   // Without an upstream, "unpushed" means on no remote-tracking branch
-  const range = unborn ? null : (base ?? upstream) ? [`${base ?? upstream}..HEAD`] : ["HEAD", "--not", "--remotes"];
+  const from = base ? baseSha : upstream;
+  const range = unborn || (base && !baseSha) ? null : from ? [`${from}..HEAD`] : ["HEAD", "--not", "--remotes"];
   const log = range ? gitOrNull(dir, ["log", ...range, "--format=%h %s%x00%B%x1e"]) : "";
   const commits = (log ?? "").split("\x1e").map((c) => c.trim()).filter(Boolean);
 
@@ -96,7 +99,7 @@ export function gitState(dir: string, base?: string): GitState {
   const forbidden = ["resourceDatabase.rdb", "Scripts/WorkbenchGame/EnfusionMCP", "Scripts/WorkbenchGame/EnfusionMCP.meta"];
   return {
     repo: true,
-    note: base && log === null ? `gitBase ${base} not found: commit messages not scanned` : undefined,
+    note: base && !unborn && (!baseSha || log === null) ? `gitBase ${JSON.stringify(base)} is not a commit in this repo: commit messages not scanned` : undefined,
     unborn,
     branch: gitOrNull(dir, ["branch", "--show-current"]) || "(detached)",
     upstream,

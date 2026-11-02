@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitState, hooksDir, originUrl, stagedPaths, stagedStartsWithBom } from "../../src/release/git.js";
@@ -82,6 +82,23 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", () => {
     g(d, "add", ".");
     g(d, "commit", "-q", "-m", "clean");
     expect(checkGit(gitState(d)).map((x) => x.id)).toEqual(["G6"]);
+  });
+
+  it("gitBase: an option-like value writes nothing and is reported as unknown; a real ref sets the range", () => {
+    const d = repo();
+    writeFileSync(join(d, "A.et"), "GenericEntity {\n}\n");
+    g(d, "add", ".");
+    g(d, "commit", "-q", "--no-verify", "-m", "one");
+    g(d, "commit", "-q", "--no-verify", "--allow-empty", "-m", "two\n\nCo-Authored-By: Claude <noreply@anthropic.com>");
+    const out = mkdtempSync(join(tmpdir(), "emcp-gitbase-"));
+    for (const base of [`--output=${join(out, "PWNED")}`, "-p", "nope"]) {
+      const s = gitState(d, base);
+      expect(readdirSync(out)).toEqual([]);
+      expect(s.aiMessages).toEqual([]);
+      expect(checkGit(s).map((x) => x.message)).toContain(`gitBase ${JSON.stringify(base)} is not a commit in this repo: commit messages not scanned`);
+    }
+    expect(gitState(d, "HEAD~1")).toMatchObject({ ahead: 1, note: undefined });
+    expect(gitState(d, "HEAD~1").aiMessages).toHaveLength(1);
   });
 
   it("G6 only, git checks skipped, outside a repo or inside a parent repo", () => {
