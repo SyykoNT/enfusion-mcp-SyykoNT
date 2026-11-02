@@ -71,7 +71,7 @@ describe("wb_save", () => {
     const t = setup({}, () => ({ status: "ok", saved: true }));
     const r = await t.save({ path: "Worlds/Copy.ent" });
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain("Save As is not available in the 1.8 script API");
+    expect(r.content[0].text).toContain("Save As is not reachable from the 1.8 script API: GameWorldEditor (which has SaveWorldAs) is not a Workbench module");
     expect(t.actions).toEqual([]);
   });
 

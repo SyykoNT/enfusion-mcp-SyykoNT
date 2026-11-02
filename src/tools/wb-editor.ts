@@ -98,12 +98,12 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       description:
         "Save the open world in the World Editor (edit mode only) and list the files written under the world's folder. " +
         "Refuses, without saving, an unnamed world or prefab edit mode (both would open a blocking \"Save world as\" dialog). " +
-        "Save As is not in the 1.8 script API.",
+        "Save As is not reachable from the 1.8 script API, so a path is refused.",
       inputSchema: {
         path: z
           .string()
           .optional()
-          .describe("Not supported: Save As is not in the 1.8 script API, so any path is refused"),
+          .describe("Not supported: Save As is not reachable from the 1.8 script API (live check 2026-11-02), so any path is refused"),
       },
     },
     async ({ path }) => {
@@ -111,7 +111,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         content: [{ type: "text" as const, text: text + formatConnectionStatus(client) }],
         ...(isError ? { isError: true as const } : {}),
       });
-      if (path) return reply("Save As is not available in the 1.8 script API (WBModuleDef has only Save()). Nothing was saved.", true);
+      if (path) return reply("Save As is not reachable from the 1.8 script API: GameWorldEditor (which has SaveWorldAs) is not a Workbench module, GetGame().GetWorldEditor() returns null in Workbench, and the World Editor module has only Save(). Save under a new name by hand (File > Save World As). Nothing was saved.", true);
       const modeErr = await ensureMode(client, "edit", "save");
       if (modeErr) return reply(modeErr, true);
 

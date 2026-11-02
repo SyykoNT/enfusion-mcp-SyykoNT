@@ -327,7 +327,7 @@ only read (apart from those git refs), so they are not affected. To write, name 
 | `wb_entity_select` | Select, deselect, clear or read the selection |
 | `wb_entity_duplicate` | Save a scene entity as a new prefab in an addon |
 | `wb_component` | Add, remove or list an entity's components |
-| `wb_layers` | List, create, delete, rename, activate, show, hide and lock layers |
+| `wb_layers` | List layers, create top-level layers, set and read the active layer, show layer info and toggle a layer's lock |
 | `wb_clipboard` | Copy, cut, paste and duplicate entities |
 | `wb_terrain` | Terrain height at a point; world bounds |
 | `wb_prefabs` | Create templates, save prefabs, look up GUIDs, ancestors and paths |
