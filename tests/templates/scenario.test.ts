@@ -145,7 +145,7 @@ describe("generateConflictScenario", () => {
     it("includes SCR_CampaignFactionManager entity", () => {
       const { defaultLayer } = generateConflictScenario(MINIMAL_OPTS);
       expect(defaultLayer).toContain("SCR_CampaignFactionManager");
-      expect(defaultLayer).toContain("CampaignFactionManager_Seize.et");
+      expect(defaultLayer).toContain("{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et");
     });
 
     it("each entity has a unique ID", () => {
