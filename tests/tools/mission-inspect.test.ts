@@ -38,8 +38,8 @@ describe("mission_inspect", () => {
     expect(text).toContain("**not found**: Intel_1 (CRF_TaskCreatorComponent.m_sSpawnEntityName on COA_Lobby), did you mean intel_1? names are case-sensitive");
     expect(text).toContain("**not found**: mcom_b_trigger");
     expect(text).toContain("not found: CacheHunt_Center (CRF_CacheHuntGamemodeManager.m_sRandomCenterEntityName default on COA_Lobby; unset in the mission");
-    expect(text).toContain("- Intel: type (default), side OPFOR, anchor **Intel_1 not found**");
-    expect(text).toContain("- New Task: type (default), side (default), anchor Radio found, placed from Prefabs/Props/Radio.et (not CRF_task_empty.et)");
+    expect(text).toContain("- Intel: type COLLECT_INTEL (default), side OPFOR, anchor **Intel_1 not found**");
+    expect(text).toContain("- New Task: type COLLECT_INTEL (default), side ALL (default), anchor Radio found, placed from Prefabs/Props/Radio.et (not CRF_task_empty.et)");
     expect(text).toContain("anchor **no anchor name**");
     expect(text).toMatch(/^3 issue\(s\)/m);
   });
@@ -53,6 +53,16 @@ describe("mission_inspect", () => {
     expect(text).not.toMatch(/CheckpointUnderConstruction|VehicleMaintenance_S_BLUFOR/);
     expect(text).toContain("- info: 1 CIV mission prefab(s) placed, but CIV has no slots");
     expect(text).not.toContain("mission .conf files point");
+  });
+
+  it("warns on the PrefabsEditable (E_) copy of an avoid-list composition", async () => {
+    const { text } = await call({ sections: ["rules"] });
+    expect(text).toContain("avoid list (suspected server crashes): PrefabsEditable/Auto/Compositions/Slotted/SlotRoadSmall/E_Barricade_S_US_01.et");
+  });
+
+  it("spares an avoid-category composition shipped in the Lobby, like CRF's own", async () => {
+    const { text } = await call({ sections: ["rules"] });
+    expect(text).not.toContain("LivingArea_L_COA");
   });
 
   it("returns json with only the requested sections", async () => {

@@ -3,10 +3,11 @@ import { existsSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { Config } from "../config.js";
-import { components, loadMission, slotRoles, SIDES, type MissionEntity, type Side } from "../coalition/mission-model.js";
+import { components, loadMission, slotRoles, SIDES, type Mission, type MissionEntity, type Side } from "../coalition/mission-model.js";
 import { prefabClassifier, type Classified, type PrefabKind } from "../coalition/mission-prefabs.js";
 import { collectNameRefs, gamemodeNames, nameDefaults, resolveNames, taskEntries, type NameRef } from "../coalition/name-refs.js";
 import { gitRevision, resolveCoalitionRoots } from "../utils/coalition-paths.js";
+import { enumDefault, loadLobbyEnums } from "../utils/lobby-enums.js";
 import { stripGuid } from "../utils/prefab-ancestry.js";
 import { validateProjectPath } from "../utils/safe-path.js";
 
@@ -50,12 +51,18 @@ function resolveWorld(config: Config, crf: string, world: string): string {
   }
 }
 
-function missionInspect(config: Config, p: Params): string {
-  const { crf, lobby: lobbyRoot } = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
-  const m = loadMission(config, resolveWorld(config, crf, p.world));
+/** A mission world (CRF-relative, project-relative or absolute, inside the project path) that has a COA_Lobby entity. */
+export function loadLobbyMission(config: Config, crf: string, world: string): Mission & { lobby: MissionEntity } {
+  const m = loadMission(config, resolveWorld(config, crf, world));
   if (!m.lobby) {
     throw new Error(`${m.worldRel} has no COA_Lobby entity: not a Lobby mission, or plugin 1 (Automatically Create Initial Layers/Objects) was not run.`);
   }
+  return m as Mission & { lobby: MissionEntity };
+}
+
+function missionInspect(config: Config, p: Params): string {
+  const { crf, lobby: lobbyRoot } = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
+  const m = loadLobbyMission(config, crf, p.world);
   const want = new Set<Section>(p.sections?.length ? p.sections : SECTIONS);
   const lobby = m.lobby;
   const classify = prefabClassifier(config, [lobbyRoot, crf, m.root]);
@@ -92,9 +99,13 @@ function missionInspect(config: Config, p: Params): string {
   const gm = gamemodeNames(m.entities, names);
   const refs = resolveNames([...collectNameRefs(m.entities, nameDefaults([lobbyRoot, crf])), ...gm.refs], names);
   const byName = new Map(m.entities.filter((e) => e.name).map((e) => [e.name!, e]));
-  const tasks = taskEntries(m.entities).map((t) => {
+  const entries = taskEntries(m.entities);
+  // Unset enum fields read as the member with value 0 (CRF_TaskCreatorComponent.c:83-87, Attribute "0")
+  const enums = entries.length ? loadLobbyEnums([lobbyRoot, crf]) : new Map();
+  const unset = (name: string) => `${enumDefault(enums, name) ?? "?"} (default)`;
+  const tasks = entries.map((t) => {
     const anchor = byName.get(t.anchor);
-    return { ...t, found: !!anchor, anchorPrefab: anchor?.prefab, emptyAnchor: anchor ? classes.get(anchor)?.kind === "taskAnchor" : undefined };
+    return { ...t, type: t.type ?? unset("CRF_EObjectiveTaskType"), side: t.side ?? unset("CRF_EObjectiveNotifySide"), found: !!anchor, anchorPrefab: anchor?.prefab, emptyAnchor: anchor ? classes.get(anchor)?.kind === "taskAnchor" : undefined };
   });
 
   // ── rules ──
@@ -186,7 +197,7 @@ function missionInspect(config: Config, p: Params): string {
     if (!tasks.length) out.push("- no CRF_TaskCreatorComponent entries");
     for (const t of tasks) {
       const anchor = !t.anchor ? "**no anchor name**" : t.found ? `${t.anchor} found${t.emptyAnchor ? "" : `, placed from ${t.anchorPrefab ? stripGuid(t.anchorPrefab) : "no prefab"} (not CRF_task_empty.et)`}` : `**${t.anchor} not found**`;
-      out.push(`- ${t.label ?? "New Task"}: type ${t.type ?? "(default)"}, side ${t.side ?? "(default)"}, anchor ${anchor}`);
+      out.push(`- ${t.label ?? "New Task"}: type ${t.type}, side ${t.side}, anchor ${anchor}`);
     }
   }
   if (want.has("rules")) {
