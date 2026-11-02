@@ -182,7 +182,7 @@ export function doctorRows(config: Config, probe: Probe): Row[] {
   const unignored = clones.filter((d) => git(d, ["check-ignore", "-q", "Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c"]) === null);
   add(mcp, "Workbench handler files git-ignored", !clones.length ? "info" : unignored.length ? "warn" : "ok",
     !clones.length ? "no clones" : unignored.length ? `not ignored in ${unignored.join(", ")}` : `ignored in ${clones.join(", ")}`,
-    "Add Scripts/WorkbenchGame/EnfusionMCP/ to the clone's .git/info/exclude, so the MCP's Workbench handlers never reach a commit.");
+    "wb_handlers install adds Scripts/WorkbenchGame/EnfusionMCP/ to the clone's .git/info/exclude (ask first), or add that line by hand, so the MCP's Workbench handlers never reach a commit.");
   return rows;
 }
 
