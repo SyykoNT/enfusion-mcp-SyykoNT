@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { myGamesDir } from "../utils/game-paths.js";
 import type { Config } from "../config.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive } from "../utils/process.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive, refusedArg } from "../utils/process.js";
 import { OWNER, pidInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
 
 const GAME_EXE = "ArmaReforgerSteam.exe";
@@ -38,6 +38,8 @@ export function registerGame(server: McpServer, config: Config): void {
       const running = () => [...findPids(GAME_EXE), ...findPids(GAME_DIAG_EXE)];
       try {
         if (a.action === "launch") {
+          const badArg = refusedArg(a.extraArgs ?? []);
+          if (badArg) return text(`extraArgs may not contain ${badArg}: write-path flags (-profile, -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg) and quotes are refused.`, true);
           if (running().length) return text("The game is already running: `game stop` first.", true);
           const diag = !!(a.connect || a.world);
           const exe = join(config.gamePath, diag ? GAME_DIAG_EXE : GAME_EXE);

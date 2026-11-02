@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { Config } from "../config.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
 import { myGamesDir } from "../utils/game-paths.js";
+import { dstProfileDirs } from "./server-params.js";
+import { missionLogRoots } from "./mission-server.js";
 import { DEFAULT_FAIL_PATTERNS, isUnderRoots, resolveLogFile, scan, waitFor, type LogSpec } from "../utils/logwatch.js";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
@@ -17,9 +19,14 @@ const regex = (s: string) => {
   }
 };
 
-/** Folders log_watch may read: the MCP's own log locations plus ENFUSION_LOG_ROOTS. */
+/** Folders log_watch may read: the MCP's own log locations, the Dedicated Server Tool's profiles, plus ENFUSION_LOG_ROOTS. */
 export function logRoots(config: Config): string[] {
+  const dst = dstProfileDirs(config);
   return [
+    // Only each profile's logs folder: the profile names come from a settings file, not from the user (review GI-14 B1).
+    ...(dst.server ? [join(dst.server, "logs")] : []),
+    ...dst.peers.map((p) => join(p, "logs")),
+    ...missionLogRoots(),
     config.serverProfilePath,
     join(workbenchProfileDir(config), "logs"),
     join(myGamesDir(), "ArmaReforger", "logs"),
@@ -38,8 +45,8 @@ export function registerLogWatch(server: McpServer, config: Config): void {
         "named groups or [TAG] VERB k=v harness rows and checks assertions. Read only; returns a cursor to resume from.",
       inputSchema: {
         action: z.enum(["wait", "scan"]),
-        source: z.enum(["server", "client", "workbench", "path"]),
-        instance: z.string().default("default").describe("(server/client) Instance name"),
+        source: z.enum(["server", "client", "workbench", "path", "dstServer", "dstPeers"]),
+        instance: z.string().default("default").describe("(server/client) Instance name; (dstPeers) peer number, default 1"),
         path: z.string().optional().describe("(path) A .log file, a logs_* folder, or a folder with logs\\logs_* below it, under an allowed log root"),
         file: z.enum(["console", "script", "error"]).default("console").describe("File inside the log folder"),
         newerThan: z.union([z.string(), z.number()]).optional().describe("ISO time or epoch ms: use the newest log folder from then on; wait also waits for it to appear"),
@@ -62,7 +69,7 @@ export function registerLogWatch(server: McpServer, config: Config): void {
       try {
         if (a.timeoutSec > 600) return text("timeoutSec over 600: use test_run (TS-N1) for long runs", true);
         // shortcut: one server profile and one client log root today; named instances come with parallel servers (TS-I2).
-        if (a.source !== "path" && a.source !== "workbench" && a.instance !== "default") {
+        if ((a.source === "server" || a.source === "client") && a.instance !== "default") {
           return text(`Instance "${a.instance}" not found. Known instances: default`, true);
         }
         const roots = logRoots(config);
@@ -72,6 +79,17 @@ export function registerLogWatch(server: McpServer, config: Config): void {
           if (!isUnderRoots(a.path, roots)) return text(`Path is not under an allowed log root: ${a.path}`, true);
           if (existsSync(a.path) && statSync(a.path).isFile() && !a.path.toLowerCase().endsWith(".log")) return text(`Not a .log file: ${a.path}`, true);
           dir = a.path;
+        } else if (a.source === "dstServer" || a.source === "dstPeers") {
+          // Dedicated Server Tool runs (GI-14): profile folders from its saved settings.
+          const dst = dstProfileDirs(config);
+          const n = a.instance === "default" ? 1 : Number(a.instance);
+          const found = a.source === "dstServer" ? dst.server : dst.peers[n - 1];
+          if (!found) {
+            return text(a.source === "dstServer"
+              ? `The Dedicated Server Tool has no Profile set in ${dst.settings}; set Profile in the tool (the guide uses "server").`
+              : `No Dedicated Server Tool peer ${a.instance === "default" ? 1 : a.instance} with a profile folder; peers found: ${dst.peers.length} (${dst.settings})`, true);
+          }
+          dir = found;
         } else {
           dir = a.source === "server" ? config.serverProfilePath : a.source === "client" ? join(myGamesDir(), "ArmaReforger", "logs") : join(workbenchProfileDir(config), "logs");
         }
