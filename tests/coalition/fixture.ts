@@ -174,6 +174,8 @@ export function makeProjects(): {
     "CRF/Prefabs/Mine/MySpawn.et": `COA_StaticSpawnPoint : "{4000000000000002}${MM}/SpawnPoints/SpawnPoints/OPFOR_Spawn.et" {\n}\n`,
     "CRF/Prefabs/Compositions/Slotted/SlotFlatSmall/VehicleMaintenance_S_BLUFOR.et": "GenericEntity {\n}\n",
     "CRF/Prefabs/Compositions/Slotted/SlotRoadLarge/COAL_Barricade_L_US_Green_01.et": "GenericEntity {\n}\n",
+    // Sorts before the .et, so the replacement lookup must skip it
+    "CRF/Prefabs/Compositions/Slotted/SlotRoadLarge/COAL_Barricade_L_AA_01.et.meta": meta("{4000000000000010}Prefabs/Compositions/Slotted/SlotRoadLarge/COAL_Barricade_L_AA_01.et"),
     [`CRF/${MM}/Systems/TaskCreator/CRF_task_empty.et.meta`]: meta(`{4000000000000008}${MM}/Systems/TaskCreator/CRF_task_empty.et`),
     [`CRF/${MM}/Markers/ObjectiveMarkers/NEW/CIVILIAN_NewObjectiveMarker.et.meta`]: meta(`{4000000000000007}${MM}/Markers/ObjectiveMarkers/NEW/CIVILIAN_NewObjectiveMarker.et`),
     "COALITION-Lobby/Prefabs/!Systems/!Lobby/COA_Lobby.et": `COA_Gamemode {\n m_INDFORSlots {\n  COA_SlottingGroup "{3000000000000009}" {\n   m_aSlots {\n    RIFLEMAN\n    RIFLEMAN\n   }\n  }\n }\n}\n`,
