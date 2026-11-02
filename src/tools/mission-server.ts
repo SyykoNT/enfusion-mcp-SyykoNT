@@ -53,7 +53,7 @@ export interface StartArgs {
 }
 
 /** Checks the inputs and works out the run, or says why not. Every value here ends up in a process argv. */
-export function planRun(a: StartArgs, config: Pick<Config, "projectPath">, docs = documentsDir): Run | string {
+export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addonsDir">, docs = documentsDir): Run | string {
   if (!isAbsolute(a.world) || !/\.ent$/i.test(a.world) || !existsSync(a.world)) return `world must be an existing absolute .ent path: ${a.world}`;
   const found = findMissionHeader(a.world);
   if (!found.addon) return `No .gproj above ${a.world}: the world must be inside an unpacked addon.`;
@@ -65,7 +65,11 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath">, docs 
   if (header !== undefined && (!/^[\w ./-]+\.conf$/i.test(header) || header.split("/").includes(".."))) return `missionHeader is not a .conf resource path: ${a.missionHeader}`;
   const addons = a.addons ?? [readGproj(gproj).id];
   if (!addons.length || addons.some((id) => !/^[\w.-]+$/.test(id))) return `addons must be addon IDs (letters, digits, . _ -): ${addons.join(", ")}`;
-  const dirs = a.addonsDirs ?? [config.projectPath, join(docs(), "My Games", "ArmaReforgerWorkbench", "addons")].filter((d) => existsSync(d));
+  // Default as wb_launch: ENFUSION_ADDONS_DIR when set, else the guide's Params (projects plus the Workbench addons folder).
+  const dirs = a.addonsDirs ??
+    (config.addonsDir
+      ? config.addonsDir.split(",").map((d) => d.trim()).filter(Boolean)
+      : [config.projectPath, join(docs(), "My Games", "ArmaReforgerWorkbench", "addons")].filter((d) => existsSync(d)));
   // The world's own addon must be found: add its parent folder when no listed folder holds it.
   if (!dirs.some((d) => isUnder(found.addon!, d))) dirs.push(dirname(found.addon));
   const bad = dirs.find((d) => !isAbsolute(d) || /[",\r\n]/.test(d) || !existsSync(d));
@@ -120,7 +124,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         world: z.string().optional().describe("(start) Absolute path of the mission .ent inside an unpacked addon"),
         missionHeader: z.string().optional().describe("(start) Header .conf as {GUID}path or path; default the one whose World is this .ent (server_params)"),
         addons: z.array(z.string()).optional().describe("(start) Addon IDs for -addons; default the world's addon (the server resolves its dependencies)"),
-        addonsDirs: z.array(z.string()).optional().describe("(start) Folders for -addonsDir; default the project folder and the Workbench addons folder"),
+        addonsDirs: z.array(z.string()).optional().describe("(start) Folders for -addonsDir (read only); default ENFUSION_ADDONS_DIR, else the project folder and the Workbench addons folder"),
         port: z.number().int().min(1024).max(65535).optional().describe("Loopback game port (-addr 127.0.0.1:<port>), one run per port; start and join default to 2521, stop without it stops every run of this tool"),
         peers: z.number().int().min(0).max(4).default(0).describe("(start) Game clients to start once the server is in GAME"),
         extraArgs: z.array(z.string()).optional().describe("(start) Extra server args, e.g. ['-jobsysShortWorkerCount','2']"),

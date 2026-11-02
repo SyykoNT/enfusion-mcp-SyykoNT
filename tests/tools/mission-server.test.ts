@@ -70,6 +70,14 @@ describe("mission_server run plan and command lines", () => {
     expect(peer).toEqual(expect.arrayContaining(["-window", "-forceupdate", "-nofocus", "-rpl-reconnect", "-rpl-timeout-disable"]));
   });
 
+  it("defaults -addonsDir to ENFUSION_ADDONS_DIR when it is set, adding the world's own folder only when missing", () => {
+    const t = addon();
+    const extra = mkdtempSync(join(tmpdir(), "emcp-ms-mods-"));
+    const run = planRun({ world: t.world, port: 2521 }, { projectPath: join(t.root, "elsewhere"), addonsDir: `${t.root}, ${extra}` });
+    expect(typeof run !== "string" && run.addonsDirs).toEqual([t.root, extra]);
+    expect(planRun({ world: t.world, port: 2521 }, { projectPath: t.root, addonsDir: `${t.root},${join(t.root, "No Such Folder")}` })).toMatch(/existing absolute folders/);
+  });
+
   it("refuses inputs that would break or escape the command line", () => {
     const t = addon();
     const c = config(t.root);
