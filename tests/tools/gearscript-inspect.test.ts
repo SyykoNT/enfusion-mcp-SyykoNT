@@ -326,6 +326,7 @@ describe("gearscript_inspect lookup and output", () => {
   it("picks the roles config named in the gear manager; the global one gets CRF's override merged", async () => {
     const cvon = await call({ cvon: true });
     expect(cvon.content[0].text).toContain("Roles config: CVON, {5555666677778888}Configs/Gearscripts/Extra/CVON_Roles.conf (from COALITION-Lobby)");
+    expect(cvon.content[0].text).toContain(`\nCRF: clone unknown (${join(root, "CRF")})\nLobby: clone unknown (${join(root, "COALITION-Lobby")})\n`);
     expect(Object.keys(await loadouts({ cvon: true }))).toEqual(["RIFLEMAN", "SQUAD_LEAD"]);
     expect((await call({})).content[0].text).toContain("(from COALITION-Lobby + override in CRF; cvon: false)");
     expect(Object.keys(await loadouts())).toContain("ZOMBIE");

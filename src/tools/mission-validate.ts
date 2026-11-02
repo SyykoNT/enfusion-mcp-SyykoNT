@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { Config } from "../config.js";
-import { gitRevision, resolveCoalitionRoots } from "../utils/coalition-paths.js";
+import { resolveCoalitionRoots } from "../utils/coalition-paths.js";
 import { findPython, type PythonCommand } from "../utils/python.js";
 import { validateProjectPath } from "../utils/safe-path.js";
 
@@ -160,7 +160,18 @@ interface Params {
 
 async function missionValidate(config: Config, p: Params): Promise<{ text: string; isError: boolean }> {
   if (!p.world === !p.baseRef) throw new Error("Pass exactly one of world or baseRef.");
-  const { crf, lobby } = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
+  const roots = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
+  // The scripts run from the CRF clone, and all three read the Lobby folder (mission_synopsis.py stops without it,
+  // validate_mission.py and validate_resources.py drop its checks); a pak cannot be passed to Python
+  if (roots.crf.kind !== "loose") {
+    throw new Error(`mission_validate needs a CRF clone: CRF's checks are Python scripts only a clone has (found ${roots.crf.label}). Clone CRF as the Coalition Mission Making Guide shows, or pass crfPath. Nothing ran.`);
+  }
+  if (roots.lobby.kind !== "loose") {
+    throw new Error(
+      `mission_validate needs a COALITION-Lobby clone beside CRF: mission_synopsis.py stops without the Lobby's scripts, and validate_mission.py and validate_resources.py skip the Lobby's checks (found only ${roots.lobby.label}). Clone CoalitionArma/COALITION-Lobby beside CRF or pass lobbyPath. Nothing ran.`
+    );
+  }
+  const crf = roots.crf.root, lobby = roots.lobby.root;
 
   let target: string[];
   let label: string;
@@ -274,7 +285,7 @@ async function missionValidate(config: Config, p: Params): Promise<{ text: strin
 
   if (syn?.synopsis) out.push("", "### Synopsis (what the PR bot posts)", syn.synopsis);
   if (errors.length) out.push("", "### Errors", ...errors.map((e) => `- ${e}`));
-  out.push("", `Ran: ${ran.join(", ") || "nothing"} with python ${py.version}, CRF @ ${gitRevision(crf)}, Lobby @ ${gitRevision(lobby)}`);
+  out.push("", `Ran: ${ran.join(", ") || "nothing"} with python ${py.version}. CRF: ${roots.crf.label}. Lobby: ${roots.lobby.label}`);
 
   return { text: out.join("\n"), isError: errors.length > 0 };
 }
@@ -307,11 +318,11 @@ export function registerMissionValidate(server: McpServer, config: Config): void
         crfPath: z
           .string()
           .optional()
-          .describe("CRF clone. Default: ENFUSION_DEFAULT_MOD if it holds Tools/Validation/validate_mission.py, else the first project folder that does. Must be inside the project path."),
+          .describe("CRF clone. Default: ENFUSION_DEFAULT_MOD if it holds Tools/Validation/validate_mission.py, else the first project folder that does, else the Coalition Mission Making Guide's Documents\\My Games\\ArmaReforgerWorkbench\\Projects\\Coalition-Reforger-Framework. Must be inside the project path or that Projects folder."),
         lobbyPath: z
           .string()
           .optional()
-          .describe("COALITION-Lobby clone. Default: the COALITION-Lobby folder next to the CRF clone. Must be inside the project path."),
+          .describe("COALITION-Lobby clone. Default: the COALITION-Lobby folder next to the CRF clone. Must be inside the project path or the guide's Projects folder. The Workshop copy cannot be used: CRF's Python scripts read the Lobby folder."),
         extraRoots: z
           .array(z.string())
           .default([])

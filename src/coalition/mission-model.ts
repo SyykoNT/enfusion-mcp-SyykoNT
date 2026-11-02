@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { join } from "node:path";
 import type { Config } from "../config.js";
 import { parseAll, type EnfusionNode } from "../formats/enfusion-text.js";
-import { stripGuid, walkChain } from "../utils/prefab-ancestry.js";
+import type { Layer } from "../pak/stack.js";
+import { parseParentPath, readEtFile, stripGuid } from "../utils/prefab-ancestry.js";
 
 export const SIDES = ["BLUFOR", "OPFOR", "INDFOR", "CIV"] as const;
 export type Side = (typeof SIDES)[number];
@@ -21,8 +21,9 @@ export interface MissionEntity {
 }
 
 export interface Mission {
-  world: string;
-  /** Addon folder holding the world's Worlds/ folder */
+  /** The addon copy (clone folder or Workshop download) the world was read from */
+  copy: Layer;
+  /** That copy's folder */
   root: string;
   /** World path relative to root, forward slashes */
   worldRel: string;
@@ -43,6 +44,30 @@ export const prop = (n: EnfusionNode | undefined, key: string): string | undefin
 export const member = (n: EnfusionNode | undefined, key: string) => n?.children.find((c) => c.type === key);
 export const components = (e: MissionEntity) => member(e.node, "components")?.children ?? [];
 
+/** A file's text from a copy, or undefined when the copy does not have it. */
+export const textOf = (copy: Layer, path: string) => copy.read(path)?.toString("utf-8");
+/** Files directly in a folder of a copy (list is recursive). */
+export const filesIn = (copy: Layer, dir: string) => copy.list(dir).filter((f) => !f.slice(dir.length + 1).includes("/"));
+
+/**
+ * A prefab and its ancestors, newest first: each read from the first copy that has it, else where
+ * walkChain looks (the project path, then the game).
+ */
+export function chainOf(prefab: string, copies: Layer[], config: Config): { path: string; text: string }[] {
+  const out: { path: string; text: string }[] = [];
+  const seen = new Set<string>();
+  for (let p: string | null = prefab; p && out.length < 20; ) {
+    const path = stripGuid(p);
+    if (seen.has(path.toLowerCase())) break;
+    seen.add(path.toLowerCase());
+    const text = copies.map((c) => textOf(c, path)).find((t) => t !== undefined) ?? readEtFile(path, config);
+    if (!text) break;
+    out.push({ path, text });
+    p = parseParentPath(text).parentPath;
+  }
+  return out;
+}
+
 /** Entities of one layer: top-level nodes, `$grp` members and nested `{ ... }` child entities. */
 function collect(nodes: EnfusionNode[], layer: string, out: MissionEntity[], parent?: MissionEntity): void {
   const add = (node: EnfusionNode, className: string, prefab?: string) => {
@@ -56,28 +81,22 @@ function collect(nodes: EnfusionNode[], layer: string, out: MissionEntity[], par
   }
 }
 
-/** Read a mission world's saved layers. Throws when the world or its _Layers folder is missing. */
-export function loadMission(config: Config, world: string): Mission {
-  if (!existsSync(world)) throw new Error(`World not found: ${world}`);
-  const layersDir = world.replace(/\.ent$/i, "") + "_Layers";
-  if (!existsSync(layersDir)) throw new Error(`${world} has no _Layers folder (${layersDir}).`);
-
-  let root = dirname(world);
-  for (let d = dirname(world); dirname(d) !== d; d = dirname(d)) {
-    if (basename(d) === "Worlds") {
-      root = dirname(d);
-      break;
-    }
-  }
-  const worldRel = relative(root, world).replace(/\\/g, "/");
+/**
+ * Read a mission world's saved layers from a copy (worldRel from the copy's root, forward slashes).
+ * Prefab ancestry is read from `copies`. Throws when the world or its _Layers folder is missing.
+ */
+export function loadMission(config: Config, copy: Layer, worldRel: string, copies: Layer[] = [copy]): Mission {
+  if (!copy.exists(worldRel)) throw new Error(`World not found: ${join(copy.root, worldRel)}`);
+  const layersDir = worldRel.replace(/\.ent$/i, "") + "_Layers";
+  if (!copy.exists(layersDir)) throw new Error(`${worldRel} has no _Layers folder (${join(copy.root, layersDir)}).`);
 
   const layers: Mission["layers"] = [];
   const entities: MissionEntity[] = [];
-  for (const file of readdirSync(layersDir).filter((f) => f.endsWith(".layer")).sort()) {
-    const name = file.slice(0, -".layer".length);
+  for (const file of filesIn(copy, layersDir).filter((f) => f.endsWith(".layer")).sort()) {
+    const name = file.slice(layersDir.length + 1, -".layer".length);
     const before = entities.length;
     try {
-      collect(parseAll(readFileSync(join(layersDir, file), "utf-8")), name, entities);
+      collect(parseAll(textOf(copy, file) ?? ""), name, entities);
       layers.push({ name, entities: entities.length - before });
     } catch (e) {
       entities.length = before;
@@ -93,7 +112,7 @@ export function loadMission(config: Config, world: string): Mission {
     for (const side of SIDES) {
       let field = member(lobby.node, SLOTS_FIELD[side]);
       if (!field) {
-        levels ??= walkChain(lobby.prefab!, config).levels.reverse().map((l) => parseAll(l.rawContent)[0]);
+        levels ??= chainOf(lobby.prefab!, copies, config).map((l) => parseAll(l.text)[0]);
         field = levels.map((l) => member(l, SLOTS_FIELD[side])).find(Boolean);
       }
       const groups = field?.children.filter((c) => c.className === "COA_SlottingGroup" || c.type === "COA_SlottingGroup") ?? [];
@@ -101,26 +120,26 @@ export function loadMission(config: Config, world: string): Mission {
     }
   }
 
-  return { world, root, worldRel, layers, entities, lobby, slots, confs: findConfs(root, worldRel) };
+  return { copy, root: copy.root, worldRel, layers, entities, lobby, slots, confs: findConfs(copy, worldRel) };
 }
 
 /** Same lookup as mission_synopsis.py:246-269: Missions/<Terrain>/*.conf whose SCR_MissionHeader.World is this world. */
-function findConfs(root: string, worldRel: string): string[] {
+function findConfs(copy: Layer, worldRel: string): string[] {
   const parts = worldRel.split("/");
-  const dir = join(root, "Missions", parts[parts.length - 2] ?? "");
-  if (parts.length < 2 || !existsSync(dir)) return [];
-  return readdirSync(dir)
+  if (parts.length < 2) return [];
+  const dir = `Missions/${parts[parts.length - 2]}`;
+  return filesIn(copy, dir)
     .filter((f) => f.endsWith(".conf"))
+    .map((f) => `${dir}/${f.slice(dir.length + 1)}`)
     .sort()
     .filter((f) => {
       try {
-        const header = parseAll(readFileSync(join(dir, f), "utf-8")).find((n) => n.type === "SCR_MissionHeader");
+        const header = parseAll(textOf(copy, f) ?? "").find((n) => n.type === "SCR_MissionHeader");
         return stripGuid(prop(header, "World") ?? "") === worldRel;
       } catch {
         return false;
       }
-    })
-    .map((f) => `Missions/${parts[parts.length - 2]}/${f}`);
+    });
 }
 
 /** Slot roles of one side's groups (one role per m_aSlots entry, mission_synopsis.py count_slots). */

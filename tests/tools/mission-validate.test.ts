@@ -204,6 +204,22 @@ describe("mission_validate", () => {
     expect(vi.mocked(execFileSync).mock.calls.at(-1)?.[1]).toEqual(["-C", crf, "rev-parse", "--verify", "--quiet", "origin/nope^{commit}"]);
   });
 
+  it("runs nothing when the Lobby is only a Workshop copy: CRF's scripts read the Lobby folder", async () => {
+    const solo = join(root, "solo");
+    mkdirSync(join(solo, "CRF", "Tools", "Validation"), { recursive: true });
+    writeFileSync(join(solo, "CRF", "Tools", "Validation", "validate_mission.py"), "");
+    mkdirSync(join(root, "ws", "COALITIONLobby_69EA43E490A50DBE"), { recursive: true });
+    let h!: Handler;
+    registerMissionValidate(
+      { registerTool: (_n: string, _d: unknown, x: Handler) => void (h = x) } as unknown as McpServer,
+      { projectPath: solo, workshopPath: join(root, "ws") } as Config
+    );
+    const r = await h({ world: "Worlds/Testland/Fixture.ent", checks: ["qa", "synopsis", "resources"], extraRoots: [], verbose: false });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/^mission_validate needs a COALITION-Lobby clone beside CRF: mission_synopsis\.py stops without the Lobby's scripts.*\(found only Workshop .*COALITIONLobby_69EA43E490A50DBE\)\)/);
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
   it("says git not found when git is missing", async () => {
     vi.mocked(execFileSync).mockImplementationOnce(() => {
       throw Object.assign(new Error("spawnSync git ENOENT"), { code: "ENOENT" });

@@ -1,8 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { EnfusionNode } from "../formats/enfusion-text.js";
+import type { Layer } from "../pak/stack.js";
 import { levenshtein } from "../utils/fuzzy.js";
-import { components, member, prop, type MissionEntity } from "./mission-model.js";
+import { components, member, prop, textOf, type MissionEntity } from "./mission-model.js";
 
 // CRF gamemodes find their objectives by entity name at run time (FindEntityByName). These rules
 // describe CRF's game scripts in our own words; line citations are to CRF Scripts/Game.
@@ -35,14 +34,12 @@ const CLASS = /^\s*(?:modded\s+)?class\s+(\w+)/gm;
  * Non-empty `[Attribute("default")] string m_s...Name;` defaults per script class under `<root>/Scripts/Game`:
  * a gamemode uses the default when the mission leaves the field unset (e.g. CRF_CacheHunt_Game.c:185).
  */
-export function nameDefaults(roots: string[]): Map<string, Map<string, string>> {
+export function nameDefaults(copies: Layer[]): Map<string, Map<string, string>> {
   const out = new Map<string, Map<string, string>>();
-  for (const root of roots) {
-    const dir = join(root, "Scripts", "Game");
-    if (!existsSync(dir)) continue;
-    for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
-      if (!rel.endsWith(".c")) continue;
-      const text = readFileSync(join(dir, rel), "utf-8");
+  for (const copy of copies) {
+    for (const path of copy.list("Scripts/Game")) {
+      if (!path.endsWith(".c")) continue;
+      const text = textOf(copy, path) ?? "";
       if (!text.includes("Name;")) continue;
       const classes = [...text.matchAll(CLASS)];
       for (const m of text.matchAll(ATTR)) {

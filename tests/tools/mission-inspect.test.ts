@@ -22,6 +22,7 @@ describe("mission_inspect", () => {
   it("renders the side table with a safestart warning", async () => {
     const { text, isError } = await call({ sections: ["sides"] });
     expect(isError).toBe(false);
+    expect(text.split("\n").slice(1, 3)).toEqual([`CRF: clone unknown (${fx.crf})`, `Lobby: clone unknown (${fx.lobby})`]);
     expect(text).toContain("| Item | BLUFOR | OPFOR | INDFOR |");
     expect(text).toContain("| Slots (groups) | 3 (1) | 1 (1) | 2 (1) |");
     expect(text).toContain("| Spawn points | 1 | 2 | 0 |");

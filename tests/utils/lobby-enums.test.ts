@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { cloneCopy } from "../../src/utils/coalition-paths.js";
 import { enumDefault, loadLobbyEnums, type LobbyEnums } from "../../src/utils/lobby-enums.js";
 
 let root: string;
@@ -32,7 +33,7 @@ beforeAll(() => {
   // The modded file sorts before nothing in particular; the base must still be numbered first
   writeFileSync(join(mod, "AAA_Fruit_Mod.c"), "modded enum Fruit\n{\n  KIWI,\n  LIME,\n}\nmodded enum Menu : BaseMenu { EXTRA }\n");
   writeFileSync(join(mod, "notes.txt"), "enum Ignored { X }");
-  enums = loadLobbyEnums([join(root, "Mod"), join(root, "Base"), join(root, "Missing")]);
+  enums = loadLobbyEnums([join(root, "Mod"), join(root, "Base"), join(root, "Missing")].map(cloneCopy));
 });
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
