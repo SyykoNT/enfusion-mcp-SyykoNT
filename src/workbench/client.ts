@@ -43,8 +43,9 @@ export function buildLaunchArgs(opts: { gproj?: string | null; addonsDir?: strin
   if (worldPath && !gproj) {
     throw new WorkbenchError(`Refused: worldPath needs a project to open it in; pass gprojPath (or set ENFUSION_DEFAULT_MOD).`, "LAUNCH_FAILED");
   }
-  if (worldPath && !worldPath.toLowerCase().endsWith(".ent")) {
-    throw new WorkbenchError(`Refused: worldPath must be a world (.ent) file: ${worldPath}`, "LAUNCH_FAILED");
+  // A quote could end the argument early if Workbench splits its command line differently from Node's quoting.
+  if (worldPath && (worldPath.includes('"') || !worldPath.toLowerCase().endsWith(".ent"))) {
+    throw new WorkbenchError(`Refused: worldPath must be a world (.ent) file with no quote characters: ${worldPath}`, "LAUNCH_FAILED");
   }
   const args: string[] = [];
   if (gproj) args.push("-gproj", gproj);

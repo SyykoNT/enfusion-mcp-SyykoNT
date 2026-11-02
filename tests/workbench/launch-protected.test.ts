@@ -80,6 +80,7 @@ describe("wb_launch worldPath", () => {
     const { addon, projects, client, handlers } = setup();
     const test = addon("TestAddon", "1111111111111111");
     await expect(client.ensureRunning(join(test, "addon.gproj"), false, "worlds/Test.layer")).rejects.toThrow(/\.ent/);
+    await expect(client.ensureRunning(join(test, "addon.gproj"), false, 'x" -scriptAuthorizeAll "y.ent')).rejects.toThrow(/quote/);
     expect(handlers(test)).toBe(false);
     expect(existsSync(join(projects, "EnfusionMCP"))).toBe(false);
     // only a protected addon: no project to open the world in, so no standalone addon is created either

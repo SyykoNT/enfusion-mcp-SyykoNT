@@ -439,8 +439,9 @@ describe("buildLaunchArgs", () => {
     expect(buildLaunchArgs({ gproj: "a.gproj", worldPath: "{0123456789ABCDEF}worlds/Map.ent" }).slice(-1)).toEqual(["worlds/Map.ent"]);
   });
 
-  it("refuses worldPath without a project or that is not a .ent", () => {
+  it("refuses worldPath without a project, that is not a .ent, or that holds a quote", () => {
     expect(() => buildLaunchArgs({ worldPath: "worlds/Map.ent" })).toThrow(/needs a project/);
     expect(() => buildLaunchArgs({ gproj: "a.gproj", worldPath: "worlds/Map.layer" })).toThrow(/\.ent/);
+    expect(() => buildLaunchArgs({ gproj: "a.gproj", worldPath: 'x" -scriptAuthorizeAll "y.ent' })).toThrow(/quote/);
   });
 });
