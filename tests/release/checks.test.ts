@@ -60,10 +60,10 @@ const bad = addon("Bad", {
   "a.bak": "x",
   "__pycache__/y.pyc": "x",
   "VehParts$n.txt": "x",
-  "Scripts/Game/Bom.c": "﻿class C {}\n",
+  "Scripts/Game/Bom.c": "\uFEFFclass C {}\n",
   "Scripts/Game/Dev/Tool.c": "class D {}\n",
   "Scripts/Game/Diag.c": "#ifdef WORKBENCH\nclass E {}\n#endif\n",
-  "README.md": "Made with Claude — by Don\n",
+  "README.md": "Made with Claude \u2014 by Don\n",
 });
 
 const good = addon("Good", {

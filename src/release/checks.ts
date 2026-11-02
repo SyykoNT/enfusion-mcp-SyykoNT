@@ -167,7 +167,7 @@ export function checkText(addonDir: string, scan: AddonScan): Finding[] {
     }
     if (PUBLIC_TEXT.test(f.rel)) {
       const t = read(f.rel).toString("utf-8");
-      const hits = [...new Set([...(t.match(/[–—]/g) ?? []).map(() => "en or em dash"), ...(t.match(/\b(claude|anthropic)\b/gi) ?? [])])];
+      const hits = [...new Set([...(t.match(/[\u2013\u2014]/g) ?? []).map(() => "en or em dash"), ...(t.match(/\b(claude|anthropic)\b/gi) ?? [])])];
       if (hits.length) out.push({ id: "T2", level: "warning", check: "text", path: f.rel, message: `Public text has ${hits.join(", ")}`, fix: "Don's writing rule: no dashes, no AI names" });
     }
   }
