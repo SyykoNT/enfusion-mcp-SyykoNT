@@ -34,8 +34,9 @@ npm ci
 Work on a branch made from `syyko/dev`, and open your pull request into `syyko/dev`.
 
 You need the Node.js version in `package.json` under `engines` (CI tests the versions listed in
-`.github/workflows/ci.yml`; today Node 20 and 22). The live Workbench tools (`wb_*`) also need Arma Reforger
-Tools from Steam; everything else runs without them.
+`.github/workflows/ci.yml`; today Node 20 and 22). The Workbench tools (`wb_*`) and the `mod` tool's compile,
+build and pack actions need Arma Reforger Tools from Steam, and the game data tools (such as `game_read` and
+`asset_search`) need the game installed. You can build and run the tests without either.
 
 If your shell sets `NODE_ENV=production`, npm skips the dev dependencies (TypeScript, vitest). Use
 `npm ci --include=dev` instead.
@@ -51,6 +52,7 @@ Why not `npm run build`: it starts by deleting `dist`. If an MCP client is runni
 runs the files in `dist`, and deleting them breaks every session that uses it until the build finishes. The
 command above compiles over `dist` instead. The same goes for `npm ci`, which runs the full build through the
 `prepare` script: in a folder a client is using, run `npm ci --ignore-scripts`, then the build command above.
+If your shell also sets `NODE_ENV=production`, that becomes `npm ci --ignore-scripts --include=dev`.
 
 Some tests need things that are not on every PC (the game install, git, `sh`). They skip themselves when those
 are missing, so a few skipped tests are normal.
