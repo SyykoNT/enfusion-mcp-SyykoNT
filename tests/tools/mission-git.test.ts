@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { formatMissionGit, missionGit, registerMissionGit } from "../../src/tools/mission-git.js";
+import { changedWorld, formatMissionGit, missionGit, registerMissionGit } from "../../src/tools/mission-git.js";
 import { makeProjects, write } from "../coalition/fixture.js";
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
@@ -80,6 +80,15 @@ describe.skipIf(!hasGit)("mission_git", () => {
     const r = missionGit(fx.config, { fetch: true });
     expect(r).toMatchObject({ behind: 1, fetched: true });
     expect(r.warnings).toContain("1 commits behind origin/release: update the branch from release before you push");
+  });
+
+  it("changedWorld: a changed layer counts for its world; none or several asks for world", () => {
+    const fx = setup();
+    expect(() => changedWorld(missionGit(fx.config))).toThrow("No world changed against origin/release: pass world.");
+    write(fx.crf, "Worlds/Test/Author_TVT_Fixture_Layers/PROPS.layer", "GenericEntity {\n}\n");
+    expect(changedWorld(missionGit(fx.config))).toBe("Worlds/Test/Author_TVT_Fixture.ent");
+    write(fx.crf, "Worlds/Test/Second.ent", "SubScene {\n}\n");
+    expect(() => changedWorld(missionGit(fx.config))).toThrow(/^Several worlds changed/);
   });
 
   it("warns on a branch that is not mission/<name>", () => {

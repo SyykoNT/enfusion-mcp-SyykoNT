@@ -108,9 +108,9 @@ export function missionGit(config: Config, opts: MissionGitOptions = {}): Missio
   return { crf, branch, base, baseCommit, ahead, behind, fetchedAt, fetched: !!opts.fetch, files: changed, warnings };
 }
 
-/** The one mission world (.ent) the branch adds or changes; throws asking for world when there are none or several. */
+/** The one mission world (.ent) the branch adds or changes, a changed layer counting for its world; throws asking for world when there are none or several. */
 export function changedWorld(r: MissionGit): string {
-  const worlds = r.files.filter((f) => f.status !== "D" && /^Worlds\/.+\.ent$/i.test(f.path)).map((f) => f.path);
+  const worlds = [...new Set(r.files.filter((f) => f.status !== "D").map((f) => f.path.replace(/_Layers\/[^/]+\.layer$/i, ".ent")).filter((p) => /^Worlds\/.+\.ent$/i.test(p)))];
   if (worlds.length !== 1) throw new Error(worlds.length ? `Several worlds changed (${worlds.join(", ")}): pass world.` : `No world changed against ${r.base}: pass world.`);
   return worlds[0];
 }
