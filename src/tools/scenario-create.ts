@@ -8,6 +8,8 @@ import {
   KNOWN_WORLDS,
   type ConflictBaseSpec,
 } from "../templates/scenario.js";
+import { worldMeta } from "../formats/config-override.js";
+import { generateGuid } from "../formats/guid.js";
 import { validateFilename } from "../utils/safe-path.js";
 import { resolveWriteAddon } from "../utils/game-paths.js";
 
@@ -54,12 +56,11 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
     "scenario_create_conflict",
     {
       description:
-        "Generate a Conflict multiplayer scenario: a mission header (.conf), a SubScene world stub (.ent) and 3 to 6 layer files " +
+        "Generate a Conflict multiplayer scenario: a mission header (.conf), a sub-scene world (.ent with its .meta) and 3 to 6 layer files " +
         "(the result lists every file written). Generates GameMode_Seize, CampaignFactionManager, military bases with seizing, radio and patrol spawnpoints, " +
         "optional relay towers (base type='relay') and optional seeding mode. " +
         "Known worlds: " + KNOWN_WORLDS.join(", ") + ". " +
-        "For custom maps pass the full resource ref as worldName, e.g. '{GUID}worlds/MyMap.ent'. " +
-        "The generated SubScene stub can show a 'world data structure is obsolete' dialog on first open in Workbench; answer it before using live tools.",
+        "For custom maps pass the full resource ref as worldName, e.g. '{GUID}worlds/MyMap.ent'.",
       inputSchema: {
         scenarioName: z
           .string()
@@ -195,6 +196,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           const layersDir   = resolve(basePath, "Worlds", `${scenarioName}_Layers`);
           const confPath          = join(missionsDir, `${scenarioName}.conf`);
           const entPath           = join(worldsDir,   `${scenarioName}.ent`);
+          const metaPath          = entPath + ".meta";
           const defaultLayPath    = join(layersDir,   `default.layer`);
           const basesLayPath      = join(layersDir,   `Bases.layer`);
           const cahLayPath        = join(layersDir,   `CAH.layer`);
@@ -209,6 +211,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           const existing: string[] = [];
           if (existsSync(confPath))         existing.push(`Missions/${scenarioName}.conf`);
           if (existsSync(entPath))          existing.push(`Worlds/${scenarioName}.ent`);
+          if (existsSync(metaPath))         existing.push(`Worlds/${scenarioName}.ent.meta`);
           if (existsSync(defaultLayPath))   existing.push(`Worlds/${scenarioName}_Layers/default.layer`);
           if (existsSync(basesLayPath))     existing.push(`Worlds/${scenarioName}_Layers/Bases.layer`);
           if (existsSync(defendersLayPath)) existing.push(`Worlds/${scenarioName}_Layers/Defenders.layer`);
@@ -236,6 +239,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           try {
             writeFileSync(confPath,        output.missionConf,  "utf-8"); writtenPaths.push(confPath);
             writeFileSync(entPath,         output.worldEnt,     "utf-8"); writtenPaths.push(entPath);
+            writeFileSync(metaPath,        worldMeta(generateGuid(), `Worlds/${scenarioName}.ent`), "utf-8"); writtenPaths.push(metaPath);
             writeFileSync(defaultLayPath,  output.defaultLayer, "utf-8"); writtenPaths.push(defaultLayPath);
             writeFileSync(basesLayPath,    output.basesLayer,   "utf-8"); writtenPaths.push(basesLayPath);
             writeFileSync(defendersLayPath, output.defendersLayer, "utf-8"); writtenPaths.push(defendersLayPath);
@@ -254,6 +258,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           const writtenFiles = [
             `  Missions/${scenarioName}.conf`,
             `  Worlds/${scenarioName}.ent`,
+            `  Worlds/${scenarioName}.ent.meta`,
             `  Worlds/${scenarioName}_Layers/default.layer`,
             `  Worlds/${scenarioName}_Layers/Bases.layer`,
             `  Worlds/${scenarioName}_Layers/Defenders.layer`,

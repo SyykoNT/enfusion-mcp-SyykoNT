@@ -232,6 +232,13 @@ export function entityTemplateMeta(guid: string, path: string): string {
   return `MetaFileClass {\n Name "{${guid}}${path}"\n Configurations {\n${blocks} }\n}\n`;
 }
 
+/** .meta for a new world (.ent), in the form Workbench writes for MCPParity.ent: one block per platform, no final newline. */
+export function worldMeta(guid: string, path: string): string {
+  const platforms = ["PC", "XBOX_ONE", "XBOX_SERIES", "PS4", "PS5", "HEADLESS"];
+  const blocks = platforms.map((p, i) => `  ENTResourceClass ${p}${i ? " : PC" : ""} {\n  }\n`).join("");
+  return `MetaFileClass {\n Name "{${guid}}${path}"\n Configurations {\n${blocks} }\n}`;
+}
+
 /** Numeric helper: scale an int/float string, keeping ints as ints. */
 export function scaleNumber(current: string | undefined, factor: number, fallback?: number): string | null {
   const n = current !== undefined ? Number(current) : fallback;

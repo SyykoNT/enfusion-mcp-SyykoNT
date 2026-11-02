@@ -120,6 +120,14 @@ describe("generateConflictScenario", () => {
       expect(worldEnt).toContain("Eden.ent");
     });
 
+    it("is Workbench's own sub-scene shape: SubScene + default layer block, no final newline (101 bytes for Arland)", () => {
+      const { worldEnt } = generateConflictScenario({ ...MINIMAL_OPTS, worldName: "Arland" });
+      expect(worldEnt).toBe(
+        'SubScene {\n Parent "{DC924A8DDECC73AD}worlds/MP/CTI_Campaign_Arland.ent"\n}\nLayer default {\n Index 0\n}'
+      );
+      expect(worldEnt).toHaveLength(101);
+    });
+
     it("does NOT contain entity definitions (those go in layers)", () => {
       const { worldEnt } = generateConflictScenario(MINIMAL_OPTS);
       expect(worldEnt).not.toContain("SCR_GameModeCampaign");
