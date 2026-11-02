@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { join, resolve, basename, dirname } from "node:path";
+import { join, resolve, basename, dirname, relative } from "node:path";
 import type { Config } from "../config.js";
 import { parse, getProperty } from "../formats/enfusion-text.js";
 import { stripGuid } from "../formats/config-override.js";
@@ -30,6 +30,8 @@ export interface Layer {
   /** File bytes, or null for a missing file or a directory */
   read(path: string): Buffer | null;
   guidOf(path: string): string | undefined;
+  /** Every file under a folder ("" = all), as paths from the addon root with forward slashes */
+  list(dir: string): string[];
 }
 
 export interface Stack {
@@ -204,7 +206,8 @@ export function pathOfGuid(layers: Layer[], guid: string): string | undefined {
   return undefined;
 }
 
-function makeLayer(a: AddonInfo, index: number): Layer {
+/** A layer over one addon folder: loose files, or the paks of a Workshop or base game download. */
+export function makeLayer(a: Pick<AddonInfo, "id" | "guid" | "title" | "source" | "dir">, index: number): Layer {
   const base = { index, id: a.id, guid: a.guid, title: a.title, kind: a.source, root: a.dir };
   if (a.source !== "loose") {
     return {
@@ -212,6 +215,10 @@ function makeLayer(a: AddonInfo, index: number): Layer {
       exists: (p) => vfsOf(a.dir)?.exists(stripGuid(p)) ?? false,
       read: (p) => { const v = vfsOf(a.dir); return v && v.fileSize(stripGuid(p)) >= 0 ? v.readFile(stripGuid(p)) : null; },
       guidOf: (p) => rdbOf(a.dir).get(norm(p))?.guid,
+      list: (dir) => {
+        const pre = dir ? `${norm(dir).replace(/\/+$/, "")}/` : "";
+        return vfsOf(a.dir)?.allFilePaths().filter((f) => f.toLowerCase().startsWith(pre)) ?? [];
+      },
     };
   }
   const file = (p: string) => {
@@ -229,6 +236,13 @@ function makeLayer(a: AddonInfo, index: number): Layer {
       const f = file(p);
       const meta = f && existsSync(`${f}.meta`) ? readFileSync(`${f}.meta`, "utf-8").match(/Name\s+"\{([0-9A-Fa-f]{16})\}/)?.[1] : undefined;
       return meta?.toUpperCase() ?? rdbOf(a.dir).get(norm(p))?.guid;
+    },
+    list: (dir) => {
+      const d = file(dir);
+      if (!d || !existsSync(d)) return [];
+      return readdirSync(d, { recursive: true, withFileTypes: true })
+        .filter((e) => e.isFile())
+        .map((e) => relative(a.dir, join(e.parentPath, e.name)).replace(/\\/g, "/"));
     },
   };
 }

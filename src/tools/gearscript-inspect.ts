@@ -1,16 +1,16 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import { mergeNode } from "../formats/config-override.js";
 import { parseAll, type EnfusionNode } from "../formats/enfusion-text.js";
-import { member, prop, slotRoles, SIDES, type Side } from "../coalition/mission-model.js";
-import { gitRevision, resolveCoalitionRoots } from "../utils/coalition-paths.js";
+import { chainOf, member, prop, slotRoles, SIDES, textOf, type Side } from "../coalition/mission-model.js";
+import {
+  CRF_PATH_HELP, LOBBY_PATH_HELP, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
+} from "../utils/coalition-paths.js";
 import { levenshtein } from "../utils/fuzzy.js";
 import { enumDefault, loadLobbyEnums, type LobbyEnums } from "../utils/lobby-enums.js";
-import { walkChain } from "../utils/prefab-ancestry.js";
-import { validateProjectPath } from "../utils/safe-path.js";
 import { loadLobbyMission } from "./mission-inspect.js";
 
 // The rules below describe COALITION-Lobby's COA_GearscriptManager.c in our own words; line
@@ -196,57 +196,40 @@ export function resolveLoadout(
 
 // ── Files ───────────────────────────────────────────────────────────────────
 
-/** `{GUID}path` or a repo path to a file in the first root that has it (never outside a root). */
-function resolveResource(name: string, roots: string[]): string | undefined {
-  const rel = name.replace(/^\{[0-9A-Fa-f]{16}\}/, "");
-  for (const root of roots) {
-    try {
-      const f = validateProjectPath(root, rel);
-      if (existsSync(f)) return f;
-    } catch {
-      // outside this root
-    }
-  }
-  return undefined;
-}
+const bare = (name: string) => name.replace(/^\{[0-9A-Fa-f]{16}\}/, "");
 
 /**
  * A resource as the game loads it with CRF on top of the Lobby: the base copy, then each later
- * root's copy at the same path merged over it as an override delta (config-override.ts).
+ * copy's file at the same path merged over it as an override delta (config-override.ts).
  * CRF overrides COA_Global_Roles_Config.conf this way to add its roles.
  */
-function loadResource(name: string, roots: string[]): { node?: EnfusionNode; from: string[] } {
+function loadResource(name: string, copies: CoalitionCopy[]): { node?: EnfusionNode; from: string[] } {
   let node: EnfusionNode | undefined;
   const from: string[] = [];
-  for (const root of roots) {
-    const f = resolveResource(name, [root]);
-    if (!f) continue;
-    const n = parseAll(readFileSync(f, "utf-8"))[0];
+  for (const copy of copies) {
+    const text = textOf(copy, bare(name));
+    if (text === undefined) continue;
+    const n = parseAll(text)[0];
     node = node && n ? mergeNode(node, n) : n ?? node;
-    from.push(basename(root));
+    from.push(basename(copy.root));
   }
   return { node, from };
 }
 
 const slash = (p: string) => p.replace(/\\/g, "/");
-const confsUnder = (root: string) => {
-  const dir = join(root, "Configs", "Gearscripts");
-  return existsSync(dir)
-    ? (readdirSync(dir, { recursive: true }) as string[]).filter((f) => f.endsWith(".conf")).map((f) => slash(join("Configs", "Gearscripts", f)))
-    : [];
-};
+const confsUnder = (copy: CoalitionCopy) => copy.list("Configs/Gearscripts").filter((f) => f.endsWith(".conf"));
 
-/** A gearscript's root-relative path from `{GUID}path`, a CRF or Lobby path (relative or absolute) or a bare file name. */
-function findGearscript(input: string, roots: string[]): string {
+/** A gearscript's root-relative path from `{GUID}path`, a CRF or Lobby path (relative, or absolute in a clone) or a bare file name. */
+function findGearscript(input: string, copies: CoalitionCopy[]): string {
   if (/[\\/]/.test(input)) {
     const rel = isAbsolute(input)
-      ? roots.map((r) => relative(r, input)).find((r) => r && !r.startsWith("..") && !isAbsolute(r))
-      : input.replace(/^\{[0-9A-Fa-f]{16}\}/, "");
-    if (rel && resolveResource(rel, roots)) return slash(rel);
+      ? copies.filter((c) => c.kind === "loose").map((c) => relative(c.root, input)).find((r) => r && !r.startsWith("..") && !isAbsolute(r))
+      : bare(input);
+    if (rel && copies.some((c) => c.exists(slash(rel)))) return slash(rel);
   }
   const want = basename(slash(input)).toLowerCase().replace(/(\.conf)?$/, ".conf");
-  // One path in both roots is one resource (a CRF override of a Lobby file), not two matches
-  const all = [...new Set(roots.flatMap(confsUnder))];
+  // One path in both copies is one resource (a CRF override of a Lobby file), not two matches
+  const all = [...new Set(copies.flatMap(confsUnder))];
   const hits = all.filter((f) => basename(f).toLowerCase() === want);
   const list = (fs: string[]) => fs.map((f) => `- ${f}`).join("\n");
   if (!/[\\/]/.test(input) && hits.length === 1) return hits[0];
@@ -259,8 +242,8 @@ function findGearscript(input: string, roots: string[]): string {
   throw new Error(`Gearscript "${input}" not found under Configs/Gearscripts in CRF or COALITION-Lobby.${closest.length ? ` Closest:\n${list(closest)}` : ""}`);
 }
 
-function rolesConfigResource(lobby: string, cvon: boolean): string {
-  const src = existsSync(join(lobby, MANAGER)) ? readFileSync(join(lobby, MANAGER), "utf-8") : "";
+function rolesConfigResource(lobby: CoalitionCopy, cvon: boolean): string {
+  const src = textOf(lobby, MANAGER) ?? "";
   const constant = cvon ? "C_CVONRolesConfigResource" : "C_RolesConfigResource";
   return new RegExp(`\\b${constant}\\s*=\\s*"([^"]+)"`).exec(src)?.[1] ?? (cvon ? CVON_ROLES_CONFIG : ROLES_CONFIG);
 }
@@ -268,12 +251,13 @@ function rolesConfigResource(lobby: string, cvon: boolean): string {
 interface MissionSide { worldRel: string; field: string; gearscript: string; radios: Radios; cvon: boolean; why: string; slots: number; roles: string[] }
 
 /** One side's gearscript settings, CVON choice and slotted roles: the mission's COA_Lobby entity first, then its COA_Lobby.et chain. */
-function missionSide(config: Config, crf: string, lobby: string, world: string, side: Side): MissionSide {
-  const m = loadLobbyMission(config, crf, world);
+function missionSide(config: Config, roots: CoalitionRoots, world: string, side: Side): MissionSide {
+  const m = loadLobbyMission(config, roots, world);
   // Missions place COA_Lobby.et by its GUID through CRF's override (Prefabs/Modded Overrides/...) or an old path that no
   // longer exists; either way the Lobby's own prefab sits under it, so read that chain after the mission's
-  const chain = [...walkChain(m.lobby.prefab!, config).levels.reverse(), ...walkChain(LOBBY_PREFAB, config, lobby).levels.reverse()];
-  const nodes = [m.lobby.node, ...chain.map((l) => parseAll(l.rawContent)[0])];
+  const copies = [...new Set([m.copy, roots.crf, roots.lobby])];
+  const chain = [...chainOf(m.lobby.prefab!, copies, config), ...chainOf(LOBBY_PREFAB, [roots.lobby], config)];
+  const nodes = [m.lobby.node, ...chain.map((l) => parseAll(l.text)[0])];
   const first = (f: (n: EnfusionNode) => string | undefined) => nodes.map(f).find((v) => v !== undefined);
   const field = SETTINGS_FIELD[side];
   const flag = (key: string, def: boolean) => (first((n) => prop(member(n, field), key)) ?? (def ? "1" : "0")) !== "0";
@@ -294,20 +278,30 @@ function missionSide(config: Config, crf: string, lobby: string, world: string, 
 
 export interface Usage { file: string; fields: string[] }
 
-/** Mission layers and worlds (every project's Worlds folder) and the Lobby prefab that name this gearscript GUID. */
-export function findGearscriptUsage(guid: string, projectPath: string, lobby: string): Usage[] {
-  const files = readdirSync(projectPath, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && existsSync(join(projectPath, d.name, "Worlds")))
-    .flatMap((d) => {
-      const dir = join(projectPath, d.name, "Worlds");
-      return (readdirSync(dir, { recursive: true }) as string[]).filter((f) => /\.(layer|ent)$/i.test(f)).map((f) => join(dir, f));
-    });
-  if (existsSync(join(lobby, LOBBY_PREFAB))) files.push(join(lobby, LOBBY_PREFAB));
+/**
+ * Mission layers and worlds (every project's Worlds folder, and CRF's when it is not one of those
+ * projects) and the Lobby prefab that name this gearscript GUID.
+ */
+export function findGearscriptUsage(guid: string, projectPath: string, roots: CoalitionRoots): Usage[] {
+  const isWorld = (f: string) => /\.(layer|ent)$/i.test(f);
+  const files: { file: string; read: () => string }[] = existsSync(projectPath)
+    ? readdirSync(projectPath, { withFileTypes: true })
+        // A project the project path holds as a junction counts, as in resolveCoalitionRoots
+        .filter((d) => (d.isDirectory() || d.isSymbolicLink()) && existsSync(join(projectPath, d.name, "Worlds")))
+        .flatMap((d) => {
+          const dir = join(projectPath, d.name, "Worlds");
+          return (readdirSync(dir, { recursive: true }) as string[]).filter(isWorld).map((f) => join(dir, f));
+        })
+        .map((f) => ({ file: relative(projectPath, f), read: () => readFileSync(f, "utf-8") }))
+    : [];
+  const fromCopy = (copy: CoalitionCopy, path: string) => ({ file: `${basename(copy.root)}/${path}`, read: () => textOf(copy, path) ?? "" });
+  if (relative(projectPath, dirname(roots.crf.root)) !== "") files.push(...roots.crf.list("Worlds").filter(isWorld).map((f) => fromCopy(roots.crf, f)));
+  if (roots.lobby.exists(LOBBY_PREFAB)) files.push(fromCopy(roots.lobby, LOBBY_PREFAB));
 
   const id = guid.toUpperCase();
   const usage: Usage[] = [];
-  for (const f of files) {
-    const text = readFileSync(f, "utf-8");
+  for (const { file, read } of files) {
+    const text = read();
     if (!text.toUpperCase().includes(id)) continue;
     const fields: string[] = [];
     const walk = (n: EnfusionNode) => {
@@ -319,7 +313,7 @@ export function findGearscriptUsage(guid: string, projectPath: string, lobby: st
     } catch {
       // A malformed file still counts as a reference; the field stays unknown
     }
-    usage.push({ file: relative(projectPath, f), fields: fields.length ? fields : ["(GUID found outside a gearscript settings field)"] });
+    usage.push({ file, fields: fields.length ? fields : ["(GUID found outside a gearscript settings field)"] });
   }
   return usage;
 }
@@ -337,13 +331,15 @@ interface Params {
   format: "markdown" | "json";
   crfPath?: string;
   lobbyPath?: string;
+  source?: "clone" | "workshop";
 }
 
 function gearscriptInspect(config: Config, p: Params): string {
-  const { crf, lobby } = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
+  const coalition = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath, p.source);
+  const { crf, lobby } = coalition;
   const roots = [lobby, crf]; // base first: CRF depends on the Lobby
   if (!p.world !== !p.side) throw new Error("Pass world and side together.");
-  const ms = p.world && p.side ? missionSide(config, crf, lobby, p.world, p.side) : undefined;
+  const ms = p.world && p.side ? missionSide(config, coalition, p.world, p.side) : undefined;
   const gsInput = p.gearscript ?? ms?.gearscript;
   if (!gsInput) throw new Error("Pass gearscript, or world and side.");
   const gsPath = findGearscript(gsInput, roots);
@@ -351,9 +347,8 @@ function gearscriptInspect(config: Config, p: Params): string {
   if (gs?.type !== "COA_GearScriptConfig") {
     throw new Error(`${gsPath} is not a COA_GearScriptConfig (its root is ${gs?.type ?? "empty"}).`);
   }
-  const metaFile = resolveResource(`${gsPath}.meta`, roots);
-  const meta = metaFile ? prop(parseAll(readFileSync(metaFile, "utf-8"))[0], "Name") : undefined;
-  const guid = /^\{([0-9A-Fa-f]{16})\}/.exec(meta ?? "")?.[1];
+  // From the .meta of a clone, the rdb of a Workshop copy
+  const guid = roots.map((c) => c.guidOf(gsPath)).find(Boolean);
 
   const enums = loadLobbyEnums(roots);
   const roleNames = [...(enums.get("COA_EGearRole")?.keys() ?? [])];
@@ -367,19 +362,19 @@ function gearscriptInspect(config: Config, p: Params): string {
   const cvon = p.cvon ?? ms?.cvon ?? true;
   const rcName = rolesConfigResource(lobby, cvon);
   const rc = loadResource(rcName, roots);
-  if (!rc.node) throw new Error(`Roles config ${rcName} not found in ${lobby}. Pass lobbyPath.`);
+  if (!rc.node) throw new Error(`Roles config ${rcName} not found in ${lobby.root}. Pass lobbyPath.`);
   // COA_RolesConfig keeps the last entry per role (COA_RoleConfig.c:24-28)
   const roleCfgs = new Map(items(rc.node, "m_RoleConfigs").map((r) => [roleOf(r, enums), r]));
 
   const loadouts = (p.roles?.length ? p.roles : ms?.roles ?? [...roleCfgs.keys()]).map((r) => resolveLoadout(gs, roleCfgs.get(r), r, radios, enums));
   const orphans = [...new Set(items(gs, "m_RolesToSetCustomSettings").map((c) => roleOf(c, enums)))].filter((r) => !roleCfgs.has(r));
-  const usage = p.usedBy && guid ? findGearscriptUsage(guid, config.projectPath, lobby) : undefined;
-  const gsName = meta ?? gsPath;
+  const usage = p.usedBy && guid ? findGearscriptUsage(guid, config.projectPath, coalition) : undefined;
+  const gsName = guid ? `{${guid}}${gsPath}` : gsPath;
   const rcFrom = `from ${rc.from.join(" + override in ")}`;
 
   if (p.format === "json") {
     return JSON.stringify(
-      { gearscript: gsName, mission: ms && { world: ms.worldRel, side: p.side, settings: ms.field, slots: ms.slots, cvonFrom: ms.why }, rolesConfig: rcName, rolesConfigFrom: rc.from, cvon, radios, loadouts, customRolesNotInRolesConfig: orphans, usedBy: usage },
+      { gearscript: gsName, copies: { crf: crf.label, lobby: lobby.label }, mission: ms &&{ world: ms.worldRel, side: p.side, settings: ms.field, slots: ms.slots, cvonFrom: ms.why }, rolesConfig: rcName, rolesConfigFrom: rc.from, cvon, radios, loadouts, customRolesNotInRolesConfig: orphans, usedBy: usage },
       null,
       2
     );
@@ -389,6 +384,8 @@ function gearscriptInspect(config: Config, p: Params): string {
   const out = [
     `# Gearscript ${short(gsName)}`,
     `${gsName}${prop(gs, "m_FactionName") ? `, faction "${prop(gs, "m_FactionName")}"` : ""}`,
+    `CRF: ${crf.label}`,
+    `Lobby: ${lobby.label}`,
     ...(ms ? [`Mission ${ms.worldRel}, ${p.side}: ${ms.slots} slots, ${ms.roles.length} roles; gearscript and radios from ${ms.field}; ${ms.why}.`] : []),
     cvon
       ? `Roles config: CVON, ${rcName} (${rcFrom}). The gear manager uses it when the mission's lobby has a CVON_VONGameModeComponent (COA_GearscriptManager.c:773-783); pass cvon: false for a mission without CVON or with m_bUseCVON 0.`
@@ -427,7 +424,7 @@ function gearscriptInspect(config: Config, p: Params): string {
       out.push(`- Lobby default (COA_Lobby.et): ${lobbyUse ? lobbyUse.fields.join(", ") : "no"}`);
     }
   }
-  out.push("", `Read-only. CRF @ ${gitRevision(crf)}, Lobby @ ${gitRevision(lobby)}`);
+  out.push("", "Read-only.");
   return out.join("\n");
 }
 
@@ -465,8 +462,9 @@ export function registerGearscriptInspect(server: McpServer, config: Config): vo
           .describe("Use the CVON roles config, as the game does when the mission's lobby has a CVON_VONGameModeComponent and m_bUseCVON is not 0. Default: from the mission with world, else true. false: the global roles config."),
         usedBy: z.boolean().default(false).describe("Also list mission layers and worlds, and the Lobby's COA_Lobby.et, that reference this gearscript."),
         format: z.enum(["markdown", "json"]).default("markdown").describe("json gives full {GUID}paths and source fields."),
-        crfPath: z.string().optional().describe("CRF clone. Default: as mission_validate. Must be inside the project path."),
-        lobbyPath: z.string().optional().describe("COALITION-Lobby clone. Default: next to CRF. Must be inside the project path."),
+        crfPath: z.string().optional().describe(CRF_PATH_HELP),
+        lobbyPath: z.string().optional().describe(LOBBY_PATH_HELP),
+        source: z.enum(["clone", "workshop"]).optional().describe(SOURCE_HELP),
       },
     },
     async (params) => {

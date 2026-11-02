@@ -18,7 +18,8 @@ let roots: CoalitionRoots | undefined;
 let why = "ENFUSION_PROJECT_PATH is not set";
 if (process.env.ENFUSION_PROJECT_PATH) {
   try {
-    roots = resolveCoalitionRoots({ projectPath: process.env.ENFUSION_PROJECT_PATH, defaultMod: process.env.ENFUSION_DEFAULT_MOD } as Config);
+    // Clones only: the Workshop copies are a follow-up (CRF-DRIFT-2)
+    roots = resolveCoalitionRoots({ projectPath: process.env.ENFUSION_PROJECT_PATH, defaultMod: process.env.ENFUSION_DEFAULT_MOD } as Config, undefined, undefined, "clone");
   } catch (e) {
     why = (e as Error).message;
   }
@@ -100,7 +101,7 @@ function checkResource(res: string, rootList: string[]): string | undefined {
 
 describe.skipIf(!roots)(`CRF and Lobby drift${roots ? "" : ` (skipped: ${why})`}`, () => {
   it("every class, field, enum, prefab family and fixed path the MCP names still exists", () => {
-    const { crf, lobby } = roots!;
+    const crf = roots!.crf.root, lobby = roots!.lobby.root;
     const both = [lobby, crf];
     const missing: string[] = [];
     const miss = (area: string, name: string, source: string, detail = "") => missing.push(`${area}: ${name}${detail ? ` (${detail})` : ""} [${source}]`);
@@ -123,7 +124,7 @@ describe.skipIf(!roots)(`CRF and Lobby drift${roots ? "" : ` (skipped: ${why})`}
     // Task Creator anchors are only checked because their field matches NAME_FIELD
     if (!NAME_FIELD.test("m_sSpawnEntityName")) miss("field pattern", "m_sSpawnEntityName no longer matches NAME_FIELD", "name-refs.ts NAME_FIELD");
 
-    const enums = loadLobbyEnums(both);
+    const enums = loadLobbyEnums([roots!.lobby, roots!.crf]);
     for (const [name, members, source] of ENUMS) {
       const e = enums.get(name);
       if (!e) miss("enum", name, source);
