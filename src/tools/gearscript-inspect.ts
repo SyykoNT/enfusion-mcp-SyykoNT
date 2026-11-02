@@ -5,10 +5,13 @@ import { z } from "zod";
 import type { Config } from "../config.js";
 import { mergeNode } from "../formats/config-override.js";
 import { parseAll, type EnfusionNode } from "../formats/enfusion-text.js";
+import { member, prop, slotRoles, SIDES, type Side } from "../coalition/mission-model.js";
 import { gitRevision, resolveCoalitionRoots } from "../utils/coalition-paths.js";
 import { levenshtein } from "../utils/fuzzy.js";
 import { enumDefault, loadLobbyEnums, type LobbyEnums } from "../utils/lobby-enums.js";
+import { walkChain } from "../utils/prefab-ancestry.js";
 import { validateProjectPath } from "../utils/safe-path.js";
+import { loadLobbyMission } from "./mission-inspect.js";
 
 // The rules below describe COALITION-Lobby's COA_GearscriptManager.c in our own words; line
 // citations are to that file unless another is named. If the Lobby changes them, this drifts.
@@ -34,6 +37,10 @@ export interface Radios {
 }
 // COA_GearScriptContainer attribute defaults (COA_GearscriptConfig.c:14-24)
 const DEFAULT_RADIOS: Radios = { leadership: true, gi: false, rto: true };
+// COA_Gamemode.c:183-195: CIV is m_CIVILIANGearScriptSettings
+const SETTINGS_FIELD: Record<Side, string> = {
+  BLUFOR: "m_BLUFORGearScriptSettings", OPFOR: "m_OPFORGearScriptSettings", INDFOR: "m_INDFORGearScriptSettings", CIV: "m_CIVILIANGearScriptSettings",
+};
 
 export interface Mag { prefab: string; count: number }
 export interface WeaponOption { prefab: string; source: string; mags: Mag[] }
@@ -57,11 +64,6 @@ export interface Loadout {
 
 // ── Reading parsed nodes ────────────────────────────────────────────────────
 
-const prop = (n: EnfusionNode | undefined, key: string): string | undefined => {
-  const v = n?.properties.find((p) => p.key === key)?.value;
-  return typeof v === "string" ? v : undefined;
-};
-const member = (n: EnfusionNode | undefined, key: string) => n?.children.find((c) => c.type === key);
 /** A list field's elements, or an object field (`m_AR COA_Spec_Weapon_Class "{..}" {`) as a one-element list. */
 const items = (n: EnfusionNode | undefined, key: string): EnfusionNode[] => {
   const m = member(n, key);
@@ -263,6 +265,33 @@ function rolesConfigResource(lobby: string, cvon: boolean): string {
   return new RegExp(`\\b${constant}\\s*=\\s*"([^"]+)"`).exec(src)?.[1] ?? (cvon ? CVON_ROLES_CONFIG : ROLES_CONFIG);
 }
 
+interface MissionSide { worldRel: string; field: string; gearscript: string; radios: Radios; cvon: boolean; why: string; slots: number; roles: string[] }
+
+/** One side's gearscript settings, CVON choice and slotted roles: the mission's COA_Lobby entity first, then its COA_Lobby.et chain. */
+function missionSide(config: Config, crf: string, lobby: string, world: string, side: Side): MissionSide {
+  const m = loadLobbyMission(config, crf, world);
+  // Missions place COA_Lobby.et by its GUID through CRF's override (Prefabs/Modded Overrides/...) or an old path that no
+  // longer exists; either way the Lobby's own prefab sits under it, so read that chain after the mission's
+  const chain = [...walkChain(m.lobby.prefab!, config).levels.reverse(), ...walkChain(LOBBY_PREFAB, config, lobby).levels.reverse()];
+  const nodes = [m.lobby.node, ...chain.map((l) => parseAll(l.rawContent)[0])];
+  const first = (f: (n: EnfusionNode) => string | undefined) => nodes.map(f).find((v) => v !== undefined);
+  const field = SETTINGS_FIELD[side];
+  const flag = (key: string, def: boolean) => (first((n) => prop(member(n, field), key)) ?? (def ? "1" : "0")) !== "0";
+  const gearscript = first((n) => prop(member(n, field), "m_rGearScript"));
+  if (!gearscript) throw new Error(`${m.worldRel} sets no gearscript in ${field} (plugin 2 not run?). Pass gearscript.`);
+  const slotted = slotRoles(m.slots[side]);
+  if (!slotted.length) throw new Error(`${side} has no slots in ${m.worldRel}.`);
+  // The CVON roles config needs the component and m_bUseCVON not 0 (COA_GearscriptManager.c:773-783, COA_CVON_GamemodeOverride.c:14-23)
+  const hasCvon = nodes.some((n) => member(n, "components")?.children.some((c) => c.type === "CVON_VONGameModeComponent"));
+  const useCvon = first((n) => prop(n, "m_bUseCVON"));
+  return {
+    worldRel: m.worldRel, field, gearscript, slots: slotted.length, roles: [...new Set(slotted)],
+    radios: { leadership: flag("m_bEnableLeadershipRadios", DEFAULT_RADIOS.leadership), gi: flag("m_bEnableGIRadios", DEFAULT_RADIOS.gi), rto: flag("m_bEnableRTORadios", DEFAULT_RADIOS.rto) },
+    cvon: hasCvon && useCvon !== "0",
+    why: `CVON_VONGameModeComponent ${hasCvon ? "present" : "absent"}, m_bUseCVON ${useCvon ?? "1 (default)"}`,
+  };
+}
+
 export interface Usage { file: string; fields: string[] }
 
 /** Mission layers and worlds (every project's Worlds folder) and the Lobby prefab that name this gearscript GUID. */
@@ -298,10 +327,12 @@ export function findGearscriptUsage(guid: string, projectPath: string, lobby: st
 // ── Tool ────────────────────────────────────────────────────────────────────
 
 interface Params {
-  gearscript: string;
+  gearscript?: string;
+  world?: string;
+  side?: Side;
   roles?: string[];
   radios?: Partial<Radios>;
-  cvon: boolean;
+  cvon?: boolean;
   usedBy: boolean;
   format: "markdown" | "json";
   crfPath?: string;
@@ -311,7 +342,11 @@ interface Params {
 function gearscriptInspect(config: Config, p: Params): string {
   const { crf, lobby } = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
   const roots = [lobby, crf]; // base first: CRF depends on the Lobby
-  const gsPath = findGearscript(p.gearscript, roots);
+  if (!p.world !== !p.side) throw new Error("Pass world and side together.");
+  const ms = p.world && p.side ? missionSide(config, crf, lobby, p.world, p.side) : undefined;
+  const gsInput = p.gearscript ?? ms?.gearscript;
+  if (!gsInput) throw new Error("Pass gearscript, or world and side.");
+  const gsPath = findGearscript(gsInput, roots);
   const gs = loadResource(gsPath, roots).node;
   if (gs?.type !== "COA_GearScriptConfig") {
     throw new Error(`${gsPath} is not a COA_GearScriptConfig (its root is ${gs?.type ?? "empty"}).`);
@@ -327,15 +362,16 @@ function gearscriptInspect(config: Config, p: Params): string {
     throw new Error(`Unknown role ${unknown.join(", ")}. COA_EGearRole names: ${roleNames.join(", ")}`);
   }
 
-  // Seam for MM-N2: a mission world and side will fill radios, cvon and the slotted roles from loadMission
-  const radios: Radios = { ...DEFAULT_RADIOS, ...p.radios };
-  const rcName = rolesConfigResource(lobby, p.cvon);
+  // Explicit params win over the mission's settings (what-if)
+  const radios: Radios = { ...DEFAULT_RADIOS, ...ms?.radios, ...p.radios };
+  const cvon = p.cvon ?? ms?.cvon ?? true;
+  const rcName = rolesConfigResource(lobby, cvon);
   const rc = loadResource(rcName, roots);
   if (!rc.node) throw new Error(`Roles config ${rcName} not found in ${lobby}. Pass lobbyPath.`);
   // COA_RolesConfig keeps the last entry per role (COA_RoleConfig.c:24-28)
   const roleCfgs = new Map(items(rc.node, "m_RoleConfigs").map((r) => [roleOf(r, enums), r]));
 
-  const loadouts = (p.roles?.length ? p.roles : [...roleCfgs.keys()]).map((r) => resolveLoadout(gs, roleCfgs.get(r), r, radios, enums));
+  const loadouts = (p.roles?.length ? p.roles : ms?.roles ?? [...roleCfgs.keys()]).map((r) => resolveLoadout(gs, roleCfgs.get(r), r, radios, enums));
   const orphans = [...new Set(items(gs, "m_RolesToSetCustomSettings").map((c) => roleOf(c, enums)))].filter((r) => !roleCfgs.has(r));
   const usage = p.usedBy && guid ? findGearscriptUsage(guid, config.projectPath, lobby) : undefined;
   const gsName = meta ?? gsPath;
@@ -343,7 +379,7 @@ function gearscriptInspect(config: Config, p: Params): string {
 
   if (p.format === "json") {
     return JSON.stringify(
-      { gearscript: gsName, rolesConfig: rcName, rolesConfigFrom: rc.from, cvon: p.cvon, radios, loadouts, customRolesNotInRolesConfig: orphans, usedBy: usage },
+      { gearscript: gsName, mission: ms && { world: ms.worldRel, side: p.side, settings: ms.field, slots: ms.slots, cvonFrom: ms.why }, rolesConfig: rcName, rolesConfigFrom: rc.from, cvon, radios, loadouts, customRolesNotInRolesConfig: orphans, usedBy: usage },
       null,
       2
     );
@@ -353,10 +389,11 @@ function gearscriptInspect(config: Config, p: Params): string {
   const out = [
     `# Gearscript ${short(gsName)}`,
     `${gsName}${prop(gs, "m_FactionName") ? `, faction "${prop(gs, "m_FactionName")}"` : ""}`,
-    p.cvon
+    ...(ms ? [`Mission ${ms.worldRel}, ${p.side}: ${ms.slots} slots, ${ms.roles.length} roles; gearscript and radios from ${ms.field}; ${ms.why}.`] : []),
+    cvon
       ? `Roles config: CVON, ${rcName} (${rcFrom}). The gear manager uses it when the mission's lobby has a CVON_VONGameModeComponent (COA_GearscriptManager.c:773-783); pass cvon: false for a mission without CVON or with m_bUseCVON 0.`
       : `Roles config: global, ${rcName} (${rcFrom}; cvon: false).`,
-    `Radios: leadership ${radios.leadership ? "on" : "off"}, GI ${radios.gi ? "on" : "off"}, RTO ${radios.rto ? "on" : "off"}${p.radios ? "" : " (container defaults; pass radios to change)"}. Radio prefabs come from the mission's gearscript settings.`,
+    `Radios: leadership ${radios.leadership ? "on" : "off"}, GI ${radios.gi ? "on" : "off"}, RTO ${radios.rto ? "on" : "off"}${p.radios ? "" : ms ? ` (from ${ms.field})` : " (container defaults; pass radios to change)"}. Radio prefabs come from the mission's gearscript settings.`,
     `Options joined by " | " are picked at random per spawn.`,
   ];
   for (const l of loadouts) {
@@ -410,19 +447,22 @@ export function registerGearscriptInspect(server: McpServer, config: Config): vo
         gearscript: z
           .string()
           .min(1)
-          .describe("'{GUID}Configs/Gearscripts/...conf', a CRF or Lobby relative path, or a bare file name such as 'COA_GS_USSR_Late_War.conf' (searched under Configs/Gearscripts)."),
+          .optional()
+          .describe("'{GUID}Configs/Gearscripts/...conf', a CRF or Lobby relative path, or a bare file name such as 'COA_GS_USSR_Late_War.conf' (searched under Configs/Gearscripts). Optional with world and side."),
+        world: z.string().optional().describe("Mission world .ent (CRF-relative, project-relative or absolute, inside the project path). With side: gearscript, radios, CVON choice and slotted roles come from the mission."),
+        side: z.enum(SIDES).optional().describe("Side to read from the mission world (CIV uses m_CIVILIANGearScriptSettings)."),
         roles: z
           .array(z.string())
           .optional()
-          .describe("COA_EGearRole names to show, e.g. ['MEDIC','SQUAD_LEAD']. Default: every role in the roles config."),
+          .describe("COA_EGearRole names to show, e.g. ['MEDIC','SQUAD_LEAD']. Default: the side's slotted roles with world, else every role in the roles config."),
         radios: z
           .object({ leadership: z.boolean().optional(), gi: z.boolean().optional(), rto: z.boolean().optional() })
           .optional()
-          .describe("Radio toggles as the mission sets them. Default: the container defaults (leadership on, GI off, RTO on)."),
+          .describe("Radio toggles as the mission sets them. Default: the mission's settings with world, else the container defaults (leadership on, GI off, RTO on)."),
         cvon: z
           .boolean()
-          .default(true)
-          .describe("Use the CVON roles config, as the game does when the mission's lobby has a CVON_VONGameModeComponent (the Lobby default). false: the global roles config."),
+          .optional()
+          .describe("Use the CVON roles config, as the game does when the mission's lobby has a CVON_VONGameModeComponent and m_bUseCVON is not 0. Default: from the mission with world, else true. false: the global roles config."),
         usedBy: z.boolean().default(false).describe("Also list mission layers and worlds, and the Lobby's COA_Lobby.et, that reference this gearscript."),
         format: z.enum(["markdown", "json"]).default("markdown").describe("json gives full {GUID}paths and source fields."),
         crfPath: z.string().optional().describe("CRF clone. Default: as mission_validate. Must be inside the project path."),
