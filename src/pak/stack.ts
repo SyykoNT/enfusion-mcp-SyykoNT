@@ -74,7 +74,8 @@ export const VANILLA_GUID = "58D0FB3206B6F859";
 
 const subdirs = (dir: string) => {
   try {
-    return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(dir, e.name));
+    // An addon may be a junction or symlink to its folder (findGproj skips one that is not a folder)
+    return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => join(dir, e.name));
   } catch {
     return [];
   }

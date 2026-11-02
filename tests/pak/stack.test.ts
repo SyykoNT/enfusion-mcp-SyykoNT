@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll, vi } from "vitest";
-import { rmSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { rmSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config.js";
@@ -85,4 +85,20 @@ describe("installedAddons and closure", () => {
     expect(closure(cfg, "Z").cycles).toEqual([["1000000000000003", "1000000000000003"]]);
     rmSync(dir, { recursive: true, force: true });
   });
+});
+
+describe("addons behind links and Workshop downloads in a loose dir", () => {
+  it.skipIf(process.platform !== "win32")("finds an addon held as a junction under the project path (B-025)", () => {
+    const { root: r, config: c } = makeFakeStack();
+    const real = join(r, "elsewhere", "Linked");
+    mkdirSync(real, { recursive: true });
+    writeFileSync(join(real, "addon.gproj"), 'GameProject {\n ID "Linked"\n GUID "EEEEEEEEEEEEEEEE"\n Dependencies {\n  "58D0FB3206B6F859"\n }\n}\n');
+    writeFileSync(join(real, "Linked.txt"), "x\n");
+    symlinkSync(real, join(c.projectPath, "Linked"), "junction");
+    expect(buildStack(c, "Linked").layers.map((l) => [l.id, l.kind])).toEqual([["ArmaReforger", "vanilla"], ["Linked", "loose"]]);
+    expect(buildStack(c, "EEEEEEEEEEEEEEEE").layers.at(-1)!.read("Linked.txt")?.toString()).toBe("x\n");
+    expect(installedAddons(c).get("EEEEEEEEEEEEEEEE")?.dir).toBe(join(c.projectPath, "Linked"));
+    rmSync(r, { recursive: true, force: true });
+  });
+
 });
