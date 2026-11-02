@@ -79,7 +79,7 @@ export function registerWbLaunch(
           content: [
             {
               type: "text" as const,
-              text: `**Workbench Ready** — Launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${note}${formatConnectionStatus(client)}`,
+              text: `**Workbench Ready**: launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${note}${formatConnectionStatus(client)}`,
             },
           ],
         };
