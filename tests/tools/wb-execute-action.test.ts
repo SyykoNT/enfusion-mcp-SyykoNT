@@ -12,9 +12,9 @@ function tool() {
     probeMode: vi.fn(async () => "edit"),
     call: vi.fn(async () => ({ executed: true })),
   };
-  let handler: (a: { menuPath: string; module: string }) => Promise<Result> = async () => ({ content: [] });
+  let handler: (a: { menuPath: string; module?: string }) => Promise<Result> = async () => ({ content: [] });
   registerWbExecuteAction({ registerTool: (_n: string, _d: unknown, h: typeof handler) => (handler = h) } as unknown as McpServer, client as unknown as WorkbenchClient);
-  return { client, run: (menuPath: string, module = "WorldEditor") => handler({ menuPath, module }) };
+  return { client, run: (menuPath: string, module = "WorldEditor") => handler({ menuPath, module }), raw: (a: { menuPath: string; module?: string }) => handler(a) };
 }
 
 describe("wb_execute_action block list", () => {
@@ -29,6 +29,13 @@ describe("wb_execute_action block list", () => {
   it("blocks File , Close, which slipped past the old untrimmed, case-sensitive check", async () => {
     const t = tool();
     expect((await t.run("File , Close")).content[0].text).toContain("Perform it manually in Workbench");
+    expect(t.client.call).not.toHaveBeenCalled();
+  });
+
+  it("blocks File,Save with a missing or empty module, which the handler runs in the World Editor", async () => {
+    const t = tool();
+    expect((await t.raw({ menuPath: "File,Save" })).content[0].text).toContain("Use wb_save");
+    expect((await t.raw({ menuPath: "File,Save", module: "" })).content[0].text).toContain("Use wb_save");
     expect(t.client.call).not.toHaveBeenCalled();
   });
 

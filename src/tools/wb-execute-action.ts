@@ -29,7 +29,8 @@ export function registerWbExecuteAction(server: McpServer, client: WorkbenchClie
       try {
         // The handler trims each segment (EMCP_WB_ExecuteAction.c), so compare the same way.
         const normalizedPath = menuPath.split(",").map((s) => s.trim()).join(",").toLowerCase();
-        const isWorldSave = module === "WorldEditor" && normalizedPath.startsWith("file,save");
+        // The handler reads a missing or empty module as WorldEditor, so this check does too.
+        const isWorldSave = (module || "WorldEditor") === "WorldEditor" && normalizedPath.startsWith("file,save");
         if (isWorldSave || BLOCKED_MENU_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
           const hint = isWorldSave
             ? " Use wb_save: it refuses unnamed worlds and prefab edit mode, which open a blocking \"Save world as\" dialog."
