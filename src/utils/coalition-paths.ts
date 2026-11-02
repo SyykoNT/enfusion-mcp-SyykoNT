@@ -26,7 +26,7 @@ export interface CoalitionRoots {
 export const CRF_PATH_HELP =
   "CRF clone. Default: a clone in the project path (ENFUSION_DEFAULT_MOD first), then Documents\\My Games\\ArmaReforgerWorkbench\\Projects\\Coalition-Reforger-Framework (the Coalition Mission Making Guide's folder), else the Workshop copy. Must be inside the project path or that Projects folder.";
 export const LOBBY_PATH_HELP = "COALITION-Lobby clone. Default: a clone next to CRF, else the Workshop copy. Must be inside the project path or the guide's Projects folder.";
-export const SOURCE_HELP = "Force where CRF and Lobby are read from: 'clone' (clones only) or 'workshop' (the Workshop downloads, what servers run). Default: a clone wins, the Workshop copy fills in.";
+export const SOURCE_HELP = "Force where CRF and Lobby are read from: 'clone' (clones only) or 'workshop' (the Workshop downloads, what servers run; not with crfPath or lobbyPath). Default: a clone wins, the Workshop copy fills in.";
 
 /** Where the Coalition Mission Making Guide has mission makers clone CRF. */
 export const guideProjectsDir = () => join(myGamesDir(), "ArmaReforgerWorkbench", "Projects");
@@ -67,6 +67,7 @@ function workshopCopy(config: Config, guid: string, what: string): CoalitionCopy
  */
 export function resolveCoalitionRoots(config: Config, crfPath?: string, lobbyPath?: string, source?: "clone" | "workshop"): CoalitionRoots {
   if (source === "workshop") {
+    if (crfPath || lobbyPath) throw new Error(`source "workshop" reads the Workshop copies, but ${crfPath ? "crfPath" : "lobbyPath"} names a clone. Drop one of them.`);
     try {
       return { crf: workshopCopy(config, CRF_GUID, "CRF"), lobby: workshopCopy(config, LOBBY_GUID, "COALITION-Lobby") };
     } catch (e) {

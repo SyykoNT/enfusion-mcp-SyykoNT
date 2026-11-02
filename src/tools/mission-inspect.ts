@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { z } from "zod";
 import type { Config } from "../config.js";
@@ -58,6 +59,8 @@ function locateWorld(config: Config, crf: CoalitionCopy, world: string): { copy:
     }
   }
   if (!file) throw new Error(`World must be inside the project path ${config.projectPath}.`);
+  // A relative world was looked for in CRF first, so name both places
+  if (!isAbsolute(world) && !existsSync(file)) throw new Error(`World not found: ${slashed} is not in CRF ${crf.label} nor under ${config.projectPath}.`);
   // The addon is the folder holding the nearest Worlds folder
   let root = dirname(file);
   for (let d = dirname(file); dirname(d) !== d; d = dirname(d)) {

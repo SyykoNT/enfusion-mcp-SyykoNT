@@ -4,7 +4,7 @@ import type { Config } from "../config.js";
 import { parseAll } from "../formats/enfusion-text.js";
 import { prop, slotRoles, SIDES, textOf } from "../coalition/mission-model.js";
 import { gitOrNull } from "../release/git.js";
-import { resolveCoalitionRoots } from "../utils/coalition-paths.js";
+import { CRF_PATH_HELP, LOBBY_PATH_HELP, resolveCoalitionRoots } from "../utils/coalition-paths.js";
 import { loadLobbyEnums } from "../utils/lobby-enums.js";
 import { loadLobbyMission } from "./mission-inspect.js";
 
@@ -141,7 +141,7 @@ export function missionNames(config: Config, p: NamesParams, now = new Date()): 
     for (const k of ["author", "name"] as const) if (!alnum(p[k]!)) throw new Error(`${k} "${p[k]}" has no letters or digits, which plugin 6's file name keeps.`);
     const names = buildNames({ author: p.author!.trim(), mode, name: p.name!.trim(), terrain: p.terrain!, slots: p.slots }, now);
     const notes = [dateNote(now), p.slots === undefined ? { level: "info" as const, text: "NN is the slot count: plugin 6 counts every BLUFOR, OPFOR, INDFOR and CIV slot in the world. Pass slots, or run check on the world." } : undefined].filter((n): n is Note => !!n);
-    return [`mission_names build (rules from Lobby plugin 6 and CRF mission_synopsis.py)`, ...rows(names), ...noteLines(notes)].join("\n");
+    return [`mission_names build (rules from Lobby plugin 6 and CRF mission_synopsis.py)`, `CRF: ${crf.label}`, `Lobby: ${lobby.label}`, ...rows(names), ...noteLines(notes)].join("\n");
   }
 
   if (!p.world) throw new Error("check needs world (the mission .ent).");
@@ -157,6 +157,8 @@ export function missionNames(config: Config, p: NamesParams, now = new Date()): 
   const { notes, expected } = checkNames({ worldRel: m.worldRel, slots, confs }, branch, modes, now);
   return [
     `mission_names check ${m.worldRel}  (${slots} slots, branch ${branch ?? "unknown"})`,
+    `CRF: ${crf.label}`,
+    `Lobby: ${lobby.label}`,
     ...confs.map((c) => `conf ${c.conf}: m_sName "${c.name}", m_sAuthor "${c.author}", m_sGameMode ${c.mode}, m_sTerrainName ${c.terrain}`),
     ...(notes.length ? noteLines(notes) : ["OK: the world, its .conf and the branch follow plugin 6's rules."]),
     ...(expected ? ["Names from the .conf and the world's slot count (MISSION CONFIG dated today):", ...rows(expected)] : []),
@@ -180,8 +182,8 @@ export function registerMissionNames(server: McpServer, config: Config): void {
         terrain: z.string().optional().describe("build: terrain folder under Worlds/, e.g. 'Arland'"),
         slots: z.number().int().min(0).max(999).optional().describe("build: slot count (all sides); NN when omitted"),
         world: z.string().optional().describe("check: mission world .ent, CRF-relative, project-relative or absolute, inside the project path"),
-        crfPath: z.string().optional().describe("CRF clone. Default: as mission_validate. Must be inside the project path."),
-        lobbyPath: z.string().optional().describe("COALITION-Lobby clone. Default: next to CRF. Must be inside the project path."),
+        crfPath: z.string().optional().describe(CRF_PATH_HELP),
+        lobbyPath: z.string().optional().describe(LOBBY_PATH_HELP),
       },
     },
     async (params) => {
