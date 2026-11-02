@@ -33,7 +33,8 @@ function setup() {
   git(fx.crf, "checkout", "-q", "-b", "mission/test");
   return { ...fx, origin };
 }
-const state = (dir: string) => [git(dir, "status", "--porcelain=v1", "--untracked-files=all"), git(dir, "show-ref"), statSync(join(dir, ".git", "index")).mtimeMs, statSync(join(dir, ".git", "FETCH_HEAD")).mtimeMs].join("|");
+// --no-optional-locks: a plain status may rewrite a freshly written index, which would look like the tool changing the clone
+const state = (dir: string) => [git(dir, "--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"), git(dir, "show-ref"), statSync(join(dir, ".git", "index")).mtimeMs, statSync(join(dir, ".git", "FETCH_HEAD")).mtimeMs].join("|");
 
 describe.skipIf(!hasGit)("mission_git", { timeout: 30_000 }, () => {
   it("clean mission branch: nothing ahead or behind, no files, no warnings, and nothing changes in the clone", () => {

@@ -81,7 +81,8 @@ describe("parseCrashLog", () => {
 });
 
 describe("loadedProjects", () => {
-  it("follows Dependencies from the CLI -gproj, not every gproj line", () => {
+  // Windows only: the log holds C:\ paths, which node's path functions read as relative paths off Windows.
+  it.skipIf(process.platform !== "win32")("follows Dependencies from the CLI -gproj, not every gproj line", () => {
     const head = [
       "06:12:44.479   ENGINE       : CLI Params: -gproj C:\\Arma Reforger Modding\\test-addons\\SYK_AMTest\\addon.gproj -addonsDir C:\\Arma Reforger Modding\\projects -wbModule WorldEditor",
       "06:12:44.794    ENGINE       : gproj: 'C:/Arma Reforger Modding/test-addons/SYK_AMTest/addon.gproj' guid: '4833511065131B41'",

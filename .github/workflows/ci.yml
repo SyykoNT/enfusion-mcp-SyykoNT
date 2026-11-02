@@ -9,9 +9,11 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [windows-latest, ubuntu-latest]
         node-version: [20, 22]
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +25,9 @@ jobs:
 
       - run: npm ci
 
-      - run: node scripts/build-info.mjs && npx tsc -p tsconfig.build.json
+      # Two steps, not one line with &&: Windows PowerShell 5.1 has no &&.
+      - run: node scripts/build-info.mjs
+
+      - run: npx tsc -p tsconfig.build.json
 
       - run: npx vitest run
