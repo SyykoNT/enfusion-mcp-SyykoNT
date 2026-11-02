@@ -11,14 +11,12 @@ const WORLD_PARENTS: Record<string, string> = {
   "western everon": "{312CDBA105554B51}worlds/MP/CTI_Campaign_WesternEveron.ent",
 };
 
-// Game mode (production Seize/Conflict mods)
-const PREFAB_GAME_MODE      = "{CE6DD1D3C1BC7366}Prefabs/GameLogic/GameMode_Seize.et";
+// Vanilla 1.8.0.13 game mode (class SCR_GameModeCampaign); D-044 replaced the Conflict mod's GameMode_Seize
+const PREFAB_GAME_MODE      = "{3B230AAC5252108F}Prefabs/MP/Modes/Conflict/GameMode_Campaign.et";
 // Vanilla 1.8.0.13 path of this GUID (the old "_Seize" name matched no file)
 const PREFAB_FACTION_MGR    = "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et";
 // ConflictMilitaryBase — all military bases use this ($grp wrapper)
 const PREFAB_CONFLICT_BASE  = "{1391CE8C0E255636}Prefabs/Systems/MilitaryBase/ConflictMilitaryBase.et";
-// MOB spawn protection area
-const PREFAB_SPAWN_PROTECT  = "{35C70C8528D145B1}Prefabs/MOBSpawnProtection/MOBSpawnProtectionArea.et";
 // Faction-specific ambient patrol spawnpoints
 const PREFAB_PATROL_FIA     = "{9273AB931008C271}Prefabs/Systems/AmbientPatrol/AmbientPatrolSpawnpoint_FIA.et";
 const PREFAB_PATROL_US      = "{1E4C8AD00BBB16AA}Prefabs/Systems/AmbientPatrol/AmbientPatrolSpawnpoint_Base.et"; // Base used for US
@@ -37,26 +35,17 @@ const PREFAB_SEEDING_ZONE   = "{801DADF0D6C316B9}PrefabsEditable/RestrictionZone
 // Seeding-only ambient patrol (fast respawn, stops once seeding ends)
 const PREFAB_PATROL_SEEDING = "{0E66F798F84EEB58}Prefabs/Systems/AmbientPatrol/IRON_AmbientPatrolSpawnpoint_Base_Seeding.et";
 
-// NOTE ON PROPERTY NAMES — verified 2026-08-04 against the full vanilla script set
-// (all 6,495 .c files inside the base game .paks, read via the pak VFS).
-//
-// These properties this generator writes do NOT exist in vanilla Arma Reforger:
+// NOTE (D-044): this file targets vanilla 1.8.0.13 (game mode GameMode_Campaign.et, faction
+// manager CampaignFactionManager.et) and diverges from BK's copy on purpose.
+// The keywords below are not in vanilla: Workbench logs "Unknown keyword" and ignores them.
+// They are kept for the Conflict mod family (ConflictEscalation / IRON / SeizeAMPSecure):
 //   m_fRadioAntennaServiceRange   m_bHideBasesOutsideRadioRange
 //   m_RequiredGroupTypes          m_bExcludeFromRandomization
 //   m_aCaptureAndHoldAreaNames    m_bRequiresCaptureAndHoldAreas
 //   m_iAreaThreshold              m_bServerSeedingEnabled
 //   m_iServerSeedingThreshold     m_bAutoSizeToHQ
 //   m_bRespawnOnlyDuringSeeding   m_iDistanceToHQ
-//
-// They are conventions of the Conflict MOD ecosystem (ConflictEscalation / IRON /
-// SeizeAMPSecure family) — m_fRadioAntennaServiceRange, for instance, is used in
-// SeizeEveronWestCoast's Base.layer. On a stock SCR_CampaignMilitaryBaseComponent
-// the engine ignores them silently.
-//
-// Kept because that ecosystem is what these scenarios are built for. Do not "fix"
-// them against the vanilla API — they are absent from it by design. Control check:
-// m_iRegularSuppliesIncome and m_bIsControlPoint ARE vanilla, both declared in
-// scripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c.
+// Seeding (seedingEnabled) still needs that mod.
 
 // Component GUIDs inside ConflictMilitaryBase (from mod analysis)
 const CID_SEIZING   = "{5C66967235FBEEA3}";
@@ -137,8 +126,10 @@ export interface ConflictScenarioOptions {
   playerCount?: number;
   /** XP multiplier, e.g. 0.5 for PvE (default 1.0) */
   xpMultiplier?: number;
-  /** Enable persistence/saving (default true) */
-  savingEnabled?: boolean;
+  /** The parent world already has a game mode entity: write none (D-044) */
+  parentHasGameMode?: boolean;
+  /** The parent world already has a faction manager: write none (D-044) */
+  parentHasFactionManager?: boolean;
   /** Game mode display label (default "Conflict") */
   gameModeLabel?: string;
   /** Scenario description */
@@ -192,9 +183,6 @@ function buildMissionConf(opts: ConflictScenarioOptions, worldRef: string): stri
   if (opts.xpMultiplier !== undefined && opts.xpMultiplier !== 1.0) {
     lines.push(` m_fXpMultiplier ${opts.xpMultiplier}`);
   }
-  if (opts.savingEnabled !== false) {
-    lines.push(` m_bIsSavingEnabled 1`);
-  }
 
   // Base whitelist — links .conf base names to world entities
   const contestable = opts.bases.filter(b => b.type !== "sourceBase" && b.type !== "harbor" && b.type !== "relay");
@@ -225,7 +213,7 @@ function buildWorldEnt(worldRef: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// default.layer — game mode entity + required managers
+// default.layer: game mode entity + faction manager (each skipped when the parent world has one)
 // ---------------------------------------------------------------------------
 
 function buildDefaultLayer(opts: ConflictScenarioOptions): string {
@@ -237,27 +225,31 @@ function buildDefaultLayer(opts: ConflictScenarioOptions): string {
   const threshold = Math.max(1, Math.floor(contestableCount * 0.5));
   const lines: string[] = [];
 
-  lines.push(`SCR_GameModeCampaign GameMode1 : "${PREFAB_GAME_MODE}" {`);
-  lines.push(` ID "${gmId}"`);
-  lines.push(` coords 0 0 0`);
-  lines.push(` m_fAutoReloadTime 30`);
-  lines.push(` m_iControlPointsThreshold ${threshold}`);
-  lines.push(` m_fVictoryTimer 300`);
-  lines.push(` m_iRegularSuppliesIncome ${opts.suppliesIncome ?? 50}`);
-  lines.push(` m_bEstablishingBasesEnabled 0`);
-  lines.push(` m_bHideBasesOutsideRadioRange 1`);
-  if (opts.seedingEnabled) {
-    lines.push(` m_bServerSeedingEnabled 1`);
-    lines.push(` m_iServerSeedingThreshold ${opts.seedingThreshold ?? 12}`);
+  if (!opts.parentHasGameMode) {
+    lines.push(`SCR_GameModeCampaign GameMode1 : "${PREFAB_GAME_MODE}" {`);
+    lines.push(` ID "${gmId}"`);
+    lines.push(` coords 0 0 0`);
+    lines.push(` m_fAutoReloadTime 30`);
+    lines.push(` m_iControlPointsThreshold ${threshold}`);
+    lines.push(` m_fVictoryTimer 300`);
+    lines.push(` m_iRegularSuppliesIncome ${opts.suppliesIncome ?? 50}`);
+    lines.push(` m_bEstablishingBasesEnabled 0`);
+    lines.push(` m_bHideBasesOutsideRadioRange 1`);
+    if (opts.seedingEnabled) {
+      lines.push(` m_bServerSeedingEnabled 1`);
+      lines.push(` m_iServerSeedingThreshold ${opts.seedingThreshold ?? 12}`);
+    }
+    lines.push(`}`);
   }
-  lines.push(`}`);
 
-  lines.push(`SCR_CampaignFactionManager CampaignFactionManager1 : "${PREFAB_FACTION_MGR}" {`);
-  lines.push(` ID "${fmId}"`);
-  lines.push(` coords 0 0 0`);
-  lines.push(`}`);
+  if (!opts.parentHasFactionManager) {
+    lines.push(`SCR_CampaignFactionManager CampaignFactionManager1 : "${PREFAB_FACTION_MGR}" {`);
+    lines.push(` ID "${fmId}"`);
+    lines.push(` coords 0 0 0`);
+    lines.push(`}`);
+  }
 
-  return lines.join("\n") + "\n";
+  return lines.length ? lines.join("\n") + "\n" : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -394,22 +386,14 @@ function buildBasesLayer(opts: ConflictScenarioOptions): string {
     lines.push(`  }`);
     lines.push(`  coords ${fmtPos(bx, by, bz)}`);
 
-    if (isMOB) {
+    if (isMOB && opts.seedingEnabled) {
       lines.push(`  {`);
-      lines.push(`   SCR_Iron_CaptureAndHoldSpawnProtectionArea : "${PREFAB_SPAWN_PROTECT}" {`);
+      lines.push(`   IRON_SeedingRestrictionZoneEntity : "${PREFAB_SEEDING_ZONE}" {`);
+      lines.push(`    m_bAutoSizeToHQ 1`);
+      lines.push(`    m_iDistanceToHQ 2000`);
       lines.push(`    coords 0 0 0`);
       lines.push(`   }`);
       lines.push(`  }`);
-
-      if (opts.seedingEnabled) {
-        lines.push(`  {`);
-        lines.push(`   IRON_SeedingRestrictionZoneEntity : "${PREFAB_SEEDING_ZONE}" {`);
-        lines.push(`    m_bAutoSizeToHQ 1`);
-        lines.push(`    m_iDistanceToHQ 2000`);
-        lines.push(`    coords 0 0 0`);
-        lines.push(`   }`);
-        lines.push(`  }`);
-      }
     }
 
     lines.push(` }`);
@@ -628,8 +612,7 @@ export function generateConflictScenario(opts: ConflictScenarioOptions): Conflic
     throw new Error("At least one base is required to generate a Conflict scenario.");
   }
 
-  const worldKey = opts.worldName.toLowerCase().replace(/\s+/g, " ").trim();
-  const worldRef = WORLD_PARENTS[worldKey] ?? opts.worldName;
+  const worldRef = resolveWorldRef(opts.worldName);
 
   return {
     missionConf:          buildMissionConf(opts, worldRef),
@@ -641,6 +624,11 @@ export function generateConflictScenario(opts: ConflictScenarioOptions): Conflic
     ambientVehiclesLayer: buildAmbientVehiclesLayer(opts),
     seedingLayer:         buildSeedingLayer(opts),
   };
+}
+
+/** "Arland" and friends to their {GUID}path; anything else is taken as a resource ref. */
+export function resolveWorldRef(worldName: string): string {
+  return WORLD_PARENTS[worldName.toLowerCase().replace(/\s+/g, " ").trim()] ?? worldName;
 }
 
 /** List of known world names for the tool description. */

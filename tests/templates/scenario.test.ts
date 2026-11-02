@@ -101,13 +101,8 @@ describe("generateConflictScenario", () => {
       expect(missionConf).toContain("MOB_US");
     });
 
-    it("includes saving enabled flag", () => {
+    it("does not write m_bIsSavingEnabled (not a vanilla property)", () => {
       const { missionConf } = generateConflictScenario(MINIMAL_OPTS);
-      expect(missionConf).toContain("m_bIsSavingEnabled 1");
-    });
-
-    it("omits saving flag when disabled", () => {
-      const { missionConf } = generateConflictScenario({ ...MINIMAL_OPTS, savingEnabled: false });
       expect(missionConf).not.toContain("m_bIsSavingEnabled");
     });
   });
@@ -139,7 +134,17 @@ describe("generateConflictScenario", () => {
     it("includes SCR_GameModeCampaign entity", () => {
       const { defaultLayer } = generateConflictScenario(MINIMAL_OPTS);
       expect(defaultLayer).toContain("SCR_GameModeCampaign");
-      expect(defaultLayer).toContain("GameMode_Seize.et");
+      expect(defaultLayer).toContain("{3B230AAC5252108F}Prefabs/MP/Modes/Conflict/GameMode_Campaign.et");
+    });
+
+    it("skips the game mode and the faction manager each when the parent world has one; both gives an empty layer", () => {
+      const gm = generateConflictScenario({ ...MINIMAL_OPTS, parentHasGameMode: true }).defaultLayer;
+      expect(gm).not.toContain("SCR_GameModeCampaign");
+      expect(gm).toContain("SCR_CampaignFactionManager");
+      const fm = generateConflictScenario({ ...MINIMAL_OPTS, parentHasFactionManager: true }).defaultLayer;
+      expect(fm).toContain("SCR_GameModeCampaign");
+      expect(fm).not.toContain("SCR_CampaignFactionManager");
+      expect(generateConflictScenario({ ...MINIMAL_OPTS, parentHasGameMode: true, parentHasFactionManager: true }).defaultLayer).toBe("");
     });
 
     it("includes SCR_CampaignFactionManager entity", () => {
@@ -211,9 +216,11 @@ describe("generateConflictScenario", () => {
       expect(basesLayer).toContain("m_bExcludeFromRandomization 1");
     });
 
-    it("includes spawn protection area on MOB", () => {
-      const { basesLayer } = generateConflictScenario(MINIMAL_OPTS);
-      expect(basesLayer).toContain("MOBSpawnProtectionArea.et");
+    it("writes no mod spawn protection area (D-044)", () => {
+      const out = generateConflictScenario({ ...MINIMAL_OPTS, seedingEnabled: true, civVehicleCount: 2 });
+      const all = Object.values(out).filter(Boolean).join("\n");
+      expect(all).not.toContain("MOBSpawnProtectionArea");
+      expect(all).not.toContain("SCR_Iron_CaptureAndHoldSpawnProtectionArea");
     });
 
     it("includes SCR_CampaignSuppliesComponent on MOB", () => {

@@ -1,14 +1,16 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { mkdirSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import type { Config } from "../config.js";
 import {
   generateConflictScenario,
+  resolveWorldRef,
   KNOWN_WORLDS,
   type ConflictBaseSpec,
 } from "../templates/scenario.js";
-import { worldMeta } from "../formats/config-override.js";
+import { worldMeta, stripGuid } from "../formats/config-override.js";
+import { buildStack } from "../pak/stack.js";
 import { generateGuid } from "../formats/guid.js";
 import { validateFilename } from "../utils/safe-path.js";
 import { resolveWriteAddon } from "../utils/game-paths.js";
@@ -51,15 +53,66 @@ const BASE_SPEC_SCHEMA = z.object({
     .describe("Number of ambient patrol spawnpoints around this base (0-6, default 2)."),
 });
 
+// shortcut: class names in a world's string table, not a parse of its entities; a parent with another
+// game mode class is not seen. Upgrade if a parent needs it.
+const GAME_MODE_RE = /\bSCR_GameModeCampaign\b|\bSCR_BaseGameMode\b/;
+const FACTION_MGR_RE = /\bSCR_CampaignFactionManager\b|\bSCR_FactionManager\b/;
+
+/** What a parent world's bytes (read as latin1: vanilla worlds are binary) say it already holds. */
+export function parentWorldHas(text: string): { gameMode: boolean; factionManager: boolean } {
+  return { gameMode: GAME_MODE_RE.test(text), factionManager: FACTION_MGR_RE.test(text) };
+}
+
+/** The parent world and its _Layers files as one latin1 string, from the top layer of the addon's stack that has it; null when unreadable. */
+export function readParentWorld(config: Config, gproj: string, worldRef: string): string | null {
+  const path = stripGuid(worldRef);
+  let layers;
+  try {
+    layers = buildStack(config, gproj).layers;
+  } catch {
+    return null;
+  }
+  for (const l of [...layers].reverse()) {
+    // Pak paths are lower-case (worlds/...), so retry with a case-insensitive match
+    const file = l.read(path) ? path : l.list(dirname(path)).find((f) => f.toLowerCase() === path.toLowerCase());
+    const buf = file ? l.read(file) : null;
+    if (!buf) continue;
+    const layerFiles = l.list(path.replace(/\.ent$/i, "_Layers")).filter((f) => /\.layer$/i.test(f));
+    return [buf, ...layerFiles.map((f) => l.read(f) ?? Buffer.alloc(0))].map((b) => b.toString("latin1")).join("\n");
+  }
+  return null;
+}
+
+function parentNotes(
+  parent: { gameMode: boolean; factionManager: boolean } | null,
+  given: { suppliesIncome?: number; seedingEnabled?: boolean }
+): string[] {
+  if (!parent) {
+    return [`Parent world not readable: the game mode and faction manager are written; remove them if the parent has its own.`, ``];
+  }
+  const skipped = [parent.gameMode && "game mode", parent.factionManager && "faction manager"].filter(Boolean);
+  if (skipped.length === 0) return [];
+  const ignored = [
+    "the control point threshold",
+    given.suppliesIncome !== undefined && "suppliesIncome",
+    given.seedingEnabled && "the seeding game mode settings",
+  ].filter(Boolean);
+  return [
+    `The parent world already has a ${skipped.join(" and a ")}, so none is written; the parent's is used.`,
+    ...(parent.gameMode ? [`Ignored because the game mode is the parent's: ${ignored.join(", ")}.`] : []),
+    ``,
+  ];
+}
+
 export function registerScenarioCreate(server: McpServer, config: Config): void {
   server.registerTool(
     "scenario_create_conflict",
     {
       description:
         "Generate a Conflict multiplayer scenario: a mission header (.conf), a sub-scene world (.ent with its .meta) and 3 to 6 layer files " +
-        "(the result lists every file written). Generates GameMode_Seize, CampaignFactionManager, military bases with seizing, radio and patrol spawnpoints, " +
-        "optional relay towers (base type='relay') and optional seeding mode. " +
-        "Needs a Conflict mod that supplies GameMode_Seize and MOBSpawnProtectionArea: neither is in vanilla 1.8.0.13, so without it Workbench logs 'Wrong GUID/name' and the game mode entity loads without its components. " +
+        "(the result lists every file written). Generates the vanilla game mode (GameMode_Campaign) and CampaignFactionManager, each written only when the parent world has none, " +
+        "military bases with seizing, radio and patrol spawnpoints, optional relay towers (base type='relay') and optional seeding mode. " +
+        "Seeding needs a third-party mod (see the seedingEnabled input). " +
         "Known worlds: " + KNOWN_WORLDS.join(", ") + ". " +
         "For custom maps pass the full resource ref as worldName, e.g. '{GUID}worlds/MyMap.ent'.",
       inputSchema: {
@@ -97,10 +150,6 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           .number()
           .optional()
           .describe("XP multiplier. Use 0.5 for PvE, 1.0 for standard PvP (default 1.0, omitted if 1.0)."),
-        savingEnabled: z
-          .boolean()
-          .optional()
-          .describe("Enable Conflict persistence/saving (default true)."),
         gameModeLabel: z
           .string()
           .optional()
@@ -159,7 +208,6 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
       bases,
       playerCount,
       xpMultiplier,
-      savingEnabled,
       gameModeLabel,
       description,
       author,
@@ -174,13 +222,18 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
       try {
         validateFilename(scenarioName);
 
+        // Offline read of the parent world: null = not readable (also when there is no target to write to)
+        const parentText = "error" in target ? null : readParentWorld(config, target.gproj, resolveWorldRef(worldName));
+        const parent = parentText === null ? null : parentWorldHas(parentText);
+
         const output = generateConflictScenario({
           scenarioName: scenarioDisplayName ?? scenarioName,
           worldName,
           bases: bases as ConflictBaseSpec[],
           playerCount,
           xpMultiplier,
-          savingEnabled,
+          parentHasGameMode: parent?.gameMode,
+          parentHasFactionManager: parent?.factionManager,
           gameModeLabel,
           description,
           author,
@@ -281,6 +334,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
                 `Factions: ${factions.join(", ")}`,
                 `Players: ${playerCount ?? 40}`,
                 ``,
+                ...parentNotes(parent, { suppliesIncome, seedingEnabled }),
                 ...(seedingEnabled
                   ? [
                       `WARNING — seeding requires a third-party dependency:`,
