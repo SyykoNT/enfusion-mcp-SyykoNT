@@ -108,7 +108,7 @@ export function registerScriptErrors(server: McpServer, config: Config): void {
             return text(`The Dedicated Server Tool has no Profile set in ${dst.settings}, so its server writes to a default profile (location unverified). Set Profile in the tool (the guide uses "server"), or pass logPath.`, true);
           }
           const dirs = a.source === "dstServer" ? [dst.server!] : dst.peers;
-          if (!dirs.length) return text(`No peer profile folders ${dst.peerName}<n> found: no Dedicated Server Tool peer has run yet.`, true);
+          if (!dirs.length) return text(`No profile folder for an enabled Dedicated Server Tool peer (${dst.settings}): none has run, none is enabled, or each writes to the default client profile (source game).`, true);
           root = dirs.join(", ");
           // One run = the newest sessions of each peer, labelled with the peer's profile folder.
           found = dirs.flatMap((d) => newestSessions(join(d, "logs"), a.sessions).map((s) => ({ ...s, name: `${basename(d)}/${s.name}` })));

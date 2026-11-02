@@ -3,7 +3,7 @@ import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.js";
 import { findGproj } from "../utils/game-paths.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
@@ -47,36 +47,43 @@ export function findMissionHeader(worldFile: string): { header?: string; addon?:
 
 /**
  * Profile names the Dedicated Server Tool passes, from Workbench's settings dump (`ScriptTools\SCR_DedicatedServerPlugin=` line).
- * The dump leaves out strings at their default, so a missing m_sProfile is "" (no -profile) and a missing peer Profile is "PeerPlugin".
- * shortcut: one peer Profile name for all peers (the first one set); per-peer names would need the PeerConfig blocks parsed one by one.
+ * The dump leaves out strings at their default: a missing m_sProfile is "" (no -profile), a missing peer Profile is "PeerPlugin".
+ * Peers are numbered as the plugin does: enabled ones only, from 1, each `<its own Profile><n>`; a peer with Profile "" gets no -profile
+ * (it writes to the default client profile, source "game"), so it has no folder here.
  */
-export function dstProfiles(dump: string): { server: string; peers: string } {
+export function dstProfiles(dump: string): { server: string; peers: string[] } {
   const line = dump.match(/^ScriptTools\\SCR_DedicatedServerPlugin=(.*)$/m)?.[1] ?? "";
-  const value = (re: RegExp) => line.match(re)?.[1]?.replace(/\\"/g, '"') ?? "";
-  return { server: value(/" m_sProfile \\"(.*?)\\""/), peers: value(/"\s+Profile \\"(.*?)\\""/) || "PeerPlugin" };
+  const parts = [...line.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\"/g, '"').trim());
+  let server = "";
+  const peers: string[] = [];
+  let peer: { profile: string; enabled: boolean } | undefined;
+  let n = 0;
+  for (const t of parts) {
+    if (/^PeerConfig\b.*\{$/.test(t)) peer = { profile: "PeerPlugin", enabled: true };
+    else if (peer && t === "}") {
+      if (peer.enabled && ++n && peer.profile) peers.push(peer.profile + n);
+      peer = undefined;
+    } else if (peer) {
+      peer.profile = /^Profile "(.*)"$/.exec(t)?.[1] ?? peer.profile;
+      if (t === "Enabled 0") peer.enabled = false;
+    } else server = /^m_sProfile "(.*)"$/.exec(t)?.[1] ?? server;
+  }
+  return { server, peers };
 }
 
 /**
- * Profile folders of the Dedicated Server Tool's last setup: the server's, and every peer's (`<Profile><n>`, numbered from 1).
+ * Profile folders of the Dedicated Server Tool's last setup: the server's, and each enabled peer's that exists.
  * A relative -profile lands in <Documents>\My Games\<name> (GI-14 probe, server log FileSystem lines); peers assumed the same (unverified).
  * Workbench writes the settings dump itself, so a change in the tool shows here once Workbench has saved its settings.
  */
-export function dstProfileDirs(config: Config, docs = documentsDir): { server?: string; peers: string[]; peerName: string; settings: string } {
+export function dstProfileDirs(config: Config, docs = documentsDir): { server?: string; peers: string[]; settings: string } {
   const settings = join(workbenchProfileDir(config), "profile", "wbSettingsDump.ini");
   const p = dstProfiles(existsSync(settings) ? readFileSync(settings, "utf-8") : "");
-  const at = (name: string) => (isAbsolute(name) ? name : join(docs(), "My Games", name));
-  const peerName = at(p.peers);
-  const stem = new RegExp(`^${basename(peerName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`, "i");
-  let peers: string[] = [];
-  try {
-    peers = readdirSync(dirname(peerName), { withFileTypes: true })
-      .filter((e) => e.isDirectory() && stem.test(e.name))
-      .sort((a, b) => Number(stem.exec(a.name)![1]) - Number(stem.exec(b.name)![1]))
-      .map((e) => join(dirname(peerName), e.name));
-  } catch {
-    // no folder yet: no peer has run
-  }
-  return { server: p.server ? at(p.server) : undefined, peers, peerName, settings };
+  let myGames: string | undefined;
+  // These names lead to log roots: one that climbs out with ".." is dropped.
+  const at = (name: string) =>
+    name.split(/[\\/]/).includes("..") ? undefined : isAbsolute(name) ? name : join((myGames ??= join(docs(), "My Games")), name);
+  return { server: p.server ? at(p.server) : undefined, peers: p.peers.map(at).filter((d): d is string => !!d && existsSync(d)), settings };
 }
 
 export interface ParamsArgs {

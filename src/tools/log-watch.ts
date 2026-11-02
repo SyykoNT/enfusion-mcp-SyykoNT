@@ -22,8 +22,9 @@ const regex = (s: string) => {
 export function logRoots(config: Config): string[] {
   const dst = dstProfileDirs(config);
   return [
-    ...(dst.server ? [dst.server] : []),
-    ...dst.peers,
+    // Only each profile's logs folder: the profile names come from a settings file, not from the user (review GI-14 B1).
+    ...(dst.server ? [join(dst.server, "logs")] : []),
+    ...dst.peers.map((p) => join(p, "logs")),
     config.serverProfilePath,
     join(workbenchProfileDir(config), "logs"),
     join(myGamesDir(), "ArmaReforger", "logs"),
@@ -84,7 +85,7 @@ export function registerLogWatch(server: McpServer, config: Config): void {
           if (!found) {
             return text(a.source === "dstServer"
               ? `The Dedicated Server Tool has no Profile set in ${dst.settings}; set Profile in the tool (the guide uses "server").`
-              : `No Dedicated Server Tool peer ${a.instance === "default" ? 1 : a.instance} (${dst.peerName}<n>); peers found: ${dst.peers.length}`, true);
+              : `No Dedicated Server Tool peer ${a.instance === "default" ? 1 : a.instance} with a profile folder; peers found: ${dst.peers.length} (${dst.settings})`, true);
           }
           dir = found;
         } else {
