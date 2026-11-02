@@ -109,9 +109,10 @@ describe("launchWorkbench stops waiting when its Workbench has exited", () => {
     expect(Date.now() - t0).toBeLessThan(1000);
   });
 
-  it("stops at once, naming the dialog, when a probe 30 s in finds one; no dialog keeps it polling", async () => {
+  const modal = { hwnd: 5, cls: "Qt683QWindowIcon", text: "Validating $TestAddon:Worlds/W.ent", visible: true, buttons: ["Yes", "No"], children: [{ hwnd: 0, cls: "Text", text: "The world is obsolete" }] };
+
+  it("names the dialog and stops when the same one is still open at the second check (30 s, then 15 s later)", async () => {
     const { c, gproj } = refusingClient();
-    const modal = { hwnd: 5, cls: "Qt683QWindowIcon", text: "Validating $TestAddon:Worlds/W.ent", visible: true, buttons: ["Yes", "No"], children: [{ hwnd: 0, cls: "Text", text: "The world is obsolete" }] };
     const probe = vi.fn(async () => [{ pid: 4242, dialogs: [modal] }]);
     c.dialogProbe = probe;
     vi.useFakeTimers();
@@ -120,9 +121,28 @@ describe("launchWorkbench stops waiting when its Workbench has exited", () => {
       await vi.advanceTimersByTimeAsync(29_000);
       expect(probe).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(6_000);
+      expect(probe).toHaveBeenCalledTimes(1); // first sighting: keeps polling
+      await vi.advanceTimersByTimeAsync(15_000);
       await done;
-      expect(probe).toHaveBeenCalledTimes(1);
+      expect(probe).toHaveBeenCalledTimes(2);
       expect(probe).toHaveBeenCalledWith([4242]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not stop for a dialog that is gone at the next check, or for a leak assert the watchdog answers", async () => {
+    const leak = { hwnd: 6, cls: "#32770", text: "Assertion", visible: true, children: [{ hwnd: 7, cls: "Static", text: "Reason: Resources are leaking! Check log!" }, { hwnd: 8, cls: "Button", text: "&Ignore" }] };
+    const { c, gproj } = refusingClient();
+    let n = 0;
+    // progress box with a new window each time, then a leak assert that stays open for every check
+    c.dialogProbe = async () => [{ pid: 4242, dialogs: ++n < 3 ? [{ ...modal, hwnd: 100 + n }] : [leak] }];
+    vi.useFakeTimers();
+    try {
+      const done = expect(c.ensureRunning(gproj, false, "Worlds/W.ent")).rejects.toThrow(/did not connect within 300s/);
+      await vi.advanceTimersByTimeAsync(305_000);
+      await done;
+      expect(n).toBeGreaterThan(5);
     } finally {
       vi.useRealTimers();
     }

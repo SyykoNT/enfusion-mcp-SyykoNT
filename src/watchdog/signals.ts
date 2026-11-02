@@ -141,7 +141,7 @@ export function formatDialogs(list: DialogProbe[]): string {
   let open = false;
   for (const p of list) {
     if ("unavailable" in p) lines.push(`Workbench PID ${p.pid} (dialog check unavailable: ${p.unavailable})`);
-    else if (!p.dialogs.length) lines.push(`No dialog is open in Workbench PID ${p.pid}; it may be loading, compiling or hung.`);
+    else if (!p.dialogs.length) lines.push(`No dialog was found in Workbench PID ${p.pid}; it may be loading, compiling, hung, or showing a dialog this check cannot see.`);
     else {
       open = true;
       lines.push(`Workbench PID ${p.pid} has a dialog open, which blocks every NET API call:`);

@@ -21,7 +21,7 @@ import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../u
 import { workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher } from "../watchdog/wb-watch.js";
 import { probeDialogs } from "../watchdog/probe.js";
-import { formatDialogs, type DialogProbe } from "../watchdog/signals.js";
+import { dialogKind, formatDialogs, type DialogProbe } from "../watchdog/signals.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 import { git, gitOrNull } from "../release/git.js";
@@ -780,6 +780,7 @@ export class WorkbenchClient {
     const deadline = Date.now() + timeoutMs;
     let lastErrorCode: WorkbenchError["code"] | undefined;
     let lastDialogCheck = 0;
+    let lastDialogs = new Set<number>();
     while (Date.now() < deadline) {
       try {
         await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
@@ -802,10 +803,14 @@ export class WorkbenchClient {
         );
       }
       // A modal while the world loads never closes by itself; stop waiting out the full timeout once one is open.
+      // It must stay open across two checks, and a leak assert never counts: the watchdog clicks Ignore on that one.
       if (proc.pid && Date.now() - launchedAt >= DIALOG_CHECK_AFTER_MS && Date.now() - lastDialogCheck >= DIALOG_CHECK_EVERY_MS) {
         lastDialogCheck = Date.now();
         const r = await this.dialogReport([proc.pid]);
-        if (r.dialogs?.some((p) => "dialogs" in p && p.dialogs.length)) {
+        const open = (r.dialogs ?? []).flatMap((p) => ("dialogs" in p ? p.dialogs : [])).filter((w) => dialogKind(w) !== "leak_assert");
+        const persisted = open.some((w) => lastDialogs.has(w.hwnd));
+        lastDialogs = new Set(open.map((w) => w.hwnd));
+        if (persisted) {
           throw new WorkbenchError(
             `Workbench (PID ${proc.pid}) has not connected ${Math.round((Date.now() - launchedAt) / 1000)}s after launch and is showing a dialog. ` +
               `It is still running; nothing was answered.\n${r.text}`,

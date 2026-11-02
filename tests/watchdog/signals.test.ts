@@ -257,7 +257,7 @@ describe("formatDialogs", () => {
     );
   });
   it("says so when there is none, and when the check could not run", () => {
-    expect(formatDialogs([{ pid: 7, dialogs: [] }])).toBe("No dialog is open in Workbench PID 7; it may be loading, compiling or hung.");
+    expect(formatDialogs([{ pid: 7, dialogs: [] }])).toBe("No dialog was found in Workbench PID 7; it may be loading, compiling, hung, or showing a dialog this check cannot see.");
     expect(formatDialogs([{ pid: 7, unavailable: "boom" }])).toBe("Workbench PID 7 (dialog check unavailable: boom)");
     expect(formatDialogs([])).toBe("");
   });

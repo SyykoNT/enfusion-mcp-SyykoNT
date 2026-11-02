@@ -87,6 +87,16 @@ describe("probeDialogs through a stub runner", () => {
     expect(r).toHaveProperty("unavailable");
   });
 
+  it("off Windows reports unavailable without starting PowerShell", async () => {
+    const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "linux" });
+    try {
+      expect(await probeDialogs([5])).toEqual([{ pid: 5, unavailable: "only Windows can be checked" }]);
+    } finally {
+      Object.defineProperty(process, "platform", real);
+    }
+  });
+
   it("returns nothing for no PIDs and does not run", async () => {
     const run = vi.fn();
     expect(await probeDialogs([], run)).toEqual([]);
