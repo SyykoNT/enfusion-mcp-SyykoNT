@@ -53,16 +53,16 @@ beforeEach(() => {
 });
 
 describe("mission_server run plan and command lines", () => {
-  it("builds the Dedicated Server Tool's server and peer command lines with our port and absolute profiles", () => {
+  it("builds the server and peer command lines: header as -server {GUID}path, our port, absolute profiles", () => {
     const t = addon();
     const run = planRun({ world: t.world, port: 2521 }, config(join(t.root, "elsewhere")), () => join(t.root, "Docs"));
     if (typeof run === "string") throw new Error(run);
-    expect(run).toMatchObject({ world: "Worlds/Map/Me_TVT_Test.ent", header: "Missions/Map/Me_1102_TVT1_Test.conf", addons: ["TestMission"], gproj: join(t.dir, "addon.gproj") });
+    expect(run).toMatchObject({ world: "Worlds/Map/Me_TVT_Test.ent", header: "{1234567890ABCDEF}Missions/Map/Me_1102_TVT1_Test.conf", addons: ["TestMission"], gproj: join(t.dir, "addon.gproj") });
     // Neither default folder exists here, so the world's own parent folder is added: the addon must be found.
     expect(run.addonsDirs).toEqual([t.root]);
     const profile = join(MISSION_ROOT, "2521", "server");
     expect(serverArgs(run, profile, ["-jobsysShortWorkerCount", "2"])).toEqual([
-      "-gproj", join(t.dir, "addon.gproj"), "-server", "Worlds/Map/Me_TVT_Test.ent", "-MissionHeader", "Missions/Map/Me_1102_TVT1_Test.conf",
+      "-gproj", join(t.dir, "addon.gproj"), "-server", "{1234567890ABCDEF}Missions/Map/Me_1102_TVT1_Test.conf",
       "-addonsDir", t.root, "-addons", "TestMission", "-addr", "127.0.0.1:2521", "-profile", profile, "-nothrow", "-maxFPS", "60", "-jobsysShortWorkerCount", "2",
     ]);
     const peer = peerArgs(run, join(MISSION_ROOT, "2521", "peer1"));
@@ -84,8 +84,10 @@ describe("mission_server run plan and command lines", () => {
     expect(planRun({ world: "Worlds/Map/Me_TVT_Test.ent", port: 2521 }, c)).toMatch(/existing absolute \.ent/);
     expect(planRun({ world: t.world, port: 2521, addons: ["Test;Evil"] }, c)).toMatch(/addon IDs/);
     expect(planRun({ world: t.world, port: 2521, addonsDirs: ["D:\\My,Mods"] }, c)).toMatch(/without quotes or commas/);
-    expect(planRun({ world: t.world, port: 2521, missionHeader: "Missions/../../x.conf" }, c)).toMatch(/not a \.conf resource path/);
-    expect(planRun({ world: t.world, port: 2521, missionHeader: "{1234567890ABCDEF}Missions/Other.conf" }, c)).toMatchObject({ header: "Missions/Other.conf" });
+    expect(planRun({ world: t.world, port: 2521, missionHeader: "{1234567890ABCDEF}Missions/../../x.conf" }, c)).toMatch(/must be a \{GUID\}path/);
+    // A path-only header is not applied by a dedicated server, so it is refused rather than passed on.
+    expect(planRun({ world: t.world, port: 2521, missionHeader: "Missions/Other.conf" }, c)).toMatch(/must be a \{GUID\}path/);
+    expect(planRun({ world: t.world, port: 2521, missionHeader: "{1234567890ABCDEF}Missions/Other.conf" }, c)).toMatchObject({ header: "{1234567890ABCDEF}Missions/Other.conf" });
     expect(checkExtra(["-jobsysShortWorkerCount", "2"])).toBeUndefined();
     expect(checkExtra(["-PROFILE", "x"])).toMatch(/may not contain -PROFILE/);
     expect(checkExtra(['-x "y'])).toMatch(/may not contain/);

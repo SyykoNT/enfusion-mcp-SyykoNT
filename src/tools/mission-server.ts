@@ -12,6 +12,8 @@ import { documentsDir, findMissionHeader } from "./server-params.js";
 
 /** Everything this tool starts lives here, one folder per port: server/, peer<n>/, run.json. */
 export const MISSION_ROOT = join(MCP_HOME, "mission-server");
+// The server accepts clients from here on; GAME comes later and only from some game modes (COALITION's lobby waits for players).
+const ONLINE = /Entered online game state/;
 const GAME_STATE = /OnGameStateChanged = GAME\b/;
 // Flags the tool sets itself; extraArgs may not override them.
 const OWN_FLAGS = /^-(profile|addr|addonsdir|addons|server|client|gproj|config|missionheader|bindport)$/i;
@@ -27,10 +29,14 @@ export interface Run {
   addons: string[];
 }
 
-/** The server command line, as the Dedicated Server Tool builds it (SCR_DedicatedServerPlugin.c), with our own port and an absolute profile. */
+/**
+ * The server command line: the Dedicated Server Tool's flags (SCR_DedicatedServerPlugin.c) with our own port and an absolute profile.
+ * The header goes as `-server {GUID}path`: the tool's `-server <world> -MissionHeader <path>` form left the header unapplied on the
+ * dedicated server (probe 2026-11-02: no "Starting new playthrough" line, CRF_LoggingManager NULL m_sAuthor).
+ */
 export function serverArgs(r: Run, profile: string, extra: string[] = []): string[] {
   return [
-    "-gproj", r.gproj, "-server", r.world, ...(r.header ? ["-MissionHeader", r.header] : []),
+    "-gproj", r.gproj, "-server", r.header ?? r.world,
     "-addonsDir", r.addonsDirs.join(","), "-addons", r.addons.join(","),
     "-addr", `127.0.0.1:${r.port}`, "-profile", profile, "-nothrow", "-maxFPS", "60", ...extra,
   ];
@@ -60,9 +66,10 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addo
   const gproj = findGproj(found.addon)!;
   const world = relative(found.addon, a.world).replace(/\\/g, "/");
   if (/[",]/.test(world)) return `World path has a quote or comma: ${world}`;
-  // The plugin passes ResourceName.GetPath(): the addon-relative path without the {GUID}.
-  const header = (a.missionHeader ?? found.header)?.replace(/^\{[0-9A-Fa-f]{16}\}/, "");
-  if (header !== undefined && (!/^[\w ./-]+\.conf$/i.test(header) || header.split("/").includes(".."))) return `missionHeader is not a .conf resource path: ${a.missionHeader}`;
+  // A path-only resource name crashes or is ignored by a dedicated server, so the header must carry its {GUID}.
+  const guidConf = (h?: string) => !!h && /^\{[0-9A-Fa-f]{16}\}[\w ./-]+\.conf$/i.test(h) && !h.split("/").includes("..");
+  if (a.missionHeader !== undefined && !guidConf(a.missionHeader)) return `missionHeader must be a {GUID}path .conf (server_params shows it): ${a.missionHeader}`;
+  const header = a.missionHeader ?? (guidConf(found.header) ? found.header : undefined);
   const addons = a.addons ?? [readGproj(gproj).id];
   if (!addons.length || addons.some((id) => !/^[\w.-]+$/.test(id))) return `addons must be addon IDs (letters, digits, . _ -): ${addons.join(", ")}`;
   // Default as wb_launch: ENFUSION_ADDONS_DIR when set, else the guide's Params (projects plus the Workbench addons folder).
@@ -117,18 +124,18 @@ export function registerMissionServer(server: McpServer, config: Config): void {
       description:
         "Run a mission the way Workbench's Dedicated Server Tool does, without Workbench: an ArmaReforgerServerDiag server on the mission world and " +
         "its Mission Header, with unpacked addons from -addonsDir, on its own loopback port and profile, plus Diag game clients that join it. " +
-        "start (server, waits for the GAME state, then peers), join (one more client, the guide's Start only clients), status, stop (only its own processes). " +
+        "start (server, waits until it accepts clients, then peers), join (one more client, the guide's Start only clients), status, stop (only its own processes). " +
         "Starts processes: ask the user (or the Workbench lock owner) first, and keep within the CPU and port slots they give.",
       inputSchema: {
         action: z.enum(["start", "join", "status", "stop"]),
         world: z.string().optional().describe("(start) Absolute path of the mission .ent inside an unpacked addon"),
-        missionHeader: z.string().optional().describe("(start) Header .conf as {GUID}path or path; default the one whose World is this .ent (server_params)"),
+        missionHeader: z.string().optional().describe("(start) Header .conf as {GUID}path; default the one whose World is this .ent (server_params). Without one the world starts bare"),
         addons: z.array(z.string()).optional().describe("(start) Addon IDs for -addons; default the world's addon (the server resolves its dependencies)"),
         addonsDirs: z.array(z.string()).optional().describe("(start) Folders for -addonsDir (read only); default ENFUSION_ADDONS_DIR, else the project folder and the Workbench addons folder"),
         port: z.number().int().min(1024).max(65535).optional().describe("Loopback game port (-addr 127.0.0.1:<port>), one run per port; start and join default to 2521, stop without it stops every run of this tool"),
-        peers: z.number().int().min(0).max(4).default(0).describe("(start) Game clients to start once the server is in GAME"),
+        peers: z.number().int().min(0).max(4).default(0).describe("(start) Game clients to start once the server is online"),
         extraArgs: z.array(z.string()).optional().describe("(start) Extra server args, e.g. ['-jobsysShortWorkerCount','2']"),
-        timeoutSec: z.number().int().min(10).max(600).default(180).describe("(start) How long to wait for the GAME state"),
+        timeoutSec: z.number().int().min(10).max(600).default(180).describe("(start) How long to wait for the server to come online"),
         adoptOrphans: z.boolean().optional().describe("(stop) Also stop processes this tool started from an MCP session that has ended"),
       },
     },
@@ -158,7 +165,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           writeFileSync(join(portDir(port), "run.json"), JSON.stringify(run, null, 2));
           const w = await waitFor({
             log: () => resolveLogFile({ dir: profile, file: "console", newerThan: started - 5000 }),
-            patterns: [{ name: "game", regex: GAME_STATE }],
+            patterns: [{ name: "online", regex: ONLINE }],
             failPatterns: DEFAULT_FAIL_PATTERNS,
             from: "start",
             pid,
@@ -166,17 +173,17 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           });
           const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}`;
           if (w.status !== "matched") {
-            const why = w.status === "failed" ? `stopped on: ${w.fatal[0]?.line}` : w.status === "exited" ? "the server exited" : `no GAME state within ${a.timeoutSec} s`;
+            const why = w.status === "failed" ? `stopped on: ${w.fatal[0]?.line}` : w.status === "exited" ? "the server exited" : `not online within ${a.timeoutSec} s`;
             return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}`, true);
           }
           const peers: string[] = [];
           for (let i = 0; i < a.peers; i++) {
             const p = startPeer(run, config);
-            if (typeof p === "string") return text(`**Server in GAME**, but a peer could not start: ${p}\n\n${head}\n${peers.join("\n")}`, true);
+            if (typeof p === "string") return text(`**Server online**, but a peer could not start: ${p}\n\n${head}\n${peers.join("\n")}`, true);
             peers.push(`Peer ${p.n}: PID ${p.pid}`);
             await sleep(2000);
           }
-          return text(`**Server in GAME** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})\n\n${head}${peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : ""}`);
+          return text(`**Server online** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})${run.header ? "" : "\nNo Mission Header: the world started without one."}\n\n${head}${peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : ""}`);
         }
 
         if (a.action === "join") {
@@ -193,7 +200,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const ports = existsSync(MISSION_ROOT) ? readdirSync(MISSION_ROOT).filter((d) => /^\d+$/.test(d)) : [];
           const rows = ports.map((port) => {
             const log = resolveLogFile({ dir: join(MISSION_ROOT, port, "server"), file: "console" });
-            const game = log && GAME_STATE.test(readFileSync(log, "utf-8")) ? "GAME reached" : "no GAME line";
+            const t = log ? readFileSync(log, "utf-8") : "";
+            const game = GAME_STATE.test(t) ? "online, GAME reached" : ONLINE.test(t) ? "online (no GAME state yet: a lobby game mode waits for players)" : "not online";
             const live = entries.filter((e) => e.file && isUnder(e.file, join(MISSION_ROOT, port)));
             return `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`;
           });
