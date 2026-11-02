@@ -102,12 +102,14 @@ export function isAlive(pid: number): boolean {
  * -addonDownloadDir, -addonTempDir, -saveDir; -cfg; Workbench pack and publish), so extraArgs could aim writes into CRF, Lobby,
  * a Workshop cache or an install folder.
  */
-const WRITE_PATH_FLAGS = /^-(profile|logsdir|addondownloaddir|addontempdir|savedir|cfg|backendlocalstorage|createdb|scriptauthorizeall|packaddon\w*|publishaddon\w*)$/i;
+const WRITE_PATH_FLAGS = /^-(profile|logsdir|addondownloaddir|addontempdir|savedir|cfg|backendlocalstorage|createdb|scriptauthorizeall|diagmenu|packaddon\w*|publishaddon\w*)$/i;
 
 /** The first extra argument a tool must refuse (write-path flag, one of `own` flags, a quote or line break), or undefined. */
 export function refusedArg(args: string[], own?: RegExp): string | undefined {
   return args.find((a) => {
-    const flag = a.split("=")[0];
+    // Any leading run of quotes, dashes (also Unicode ones), slashes or zero-width characters, then the name up to = : space or a quote.
+    const m = a.replace(/[​-‍⁠﻿]/g, "").trim().match(/^['"‘’]*[-/‐-―−﹘﹣－]+([^=:\s'"’]*)/);
+    const flag = m ? `-${m[1]}` : "";
     return WRITE_PATH_FLAGS.test(flag) || !!own?.test(flag) || /["\r\n]/.test(a);
   });
 }

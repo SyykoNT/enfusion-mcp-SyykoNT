@@ -38,6 +38,15 @@ export function registerGame(server: McpServer, config: Config): void {
       const running = () => [...findPids(GAME_EXE), ...findPids(GAME_DIAG_EXE)];
       try {
         if (a.action === "launch") {
+          // connect and world reach the argv too: a host[:port] and a .ent resource path, nothing else.
+          // A letter or digit first, so neither can be read as a flag (-createDB, -logsDir).
+          const port = a.connect?.match(/^[A-Za-z0-9][\w.-]*(?::(\d{1,5}))?$/);
+          if (a.connect && (!port || (port[1] !== undefined && (Number(port[1]) < 1 || Number(port[1]) > 65535)))) {
+            return text(`connect must be host or host:port (port 1-65535), e.g. 127.0.0.1:2001: ${a.connect}`, true);
+          }
+          if (a.world && (!/^(\{[0-9A-Fa-f]{16}\})?[A-Za-z0-9][\w./-]*\.ent$/i.test(a.world) || a.world.split("/").includes(".."))) {
+            return text(`world must be a .ent resource path, e.g. worlds/MP/MPTest.ent: ${a.world}`, true);
+          }
           const badArg = refusedArg(a.extraArgs ?? []);
           if (badArg) return text(`extraArgs may not contain ${badArg}: write-path flags (-profile, -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg) and quotes are refused.`, true);
           if (running().length) return text("The game is already running: `game stop` first.", true);
