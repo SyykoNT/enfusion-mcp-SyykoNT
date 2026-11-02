@@ -348,6 +348,7 @@ Both tools read a CRF clone and its COALITION-Lobby clone, inside the project pa
   tool writes one.
 - `wb_launch` with `unattended` passes `-noThrow`, which Bohemia documents as disabling error dialogs. It is
   untested on a GUI Workbench and on Script Authorization prompts.
+- `wb_launch` with `worldPath` (a `.ent` of the opened project) adds `-wbModule=WorldEditor -run -load` and waits up to 300 s; it does not check that the world loaded (use `wb_state`), and a running Workbench does not switch worlds.
 - `wb_resources register` reports "Registered" even when Workbench returns false (for example, a file that is
   already registered).
 - `economy set` for ranks changes every faction's rank file that contains the rank.
