@@ -99,7 +99,7 @@ Added since that test pass:
   `coalition_doctor`, `mission_inspect`, `mission_validate`, `gearscript_inspect`, `mission_names`,
   `server_params`, `mission_git`, `mission_pr_draft` and `mission_preflight`.
 
-Test suite: 1244 passed, 14 skipped.
+Test suite: 1249 passed, 14 skipped.
 
 ## Requirements
 
@@ -244,9 +244,12 @@ https://www.coalitiongroup.net/mission-making-guide
 
 Then run `coalition_doctor` to check your setup against the guide.
 
+All tools in this section only read, except `mission_git` with `fetch: true`, which writes git refs in the CRF
+clone.
+
 | Tool | Purpose |
 |---|---|
-| `coalition_doctor` | Checks this PC against the guide's Tools Setup in 20 rows, each with its state and the guide's fix: Tools, Server, Git, GitHub Desktop, the CRF and Lobby downloads, the Workbench addons link, the Projects folder, the CRF clone and its branches, plus this server's own setup (Python, Lobby, `ENFUSION_PROJECT_PATH`, `ENFUSION_PROTECTED_ADDONS`, handler git-ignore). Writes nothing and never fetches |
+| `coalition_doctor` | Checks this PC against the guide's Tools Setup in 20 rows, each with its state and the guide's fix: Arma Reforger Tools and Server, Git with its user name and commit email, GitHub Desktop signed in, the server mods downloaded in the game, the Workbench mods link and its check, the Projects folder, the CRF clone, its release branch and your mission branch, updating from release, opening the framework project, the `enfusion://` protocol; plus this server's own setup (Python 3.11+, COALITION-Lobby, `ENFUSION_PROJECT_PATH`, `ENFUSION_PROTECTED_ADDONS`, handler files git-ignored). Writes nothing and never fetches |
 | `mission_inspect` | Per-side readiness report for a mission world from its saved layers: slots, spawn points, safestart and forward-deploy zones, markers, MSPs, vehicle spawners and depots; entity names the mission's components refer to, checked against the world with near-miss suggestions; Task Creator entries; and rule checks from the guide |
 | `mission_validate` | Runs CRF's own mission checks (`validate_mission.py`, `mission_synopsis.py`, `validate_resources.py`) on one mission world or on the worlds a branch changes, with the Lobby clone from `lobbyPath` or beside CRF; returns failures, warnings, the pull request title and check ticks CI would set, and the synopsis |
 | `gearscript_inspect` | What each role in a gearscript spawns with, by the rules of COALITION-Lobby's gear manager: weapons, magazines, clothing, items and radios; lists what the gear manager skips, and with `usedBy` which missions use the gearscript |
@@ -295,7 +298,7 @@ cache, tools refuse to write there. `wb_launch` without `gprojPath`, for example
 
 Where the junction cannot be made (Documents on OneDrive), mods copied into that folder by hand are Workshop
 downloads (they hold `ServerData.json`), and writes into them are refused as well. The tools in this section
-only read, so they are not affected. To write, name an addon of your own with `gprojPath` or `projectPath`.
+only read (apart from those git refs), so they are not affected. To write, name an addon of your own with `gprojPath` or `projectPath`.
 
 ### Workbench session (NET API)
 | Tool | Purpose |
