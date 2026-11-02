@@ -49,6 +49,8 @@ export interface Config {
   workshopPath?: string;
   /** Extra folders log_watch may read logs under. Set via ENFUSION_LOG_ROOTS (comma-separated). */
   logRoots?: string[];
+  /** Register the nine COALITION mission-making tools. Off unless ENFUSION_COALITION_TOOLS is on, 1 or true. */
+  coalitionTools?: boolean;
 }
 
 const DEFAULT_WORKBENCH_PATH =
@@ -160,6 +162,9 @@ export function loadConfig(): Config {
   if (process.env.ENFUSION_DEFAULT_MOD) {
     config.defaultMod = process.env.ENFUSION_DEFAULT_MOD;
   }
+  // The config file can hold any JSON value, so the file and the environment variable are read by one rule.
+  const coalition: unknown = process.env.ENFUSION_COALITION_TOOLS || config.coalitionTools;
+  if (coalition !== undefined) config.coalitionTools = coalition === true || (typeof coalition === "string" && /^(on|1|true)$/i.test(coalition.trim()));
 
   // Auto-derive gamePath from workbenchPath if not explicitly set.
   //
