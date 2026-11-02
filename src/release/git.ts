@@ -15,6 +15,12 @@ export function git(dir: string, args: string[]): string {
   });
 }
 
+/** Why a git call failed: git's first stderr line, else the first line of Node's message. */
+function gitFailure(e: unknown): string {
+  const err = e as { stderr?: string | Buffer; message?: string };
+  return String(err.stderr ?? "").trim().split("\n")[0] || String(err.message ?? e).split("\n")[0];
+}
+
 /** git, or null when it exits non-zero (missing config key, no origin, not a repo). A missing git binary still throws. */
 export function gitOrNull(dir: string, args: string[]): string | null {
   try {
@@ -86,9 +92,12 @@ export function gitState(dir: string, base?: string): GitState {
   const none = (note: string): GitState => ({ repo: false, note, unborn: false, branch: "", upstream: null, ahead: 0, porcelain: [], trackedForbidden: [], ignoresHandlers: false, hasCommitMsgHook: false, aiMessages: [] });
   let top: string | null;
   try {
-    top = gitOrNull(dir, ["rev-parse", "--show-toplevel"]);
-  } catch {
-    return none("git not found on PATH, git checks skipped");
+    top = git(dir, ["rev-parse", "--show-toplevel"]).trim() || null;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return none("git not found on PATH, git checks skipped");
+    // A .git that git cannot read (broken HEAD, "dubious ownership") must not read as "no repo": that would skip every git check.
+    if (existsSync(join(dir, ".git"))) throw new Error(`git cannot read the repo in ${dir}: ${gitFailure(e)}`);
+    top = null;
   }
   if (!top) return none("Not a git repository: git checks skipped");
   if (realPathOf(top) !== realPathOf(dir)) return none(`Inside the git repo ${top}, not a repo of its own: git checks skipped`);
@@ -106,7 +115,7 @@ export function gitState(dir: string, base?: string): GitState {
     try {
       log = git(dir, ["log", ...range, "--format=%h %s%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x00%x1e"]).trim();
     } catch (e) {
-      scanError = (e as Error).message.split("\n")[0];
+      scanError = gitFailure(e);
     }
   }
   const commits = log.split("\0\x1e").map((c) => c.trim()).filter(Boolean);
@@ -121,7 +130,7 @@ export function gitState(dir: string, base?: string): GitState {
   const forbidden = ["resourceDatabase.rdb", "Scripts/WorkbenchGame/EnfusionMCP", "Scripts/WorkbenchGame/EnfusionMCP.meta"];
   return {
     repo: true,
-    note: base && !unborn && (!baseSha || log === null) ? `gitBase ${JSON.stringify(base)} is not a commit in this repo: commit messages not scanned` : undefined,
+    note: base && !unborn && !baseSha ? `gitBase ${JSON.stringify(base)} is not a commit in this repo: commit messages not scanned` : undefined,
     unborn,
     branch: gitOrNull(dir, ["branch", "--show-current"]) || "(detached)",
     upstream,

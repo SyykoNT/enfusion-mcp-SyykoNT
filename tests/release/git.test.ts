@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitState, hooksDir, originUrl, stagedPaths, stagedStartsWithBom } from "../../src/release/git.js";
@@ -112,7 +112,11 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", { timeout: 30_000
     const d = repo();
     const big = join(d, "..", `big-${Date.now()}.txt`);
     writeFileSync(big, `${"x".repeat(79)}\n`.repeat(14_000) + "\nCo-authored-by: Codex <noreply@openai.com>\n");
-    execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-F", big], { stdio: "ignore" });
+    try {
+      execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-F", big], { stdio: "ignore" });
+    } finally {
+      rmSync(big, { force: true });
+    }
     const s = gitState(d);
     expect(s.scanError).toBeUndefined();
     expect(s.aiMessages).toHaveLength(1);
@@ -121,6 +125,20 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", { timeout: 30_000
     const failed = checkGit({ ...s, aiMessages: [], scanError: "spawnSync git ENOBUFS" }).find((x) => x.id === "G5")!;
     expect(failed).toMatchObject({ level: "blocker" });
     expect(failed.message).toBe("Unpushed commit messages could not be scanned for AI attribution: spawnSync git ENOBUFS");
+  });
+
+  it("a .git that git refuses throws, with git's reason, instead of reading as not a repo", () => {
+    const d = repo();
+    execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one"], { stdio: "ignore" });
+    vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1"); // git's own switch for the "dubious ownership" refusal
+    try {
+      expect(() => gitState(d)).toThrow(/git cannot read the repo in .*: .*(dubious ownership|safe\.directory)/s);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    writeFileSync(join(d, ".git", "HEAD"), "not a ref\n");
+    expect(() => gitState(d)).toThrow(/git cannot read the repo/);
+    expect(checkGit(gitState(mkdtempSync(join(tmpdir(), "emcp-nogit2-")))).map((x) => x.id)).toEqual(["G6"]); // no .git at all stays info
   });
 
   it("a clean repo with ignore rule and hook gives only G6; an unborn repo says no commit yet", () => {

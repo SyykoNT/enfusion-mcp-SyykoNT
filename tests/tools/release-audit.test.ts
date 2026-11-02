@@ -114,6 +114,24 @@ describe("release_audit", () => {
     expect((await h({ addonName: "Nope" })).isError).toBe(true);
   });
 
+  it("a git check that cannot run is a blocker, not a warning (corrupt index)", () => {
+    try {
+      execFileSync("git", ["--version"], { stdio: "ignore" });
+    } catch {
+      return; // no git on PATH: nothing to corrupt
+    }
+    const broken = join(projects, "BrokenGit");
+    put(broken, { "addon.gproj": gproj("BrokenGit", "B0B0000000000001", ["58D0FB3206B6F859"]), "license.txt": "x\n" });
+    execFileSync("git", ["-C", broken, "init", "-q"], { stdio: "ignore" });
+    execFileSync("git", ["-C", broken, "add", "."], { stdio: "ignore" });
+    execFileSync("git", ["-C", broken, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"], { stdio: "ignore" });
+    writeFileSync(join(broken, ".git", "index"), "garbage");
+    const { json } = audit({ addonName: "BrokenGit", checks: ["git"] });
+    expect(ids(json)).toEqual(["U1 blocker"]);
+    expect(json.verdict).toBe("blocked");
+    expect(json.findings[0].message).toMatch(/^git check failed: /);
+  });
+
   it("writes nothing in the addon or its .git (file list, sizes and mtimes unchanged)", () => {
     let hasGit = true;
     try {
