@@ -19,11 +19,11 @@ const GAME_STATE = /OnGameStateChanged = GAME\b/;
 // The engine logs this on every join and leave (seen 2026-11-02: "NETWORK : Players connected: 2 / 2").
 const PLAYERS = /Players connected: (\d+) \//g;
 /**
- * Free RAM needed before each game client starts: the broker's rule for a server plus clients (12 GB). The 2026-11-02 runs used about
- * 2 GB per Arma process (32.1 to 28.3 GB free for a server and one client), so 12 GB covers a server and 4 peers with margin.
- * Run 2 froze the PC with 18 GB still free, so this gate alone would not have prevented it.
+ * Free RAM needed before each game client starts: what one client needs. The 2026-11-02 runs used about 2 GB per Arma process
+ * (32.1 to 28.3 GB free for a server and one client), so 4 GB is that process plus the same again as margin. Plans with several
+ * peers are the user's call. Run 2 froze the PC with 18 GB still free, so this gate alone would not have prevented it.
  */
-export const MIN_FREE_GB_CLIENT = 12;
+export const MIN_FREE_GB_CLIENT = 4;
 /** A peer whose log has not been written for this long, and is not counted yet, looks hung (run 2: silent from 01:18:04 on). */
 const STALL_SEC = 60;
 const DEFAULT_JOIN_SEC = 120;
@@ -253,7 +253,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         "its Mission Header, with unpacked addons from -addonsDir, on its own loopback port and profile, plus Diag game clients that join it. " +
         "start (server, waits until it accepts clients, then peers), join (one more client, the guide's Start only clients), status, stop (only its own processes). " +
         "Starts processes: ask the user (or the Workbench lock owner) first, and keep within the CPU and port slots they give. " +
-        "Every client needs at least 12 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
+        "Every client needs at least 4 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
         "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority. " +
         "The Crash Reporter is switched off for everything it starts (-disableCrashReporter).",
       inputSchema: {

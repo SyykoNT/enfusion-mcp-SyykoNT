@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 import { guardCheck, guardInstall, registerAddonGitGuard } from "../../src/tools/addon-git-guard.js";
-import { COMMIT_MSG, STRIPPER_COMMIT_MSG, PRE_COMMIT } from "../../src/release/hooks.js";
+import { COMMIT_MSG, HOOK_VERSION, STRIPPER_COMMIT_MSG, PRE_COMMIT } from "../../src/release/hooks.js";
 
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const hasSh = spawnSync("sh", ["-c", "exit 0"]).status === 0;
@@ -25,7 +25,7 @@ const addon = (base: string, name: string, guid: string, opts: { git?: boolean; 
   return dir;
 };
 // gamePath inside the projects folder, so the forbidden-root refusal is reachable with a temp repo.
-const config = { projectPath: projects, gamePath: join(projects, "GameInstall"), protectedAddons: ["5EB3564A02CE294F", "69EA43E490A50DBE"] } as Config;
+const config = { projectPath: projects, gamePath: join(projects, "GameInstall"), protectedAddons: ["5EB3564A02CE294F", "69EA43E490A50DBE"], githubOwners: ["syykont"] } as Config;
 
 type Handler = (args: Record<string, unknown>) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 let call: Handler = async () => ({ content: [] });
@@ -86,13 +86,33 @@ describe.skipIf(!hasGit)("addon_git_guard", { timeout: 30_000 }, () => {
     expect(r.content[0].text).toMatch(/not a git repository/);
   });
 
-  it("refuses a non-SyykoNT origin without sharedRepoOk, then installs with it", async () => {
+  it("refuses an origin whose owner is not in ENFUSION_GITHUB_OWNERS without sharedRepoOk, then installs with it", async () => {
     const r = await call({ action: "install", addonName: "Shared" });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toMatch(/shared repo.*Ask the user before installing.*Nothing written/s);
     expect(existsSync(hook(shared, "pre-commit"))).toBe(false);
     expect((await call({ action: "install", addonName: "Shared", sharedRepoOk: true })).isError).toBeFalsy();
     expect(readFileSync(hook(shared, "pre-commit"), "utf-8")).toBe(PRE_COMMIT);
+  });
+
+  it("treats an owner in githubOwners as own, over https and ssh, ignoring case; an unset list makes every origin shared", () => {
+    const https = addon(projects, "OwnHttps", "AAAA000000000001", { origin: "https://github.com/SyykoNT/x.git" });
+    const ssh = addon(projects, "OwnSsh", "AAAA000000000002", { origin: "git@github.com:syykont/x.git" });
+    const owners = { githubOwners: ["SyykoNT"], hooks: ["pre-commit" as const] };
+    expect(guardInstall(https, owners).ok).toBe(true);
+    expect(guardInstall(ssh, owners).ok).toBe(true);
+
+    const unset = addon(projects, "OwnUnset", "AAAA000000000003", { origin: "https://github.com/SyykoNT/x.git" });
+    const r = guardInstall(unset, { hooks: ["pre-commit"] });
+    expect(r.ok).toBe(false);
+    expect(r.lines[0]).toMatch(/shared repo/);
+    expect(existsSync(hook(unset, "pre-commit"))).toBe(false);
+    expect(guardInstall(unset, { hooks: ["pre-commit"], sharedRepoOk: true }).ok).toBe(true);
+  });
+
+  it("installs in a repo with no origin when githubOwners is unset", () => {
+    const d = addon(projects, "NoOrigin", "AAAA000000000004");
+    expect(guardInstall(d, { hooks: ["pre-commit"] }).ok).toBe(true);
   });
 
   it("refuses when core.hooksPath is set and writes nothing", () => {
@@ -111,7 +131,7 @@ describe.skipIf(!hasGit)("addon_git_guard", { timeout: 30_000 }, () => {
     expect(pre.includes(0x0d)).toBe(false);
     expect(readFileSync(hook(syk, "commit-msg"), "utf-8")).toBe(COMMIT_MSG);
     const second = await call({ action: "install", addonName: "SYK-Test" });
-    expect(second.content[0].text).toBe("pre-commit already v2\ncommit-msg already v2");
+    expect(second.content[0].text).toBe(`pre-commit already v${HOOK_VERSION}\ncommit-msg already v${HOOK_VERSION}`);
   });
 
   it("leaves a foreign pre-commit alone and keeps the user's own commit-msg", () => {
@@ -127,6 +147,14 @@ describe.skipIf(!hasGit)("addon_git_guard", { timeout: 30_000 }, () => {
     writeFileSync(hook(d2, "commit-msg"), STRIPPER_COMMIT_MSG);
     expect(guardInstall(d2).lines).toContain("kept commit-msg (attribution stripper); not ours, left alone");
     expect(readFileSync(hook(d2, "commit-msg"), "utf-8")).toBe(STRIPPER_COMMIT_MSG);
+  });
+
+  it("recognises a stripper hook written before the v3 comment wording", () => {
+    const d = addon(projects, "OldStripper", "AAAA000000000005");
+    const old = STRIPPER_COMMIT_MSG.replace(/^# Local hook.*$/m, "# Local hook (not tracked): strip Claude/Anthropic attribution so commits read as X only.");
+    expect(old).not.toBe(STRIPPER_COMMIT_MSG);
+    writeFileSync(hook(d, "commit-msg"), old);
+    expect(guardInstall(d, { hooks: ["commit-msg"] }).lines).toContain("kept commit-msg (attribution stripper); not ours, left alone");
   });
 
   it("replaces an older version of our hook", () => {
@@ -148,9 +176,9 @@ describe.skipIf(!hasGit)("addon_git_guard", { timeout: 30_000 }, () => {
   it("status lists each repo with its hooks, ignore rule and handler count", async () => {
     const r = await call({ action: "status" });
     const text = r.content[0].text;
-    expect(text).toMatch(/^SYK-Test: pre-commit ours v2; commit-msg ours v2; handlers ignored no; handler files on disk 0$/m);
+    expect(text).toMatch(/^SYK-Test: pre-commit ours v3; commit-msg ours v3; handlers ignored no; handler files on disk 0$/m);
     expect(text).toMatch(/^Foreign: pre-commit foreign \(#!\/bin\/sh\); commit-msg none;/m);
-    expect(text).toMatch(/^StripperHook: pre-commit ours v2; commit-msg attribution stripper;/m);
+    expect(text).toMatch(/^StripperHook: pre-commit ours v3; commit-msg attribution stripper;/m);
     expect(text).not.toMatch(/^NoGit/m);
   });
 });

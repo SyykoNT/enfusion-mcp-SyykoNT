@@ -7,7 +7,7 @@ import { checkGproj } from "../tools/mod.js";
 import { handlerFiles } from "../workbench/cli.js";
 import type { GitState } from "./git.js";
 import { readPngJpegSize, type AddonScan } from "./scan.js";
-import { workshopNameIssues } from "./workshop-rules.js";
+import { textStyleStrict, workshopNameIssues } from "./workshop-rules.js";
 
 export type Level = "blocker" | "warning" | "info";
 export type Check = "root" | "handlers" | "git" | "gproj" | "meta" | "leftovers" | "text" | "size" | "preview" | "overrides";
@@ -84,7 +84,7 @@ export function checkMeta(addonDir: string, scan: AddonScan, rdb: Map<string, Rd
       const other = scan.files.find((f) => lower(f.rel).startsWith(lower(`${stem}.`)) && !/\.meta$/i.test(f.rel));
       out.push(other
         ? { id: "M3", level: "info", check: "meta", path: m.rel, message: `No ${posix.basename(actual)}; beside it only ${posix.basename(other.rel)} (source type unknown)` }
-        : { id: "M3", level: "warning", check: "meta", path: m.rel, message: `Orphan meta: no ${posix.basename(actual)}${known.length ? " and no source" : ""}`, fix: "Restore the file, or remove the meta (Don's OK)" });
+        : { id: "M3", level: "warning", check: "meta", path: m.rel, message: `Orphan meta: no ${posix.basename(actual)}${known.length ? " and no source" : ""}`, fix: "Restore the file, or remove the meta (after the user agrees)" });
       continue;
     }
     // Scripts sit in the rdb with an all-zero GUID, which the parser drops
@@ -137,7 +137,7 @@ export function checkLeftovers(addonDir: string, scan: AddonScan): Finding[] {
     const at = parts.slice(0, -1).findIndex((p) => /^(temp|__pycache__)$/i.test(p));
     const name = parts[parts.length - 1];
     const path = at >= 0 ? `${parts.slice(0, at + 1).join("/")}/` : /\.(tmp|bak|orig|blend1)$|~$|^Thumbs\.db$|\$\w|%\w+%/i.test(name) ? f.rel : null;
-    if (path && !out.has(path)) out.set(path, { id: "L1", level: "warning", check: "leftovers", path, message: `Leftover: ${path}`, fix: "Delete only with Don's OK" });
+    if (path && !out.has(path)) out.set(path, { id: "L1", level: "warning", check: "leftovers", path, message: `Leftover: ${path}`, fix: "Delete it only after the user agrees" });
   }
   for (const m of scan.metas.filter((x) => /\.xob\.meta$/i.test(x.rel))) {
     const modelDir = posix.dirname(m.rel);
@@ -158,7 +158,7 @@ export function checkLeftovers(addonDir: string, scan: AddonScan): Finding[] {
 
 const PUBLIC_TEXT = /^(readme[^/]*|license[^/]*|credits[^/]*|\.github\/.+\.md)$/i;
 
-/** T1 BOM scripts, T2 dashes or AI names in public text, T3 dev-only code, C1 licence and credits reminders. */
+/** T1 BOM scripts, T2 dashes or AI names in public text (only with ENFUSION_TEXT_STYLE=strict), T3 dev-only code, C1 licence and credits reminders. */
 export function checkText(addonDir: string, scan: AddonScan): Finding[] {
   const out: Finding[] = [];
   const read = (rel: string) => readFileSync(join(addonDir, rel));
@@ -169,10 +169,10 @@ export function checkText(addonDir: string, scan: AddonScan): Finding[] {
       if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) out.push({ id: "T1", level: "blocker", check: "text", path: f.rel, message: "Starts with a UTF-8 BOM (Enforce rejects it)", fix: "Rewrite it without the BOM" });
       if (/#ifdef\s+(ENABLE_DIAG|WORKBENCH)\b/.test(b.toString("utf-8"))) devCode.push(f.rel);
     }
-    if (PUBLIC_TEXT.test(f.rel)) {
+    if (textStyleStrict() && PUBLIC_TEXT.test(f.rel)) {
       const t = read(f.rel).toString("utf-8");
       const hits = [...new Set([...(t.match(/[\u2013\u2014]/g) ?? []).map(() => "en or em dash"), ...(t.match(/\b(claude|anthropic)\b/gi) ?? [])])];
-      if (hits.length) out.push({ id: "T2", level: "warning", check: "text", path: f.rel, message: `Public text has ${hits.join(", ")}`, fix: "Don's writing rule: no dashes, no AI names" });
+      if (hits.length) out.push({ id: "T2", level: "warning", check: "text", path: f.rel, message: `Public text has ${hits.join(", ")}`, fix: "Public text style: no dashes, no AI names" });
     }
   }
   const devDirs = [...new Set(scan.files.map((f) => f.rel.match(/^(Scripts\/(?:.+\/)?(?:Dev|Tests))\//)?.[1]).filter((d): d is string => !!d))];
@@ -239,9 +239,9 @@ export function checkGit(s: GitState): Finding[] {
   const out: Finding[] = [];
   const changed = s.porcelain.filter((p) => !p.startsWith("??")).map((p) => p.slice(3));
   const untracked = s.porcelain.filter((p) => p.startsWith("??")).map((p) => p.slice(3)).filter((p) => /\.(et|conf|ent|layer|meta|c|emat|edds|png|tga|tif|tiff|dds|jpg|fbx|xob|txo|nmn|ntile)$/i.test(p));
-  if (changed.length) out.push({ id: "G1", level: "blocker", check: "git", message: `${changed.length} staged or modified tracked files: ${list(changed)}`, fix: "Commit or revert; show Don the list" });
-  if (untracked.length) out.push({ id: "G1", level: "blocker", check: "git", message: `${untracked.length} untracked resource files: ${list(untracked)}`, fix: "Commit them or ignore them; show Don the list" });
-  if (s.trackedForbidden.length) out.push({ id: "G2", level: "blocker", check: "git", message: `Tracked or staged: ${list(s.trackedForbidden)}`, fix: "git rm --cached (ask Don)" });
+  if (changed.length) out.push({ id: "G1", level: "blocker", check: "git", message: `${changed.length} staged or modified tracked files: ${list(changed)}`, fix: "Commit or revert; show the user the list" });
+  if (untracked.length) out.push({ id: "G1", level: "blocker", check: "git", message: `${untracked.length} untracked resource files: ${list(untracked)}`, fix: "Commit them or ignore them; show the user the list" });
+  if (s.trackedForbidden.length) out.push({ id: "G2", level: "blocker", check: "git", message: `Tracked or staged: ${list(s.trackedForbidden)}`, fix: "git rm --cached (ask the user first)" });
   if (!s.ignoresHandlers) out.push({ id: "G3", level: "warning", check: "git", message: `${HANDLER_DIR}/ is not ignored`, fix: "Add it to .git/info/exclude (local) or .gitignore (own repos)" });
   if (!s.hasCommitMsgHook) out.push({ id: "G4", level: "warning", check: "git", message: "No commit-msg hook (attribution stripper)", fix: "addon_git_guard install" });
   if (s.aiMessages.length) out.push({ id: "G5", level: "blocker", check: "git", message: `${s.aiMessages.length} unpushed commit messages mention Claude, Anthropic or Co-Authored-By: ${list(s.aiMessages)}`, fix: "Reword them before pushing" });

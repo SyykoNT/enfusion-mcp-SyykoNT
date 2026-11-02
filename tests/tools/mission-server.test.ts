@@ -339,12 +339,12 @@ describe("client gates after the 2026-11-02 freeze (join health, RAM, cores, sto
     expect(r.content[0].text).toContain("**Peer 2 joined** (PID 720)");
   });
 
-  it("no client starts below 12 GB free RAM, in join and in start", async () => {
+  it("no client starts below 4 GB free RAM, in join and in start", async () => {
     run(2534, 0, []);
-    sys.freeBytes = 11.5 * 2 ** 30;
+    sys.freeBytes = 3.5 * 2 ** 30;
     const j = await handler(config(home))({ action: "join", port: 2534, joinTimeoutSec: 1 });
     expect(j.isError).toBe(true);
-    expect(j.content[0].text).toBe("Not enough free RAM for another game client: 11.5 GB free, 12 GB needed (about 2 GB per Arma process).");
+    expect(j.content[0].text).toBe("Not enough free RAM for another game client: 3.5 GB free, 4 GB needed (about 2 GB per Arma process).");
     expect(sys.spawned).toEqual([]);
 
     const t = addon();

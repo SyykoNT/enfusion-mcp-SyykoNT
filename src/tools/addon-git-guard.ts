@@ -55,16 +55,20 @@ function hookState(file: string, name: HookName): string {
   const text = readFileSync(file, "utf-8");
   const v = ourVersion(text);
   if (v !== null) return `ours v${v}`;
-  if (name === "commit-msg" && text.replace(/\r\n/g, "\n") === STRIPPER_COMMIT_MSG) return "attribution stripper";
+  // The comment line is ignored: stripper hooks written before the v3 wording still count.
+  const sansComment = (t: string) => t.replace(/\r\n/g, "\n").replace(/^# Local hook.*\n/m, "");
+  if (name === "commit-msg" && sansComment(text) === sansComment(STRIPPER_COMMIT_MSG)) return "attribution stripper";
   return `foreign (${text.split(/\r?\n/)[0]})`;
 }
 
-/** Write our hooks into the repo's hooks folder. Refuses, before writing anything, on core.hooksPath, a non-SyykoNT origin without sharedRepoOk, or a foreign pre-commit. */
-export function guardInstall(dir: string, opts: { hooks?: HookName[]; sharedRepoOk?: boolean } = {}): { ok: boolean; lines: string[] } {
+/** Write our hooks into the repo's hooks folder. Refuses, before writing anything, on core.hooksPath, an origin whose GitHub owner is not in githubOwners (ENFUSION_GITHUB_OWNERS) without sharedRepoOk, or a foreign pre-commit. */
+export function guardInstall(dir: string, opts: { hooks?: HookName[]; sharedRepoOk?: boolean; githubOwners?: string[] } = {}): { ok: boolean; lines: string[] } {
   const hooksPath = gitOrNull(dir, ["config", "--get", "core.hooksPath"]);
   if (hooksPath) return { ok: false, lines: [`core.hooksPath is set (${hooksPath}); hooks in .git/hooks would not run. Nothing written.`] };
   const origin = originUrl(dir);
-  if (origin && !/github\.com[/:]SyykoNT\//i.test(origin) && !opts.sharedRepoOk) {
+  const owner = origin?.match(/github\.com[/:]([^/]+)\//i)?.[1].toLowerCase();
+  const own = owner !== undefined && (opts.githubOwners ?? []).some((o) => o.toLowerCase() === owner);
+  if (origin && !own && !opts.sharedRepoOk) {
     return {
       ok: false,
       lines: [`${basename(dir)} is a shared repo (origin ${origin}). Ask the user before installing a local hook there; then call again with sharedRepoOk: true. Nothing written.`],
@@ -121,13 +125,13 @@ export function registerAddonGitGuard(server: McpServer, config: Config): void {
         "check: the guard rules on the staged index now (G2 handler file, folder .meta or resourceDatabase.rdb; T1 .c with a UTF-8 BOM), read-only. " +
         "install: write a local pre-commit guard and, if absent, the attribution-stripping commit-msg hook into <repo>/.git/hooks. " +
         "Only for one named addon; refuses protected addons, repos outside the projects folder, core.hooksPath, foreign pre-commit hooks, " +
-        "and non-SyykoNT origins unless sharedRepoOk (set it only after the user says yes for that repo).",
+        "and any origin outside ENFUSION_GITHUB_OWNERS unless sharedRepoOk (set it only after the user says yes for that repo).",
       inputSchema: {
         action: z.enum(["status", "check", "install"]),
         addonName: z.string().optional().describe("Addon folder under the projects path (check/install need this or gprojPath)"),
         gprojPath: z.string().optional().describe("Path to the addon's .gproj, instead of addonName"),
         hooks: z.array(z.enum(["pre-commit", "commit-msg"])).optional().describe("install: which hooks to write (default both)"),
-        sharedRepoOk: z.boolean().optional().describe("install: allow a repo whose origin is not a SyykoNT repo, only after the user agrees"),
+        sharedRepoOk: z.boolean().optional().describe("install: allow a repo whose origin is not under ENFUSION_GITHUB_OWNERS, only after the user agrees"),
       },
     },
     async ({ action, addonName, gprojPath, hooks, sharedRepoOk }) => {
@@ -149,7 +153,7 @@ export function registerAddonGitGuard(server: McpServer, config: Config): void {
           return reply(f.length ? f.map((x) => `${x.id} ${x.severity} ${x.message}`).join("\n") : `${basename(r.dir)}: nothing staged that the guard refuses.`);
         }
         if (isProtectedAddon(config, r.gproj)) return reply(`Refused: ${basename(r.dir)} is protected (ENFUSION_PROTECTED_ADDONS). Nothing written.`, true);
-        const res = guardInstall(r.dir, { hooks, sharedRepoOk });
+        const res = guardInstall(r.dir, { hooks, sharedRepoOk, githubOwners: config.githubOwners });
         return reply(res.lines.join("\n"), !res.ok);
       } catch (e) {
         return reply(`addon_git_guard ${action} failed: ${(e as Error).message}`, true);

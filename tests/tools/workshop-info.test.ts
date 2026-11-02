@@ -75,11 +75,20 @@ describe("workshop_info: dependencies", () => {
 });
 
 describe("workshop_info: Workshop text lint", () => {
+  afterEach(() => vi.unstubAllEnvs());
   const dir = addon(projects, "Texts", "1234000000000001");
   writeFileSync(join(dir, "README.md"), "Credits: model by someone.\n");
   writeFileSync(join(root, "summary.txt"), `${"s".repeat(200)}\n`);
 
+  it("leaves the text style rules off unless ENFUSION_TEXT_STYLE=strict, but still counts length", async () => {
+    const t = await text({ modName: "Texts", summary: "A boat \u2014 Claude \u00E9 \n", changeNotes: "x".repeat(30001) });
+    expect(t).toContain("- summary: ok (");
+    expect(t).toContain("- changeNotes: 30001/30000 characters");
+    expect(t).not.toMatch(/en or em dash|mentions|non-ASCII|trailing spaces/);
+  });
+
   it("lints the gproj TITLE by default and the fields given", async () => {
+    vi.stubEnv("ENFUSION_TEXT_STYLE", "strict");
     const t = await text({ modName: "Texts", summary: "A boat \u2014 fast", changeNotes: "ok" });
     expect(t).toContain("- name: ok (11/30)");
     expect(t).toContain("- summary: en or em dash: \u2014 at 8 (measured dialog limit; BI documents 1024)");
