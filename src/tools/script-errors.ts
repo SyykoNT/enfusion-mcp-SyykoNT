@@ -1,11 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { basename, dirname, join } from "node:path";
 import type { Config } from "../config.js";
 import { workbenchProfileDir } from "../workbench/cli.js";
-import { formatLogTime, mergeSummaries, parseScriptErrors, type ScriptErrorGroup, type ScriptErrorSummary } from "../workbench/script-errors.js";
+import { formatLogTime, mergeSummaries, parseLogHeader, parseLogTime, parseScriptErrors, type ScriptErrorGroup, type ScriptErrorSummary } from "../workbench/script-errors.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { serverLogsDir } from "./server.js";
 
@@ -56,6 +56,17 @@ function projectAddons(config: Config): { name: string; dir: string }[] {
       .map((e) => ({ name: e.name, dir: join(config.projectPath, e.name) }));
   } catch {
     return [];
+  }
+}
+
+/** Start time from the header in the first lines of a log, if it has one. */
+function logStart(file: string): number | undefined {
+  const fd = openSync(file, "r");
+  try {
+    const buf = Buffer.alloc(1024);
+    return buf.toString("utf8", 0, readSync(fd, buf, 0, 1024, 0)).split(/\r?\n/).slice(0, 4).map(parseLogHeader).find((t) => t !== undefined);
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -116,6 +127,12 @@ export function registerScriptErrors(server: McpServer, config: Config): void {
           `## Script runtime errors: ${a.logPath ? root : a.source}, ${found.length} session${found.length > 1 ? "s" : ""} (${sessionLabel}, ${(bytes / 1e6).toFixed(1)} MB, ${secs} s)`,
           `${n(sum.vme)} VM exceptions in ${groupsOf(vmeGroups)}; ${n(sum.errors)} other SCRIPT errors in ${groupsOf(sum.groups.length - vmeGroups)}.`,
         ];
+        if (a.since) {
+          // Same rule as the parser, which does not return it: since is on the start day unless it is over an hour before the start.
+          const start = logStart(found[0].file);
+          const at = start === undefined ? undefined : parseLogTime(undefined, `${a.since.length === 5 ? a.since + ":00" : a.since}.000`, start);
+          out.push(at === undefined ? `Since: ${a.since} (no start time in the log header)` : `Since: ${formatLogTime(at, true)} (log started ${formatLogTime(start!, true)})`);
+        }
         if (a.addonName && !addons.some((ad) => ad.name.toLowerCase() === a.addonName!.toLowerCase())) {
           out.push(`Note: no addon "${a.addonName}" with a .gproj under ${config.projectPath}, so no group is marked own.`);
         }
