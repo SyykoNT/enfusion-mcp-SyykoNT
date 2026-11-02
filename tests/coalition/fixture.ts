@@ -139,6 +139,10 @@ GenericEntity : "{7000000000000004}PrefabsEditable/Auto/Compositions/Slotted/Slo
 }
 GenericEntity : "{7000000000000005}Prefabs/Compositions/Slotted/SlotFlatLarge/LivingArea_L_COA.et" {
 }
+GenericEntity : "{7000000000000006}Prefabs/Compositions/Slotted/SlotRoadLarge/Barricade_L_US_01.et" {
+}
+GenericEntity : "{7000000000000007}Prefabs/Compositions/Slotted/SlotFlatSmall/SandbagPosition_S_US_01.et" {
+}
 `;
 
 const CACHE_HUNT = `class CRF_CacheHuntGamemodeManagerClass : SCR_BaseGameModeComponentClass {}
@@ -169,6 +173,7 @@ export function makeProjects(): {
     "CRF/Prefabs/Lobby/COA_Lobby.et": `COA_Gamemode : "{1000000000000099}Prefabs/!Systems/!Lobby/COA_Lobby.et" {\n}\n`,
     "CRF/Prefabs/Mine/MySpawn.et": `COA_StaticSpawnPoint : "{4000000000000002}${MM}/SpawnPoints/SpawnPoints/OPFOR_Spawn.et" {\n}\n`,
     "CRF/Prefabs/Compositions/Slotted/SlotFlatSmall/VehicleMaintenance_S_BLUFOR.et": "GenericEntity {\n}\n",
+    "CRF/Prefabs/Compositions/Slotted/SlotRoadLarge/COAL_Barricade_L_US_Green_01.et": "GenericEntity {\n}\n",
     [`CRF/${MM}/Systems/TaskCreator/CRF_task_empty.et.meta`]: meta(`{4000000000000008}${MM}/Systems/TaskCreator/CRF_task_empty.et`),
     [`CRF/${MM}/Markers/ObjectiveMarkers/NEW/CIVILIAN_NewObjectiveMarker.et.meta`]: meta(`{4000000000000007}${MM}/Markers/ObjectiveMarkers/NEW/CIVILIAN_NewObjectiveMarker.et`),
     "COALITION-Lobby/Prefabs/!Systems/!Lobby/COA_Lobby.et": `COA_Gamemode {\n m_INDFORSlots {\n  COA_SlottingGroup "{3000000000000009}" {\n   m_aSlots {\n    RIFLEMAN\n    RIFLEMAN\n   }\n  }\n }\n}\n`,
