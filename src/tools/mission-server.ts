@@ -143,7 +143,7 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addo
   if (/[",]/.test(world)) return `World path has a quote or comma: ${world}`;
   // A path-only resource name crashes or is ignored by a dedicated server, so the header must carry its {GUID}.
   const guidConf = (h?: string) => !!h && /^\{[0-9A-Fa-f]{16}\}[\w ./-]+\.conf$/i.test(h) && !h.split("/").includes("..");
-  if (a.missionHeader !== undefined && !guidConf(a.missionHeader)) return `missionHeader must be a {GUID}path .conf (server_params shows it): ${a.missionHeader}`;
+  if (a.missionHeader !== undefined && !guidConf(a.missionHeader)) return `missionHeader must be a {GUID}path .conf: ${a.missionHeader}`;
   const header = a.missionHeader ?? (guidConf(found.header) ? found.header : undefined);
   const addons = a.addons ?? [readGproj(gproj).id];
   if (!addons.length || addons.some((id) => !/^[\w.-]+$/.test(id))) return `addons must be addon IDs (letters, digits, . _ -): ${addons.join(", ")}`;
@@ -259,7 +259,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
       inputSchema: {
         action: z.enum(["start", "join", "status", "stop"]),
         world: z.string().optional().describe("(start) Absolute path of the mission .ent inside an unpacked addon"),
-        missionHeader: z.string().optional().describe("(start) Header .conf as {GUID}path; default the one whose World is this .ent (server_params). Without one the world starts bare"),
+        missionHeader: z.string().optional().describe("(start) Header .conf as {GUID}path; default the one in the world's addon whose World is this .ent. Without one the world starts bare"),
         addons: z.array(z.string()).optional().describe("(start) Addon IDs for -addons; default the world's addon (the server resolves its dependencies)"),
         addonsDirs: z.array(z.string()).optional().describe("(start) Folders for -addonsDir (read only); default ENFUSION_ADDONS_DIR, else the project folder and the Workbench addons folder"),
         port: z.number().int().min(1024).max(65535).optional().describe("Loopback game port (-addr 127.0.0.1:<port>), one run per port; start and join default to 2521, stop without it stops every run of this tool"),

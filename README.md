@@ -96,8 +96,8 @@ Added since that test pass:
   resulting `data.pak`.
 - `server install` and `server update` leave Steam's own server install to Steam.
 - New tools: `resource_resolve`, `wb_watch`, `addon_git_guard`, `addon_deps`, `release_audit`,
-  `script_errors`, `log_watch`, `wb_handlers` and `mission_server`; plus a set of tools for COALITION CRF
-  missions, read-only except `mission_git fetch`, which updates git's remote refs, described under
+  `script_errors`, `log_watch`, `wb_handlers` and `mission_server`; plus a set of COALITION CRF mission
+  tools, off by default and read-only except `mission_git fetch`, which updates git's remote refs, described under
   [COALITION missions](#coalition-missions-optional).
 
 Run the test suite with `npx vitest run`.
@@ -189,6 +189,7 @@ sets one up), writes there are refused (see [COALITION missions](#coalition-miss
 | `ENFUSION_WORKBENCH_LOCK` | | None. A shared lock file for Workbench; `mod compile`, `pack` and `build` name its `owner:` line when they refuse because Workbench is open |
 | `ENFUSION_TEXT_STYLE` | | Unset. `strict` turns on the text style checks: `release_audit` T2 (en or em dashes, the words Claude or Anthropic in public text) and `workshop_info` (the same, plus non-ASCII characters and trailing spaces in Workshop text). Length limits are always checked |
 | `ENFUSION_LOG_ROOTS` | `logRoots` | None. Extra folders `log_watch` may read logs under (comma-separated), besides the server profile, client profiles, Workbench and game log folders |
+| `ENFUSION_COALITION_TOOLS` | `coalitionTools` | Off. `on`, `1` or `true` (any case; `true` in the config file) registers the nine COALITION mission-making tools, see [COALITION missions](#coalition-missions-optional). Unset or any other value leaves them off |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
 
 The COALITION tools also read `ENFUSION_PYTHON`; see [COALITION missions](#coalition-missions-optional).
@@ -295,9 +296,11 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 
 ## COALITION missions (optional)
 
-> **Only for COALITION missions.** The tools in this part are for missions built on COALITION's framework (CRF) and COALITION-Lobby. If you make missions for other communities or servers, you can skip this whole part: it does not change how any other tool works, and nothing here runs unless you or your agent calls one of these tools.
+> **Only for COALITION missions.** The tools in this part are for missions built on COALITION's framework (CRF) and COALITION-Lobby. If you make missions for other communities or servers, you can skip this whole part: it does not change how any other tool works, and these tools stay off unless you turn them on.
 >
-> Two things stay true for everyone. These tools are always registered, so your client lists them and their descriptions take a little of your agent's context; there is no setting to hide them. And `server_params` prints COALITION's settings, including `-addons "COALITIONFramework"`, if it is called. For a mission of your own, use `mission_server` (in [Build and test](#build-and-test)).
+> The COALITION mission-making tools are off by default. To make missions for the COALITION community, ask your agent to enable COALITION mission making. It sets `ENFUSION_COALITION_TOOLS` to `on` in this server's MCP config, and the tools below appear after the server restarts.
+>
+> Once they are on, `server_params` prints COALITION's settings, including `-addons "COALITIONFramework"`, if it is called. For a mission of your own, use `mission_server` (in [Build and test](#build-and-test)).
 
 Set up your local repo of CRF via GitHub according to the Coalition Mission Making Guide found here:
 https://www.coalitiongroup.net/mission-making-guide

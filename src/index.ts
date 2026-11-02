@@ -6,14 +6,14 @@ import { registerTools } from "./server.js";
 import { buildInfo, serverVersion } from "./tools/env-check.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./utils/logger.js";
-import { SERVER_INSTRUCTIONS } from "./server-instructions.js";
+import { serverInstructions } from "./server-instructions.js";
 
 const config = loadConfig();
 
 const server = new McpServer({
   name: "enfusion-mcp",
   version: serverVersion(buildInfo),
-}, { instructions: SERVER_INSTRUCTIONS });
+}, { instructions: serverInstructions(config) });
 
 registerTools(server, config);
 

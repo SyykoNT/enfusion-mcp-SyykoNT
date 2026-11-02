@@ -76,6 +76,12 @@ import { registerScriptErrors } from "./tools/script-errors.js";
 import { registerEnvCheck } from "./tools/env-check.js";
 import type { Config } from "./config.js";
 
+/** The COALITION mission-making tools; registered only when ENFUSION_COALITION_TOOLS is on. */
+const COALITION_TOOLS = [
+  registerCoalitionDoctor, registerMissionInspect, registerMissionValidate, registerGearscriptInspect, registerMissionNames,
+  registerMissionGit, registerMissionPrDraft, registerMissionPreflight, registerServerParams,
+];
+
 export function registerTools(server: McpServer, config: Config): void {
   const searchEngine = new SearchEngine(config.dataDir);
   const patterns = new PatternLibrary(config.patternsDir);
@@ -95,14 +101,7 @@ export function registerTools(server: McpServer, config: Config): void {
   // Phase 3 tools
   registerConfigCreate(server, config);
   registerServerConfig(server, config);
-  registerMissionValidate(server, config);
-  registerGearscriptInspect(server, config);
-  registerMissionInspect(server, config);
-  registerMissionGit(server, config);
-  registerMissionPrDraft(server, config);
-  registerMissionPreflight(server, config);
-  registerMissionNames(server, config);
-  registerCoalitionDoctor(server, config);
+  if (config.coalitionTools) COALITION_TOOLS.forEach((register) => register(server, config));
   registerLayoutCreate(server, config);
   registerLayoutRecipe(server, config);
   registerMenuCreate(server, config);
@@ -154,7 +153,6 @@ export function registerTools(server: McpServer, config: Config): void {
   registerConfigOverride(server, config);
   registerEconomy(server, config);
   registerServer(server, config);
-  registerServerParams(server, config);
   registerMissionServer(server, config);
   registerLogWatch(server, config);
   registerGame(server, config);
