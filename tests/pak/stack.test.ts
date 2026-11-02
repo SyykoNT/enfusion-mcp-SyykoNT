@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll, vi } from "vitest";
-import { rmSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { rmSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config.js";
@@ -84,5 +84,34 @@ describe("installedAddons and closure", () => {
     expect(x.cycles).toEqual([["1000000000000001", "1000000000000002", "1000000000000001"]]);
     expect(closure(cfg, "Z").cycles).toEqual([["1000000000000003", "1000000000000003"]]);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("addons behind links and Workshop downloads in a loose dir", () => {
+  it.skipIf(process.platform !== "win32")("finds an addon held as a junction under the project path (B-025)", () => {
+    const { root: r, config: c } = makeFakeStack();
+    const real = join(r, "elsewhere", "Linked");
+    mkdirSync(real, { recursive: true });
+    writeFileSync(join(real, "addon.gproj"), 'GameProject {\n ID "Linked"\n GUID "EEEEEEEEEEEEEEEE"\n Dependencies {\n  "58D0FB3206B6F859"\n }\n}\n');
+    writeFileSync(join(real, "Linked.txt"), "x\n");
+    symlinkSync(real, join(c.projectPath, "Linked"), "junction");
+    expect(buildStack(c, "Linked").layers.map((l) => [l.id, l.kind])).toEqual([["ArmaReforger", "vanilla"], ["Linked", "loose"]]);
+    expect(buildStack(c, "EEEEEEEEEEEEEEEE").layers.at(-1)!.read("Linked.txt")?.toString()).toBe("x\n");
+    expect(installedAddons(c).get("EEEEEEEEEEEEEEEE")?.dir).toBe(join(c.projectPath, "Linked"));
+    rmSync(r, { recursive: true, force: true });
+  });
+
+  it("reads a Workshop download found in a loose dir from its paks (B-026)", () => {
+    const { root: r, config: c } = makeFakeStack();
+    // The default projectPath case: the project path is a folder of Workshop downloads
+    const asLoose = { ...c, projectPath: c.workshopPath!, workshopPath: undefined } as Config;
+    const modB = buildStack(asLoose, "BBBBBBBBBBBBBBBB").layers.at(-1)!;
+    expect([modB.id, modB.kind]).toEqual(["ModB", "workshop"]);
+    expect(modB.read("Prefabs/Guerilla_Pants.et")?.toString()).toContain("Prefabs/Pants_BDU.et");
+    expect(modB.list("Prefabs")).toContain("Prefabs/Guerilla_Pants.et");
+    expect(installedAddons(asLoose).get("BBBBBBBBBBBBBBBB")?.source).toBe("workshop");
+    // No ServerData.json: a hand-made folder stays loose
+    expect(buildStack(asLoose, "ModC_CCCCCCCCCCCCCCCC").layers.at(-1)!.kind).toBe("loose");
+    rmSync(r, { recursive: true, force: true });
   });
 });

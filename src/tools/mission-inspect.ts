@@ -3,19 +3,24 @@ import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { z } from "zod";
 import type { Config } from "../config.js";
-import { components, loadMission, slotRoles, SIDES, type Mission, type MissionEntity, type Side } from "../coalition/mission-model.js";
+import { parseAll, type EnfusionNode } from "../formats/enfusion-text.js";
+import { attributeDefaults, progress, replacements, SAFE_NAMES, settings, standards, worldChecks, zoneChecks } from "../coalition/mission-checks.js";
+import { chainOf, components, loadMission, slotRoles, SIDES, textOf, type Mission, type MissionEntity, type Side } from "../coalition/mission-model.js";
+import { PakVirtualFS } from "../pak/vfs.js";
 import { prefabClassifier, type Classified, type PrefabKind } from "../coalition/mission-prefabs.js";
 import { collectNameRefs, gamemodeNames, nameDefaults, resolveNames, taskEntries, type NameRef } from "../coalition/name-refs.js";
 import type { Layer } from "../pak/stack.js";
 import {
-  cloneCopy, CRF_PATH_HELP, guideProjectsDir, LOBBY_PATH_HELP, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
+  cloneCopy, CRF_PATH_HELP, guideProjectsDir, LOBBY_PATH_HELP, LOBBY_PREFAB, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
 } from "../utils/coalition-paths.js";
 import { enumDefault, loadLobbyEnums } from "../utils/lobby-enums.js";
 import { stripGuid } from "../utils/prefab-ancestry.js";
 import { validateProjectPath } from "../utils/safe-path.js";
 
-const SECTIONS = ["summary", "sides", "names", "tasks", "rules"] as const;
+const SECTIONS = ["summary", "sides", "names", "tasks", "rules", "progress", "settings", "standards"] as const;
 type Section = (typeof SECTIONS)[number];
+// progress, settings and standards are asked for by name, so the default report stays the same size
+const DEFAULT_SECTIONS: Section[] = ["summary", "sides", "names", "tasks", "rules"];
 type SideKind = Exclude<PrefabKind, "gameBorder" | "taskAnchor">;
 
 // Side table rows, in the order of the official guide's layer table
@@ -83,11 +88,22 @@ export function loadLobbyMission(config: Config, roots: CoalitionRoots, world: s
   return m as Mission & { lobby: MissionEntity };
 }
 
+/**
+ * The mission's COA_Lobby entity, then its prefab chain, then the Lobby's own COA_Lobby.et chain, newest first.
+ * Missions place COA_Lobby.et by GUID through CRF's override (Prefabs/Modded Overrides/...) or an old path that no
+ * longer exists; either way the Lobby's own prefab sits under it.
+ */
+export function lobbyNodes(config: Config, roots: CoalitionRoots, m: Mission & { lobby: MissionEntity }): EnfusionNode[] {
+  const copies = [...new Set([m.copy, roots.crf, roots.lobby])];
+  const chain = [...chainOf(m.lobby.prefab!, copies, config), ...chainOf(LOBBY_PREFAB, [roots.lobby], config)];
+  return [m.lobby.node, ...chain.map((l) => parseAll(l.text)[0])];
+}
+
 function missionInspect(config: Config, p: Params): string {
   const roots = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath, p.source);
   const { crf, lobby: lobbyCopy } = roots;
   const m = loadLobbyMission(config, roots, p.world);
-  const want = new Set<Section>(p.sections?.length ? p.sections : SECTIONS);
+  const want = new Set<Section>(p.sections?.length ? p.sections : DEFAULT_SECTIONS);
   const lobby = m.lobby;
   const classify = prefabClassifier(config, [...new Set([lobbyCopy, crf, m.copy])]);
   const classes = new Map<MissionEntity, Classified | undefined>(m.entities.map((e) => [e, classify(e.prefab, e.className)]));
@@ -125,7 +141,7 @@ function missionInspect(config: Config, p: Params): string {
   const byName = new Map(m.entities.filter((e) => e.name).map((e) => [e.name!, e]));
   const entries = taskEntries(m.entities);
   // Unset enum fields read as the member with value 0 (CRF_TaskCreatorComponent.c:83-87, Attribute "0")
-  const enums = entries.length ? loadLobbyEnums([lobbyCopy, crf]) : new Map();
+  const enums = entries.length || want.has("settings") ? loadLobbyEnums([lobbyCopy, crf]) : new Map();
   const unset = (name: string) => `${enumDefault(enums, name) ?? "?"} (default)`;
   const tasks = entries.map((t) => {
     const anchor = byName.get(t.anchor);
@@ -146,14 +162,29 @@ function missionInspect(config: Config, p: Params): string {
       : `No mission .conf in Missions/ points at ${m.worldRel} (plugin 6 not run yet?)` });
   }
   const comps = new Map<string, number>();
+  const offList = new Map<string, number>();
+  const count = (map: Map<string, number>, key: string) => map.set(key, (map.get(key) ?? 0) + 1);
   for (const e of m.entities) {
     const path = e.prefab ? stripGuid(e.prefab) : "";
     // CRF's and the Lobby's own compositions are never flagged (D-035)
-    if (AVOID.test(path) && ![crf, lobbyCopy].some((c) => c.exists(path))) {
-      comps.set(path, (comps.get(path) ?? 0) + 1);
-    }
+    if (!path.includes("/Compositions/") || [crf, lobbyCopy].some((c) => c.exists(path))) continue;
+    if (AVOID.test(path)) count(comps, path);
+    else if (e.layer.toUpperCase() === "PROPS" && !SAFE_NAMES.some((n) => basename(path).startsWith(n))) count(offList, path);
   }
-  for (const [path, n] of comps) rules.push({ level: "warning", text: `Vanilla composition on the guide's avoid list (suspected server crashes): ${path}${n > 1 ? ` x${n}` : ""}` });
+  // D-039: name the guide's replacement only where its file exists: COAL_ ones in the CRF copy read, the rest in the game
+  let vanilla: string[] | undefined;
+  const fileOf = (name: string) =>
+    (name.startsWith("COAL_") ? crf.list("Prefabs/Compositions") : (vanilla ??= PakVirtualFS.get(config.gamePath)?.allFilePaths().filter((f) => f.startsWith("Prefabs/Compositions/")) ?? []))
+      .find((f) => basename(f).startsWith(`${name}_`) || basename(f) === `${name}.et`);
+  for (const [path, n] of comps) {
+    const found = replacements(path).flatMap((name) => fileOf(name) ?? []);
+    const instead = found.length ? `; use ${found.join(" or ")}` : replacements(path).length ? `; the guide's replacement for it was not found in CRF ${crf.label} or the game files` : "";
+    rules.push({ level: "warning", text: `Vanilla composition on the guide's avoid list (suspected server crashes): ${path}${n > 1 ? ` x${n}` : ""}${instead}` });
+  }
+  if (offList.size) {
+    rules.push({ level: "info", text: `PROPS compositions on neither the guide's safe list nor its avoid list: ${[...offList].map(([path, n]) => `${path}${n > 1 ? ` x${n}` : ""}`).join(", ")}` });
+  }
+  if (want.has("rules")) rules.push(...worldChecks(config, m, [...new Set([m.copy, crf, lobbyCopy])]), ...zoneChecks(m, classes));
   const misplaced = new Map<string, number>();
   for (const [e, c] of classes) {
     const layer = c && LAYER[c.kind];
@@ -167,6 +198,13 @@ function missionInspect(config: Config, p: Params): string {
 
   const lobbyInfo = { name: lobby.name, layer: lobby.layer, prefab: lobby.prefab, components: components(lobby).map((c) => c.type) };
 
+  // ── progress, settings, standards ──
+  const nodes = want.has("progress") || want.has("settings") ? lobbyNodes(config, roots, m) : [];
+  const steps = want.has("progress") ? progress(m, nodes) : undefined;
+  const gamemode = want.has("settings") ? lobbyCopy.list("Scripts/Game").find((f) => f.endsWith("/COA_Gamemode.c")) : undefined;
+  const table = want.has("settings") ? settings(m, nodes, enums, attributeDefaults((gamemode && textOf(lobbyCopy, gamemode)) ?? "")) : undefined;
+  const norms = want.has("standards") ? standards(m) : undefined;
+
   if (p.format === "json") {
     const pick = <T>(s: Section, v: T) => (want.has(s) ? v : undefined);
     return JSON.stringify({
@@ -179,6 +217,9 @@ function missionInspect(config: Config, p: Params): string {
       ...pick("names", { names: refs, nameNotes: gm.notes }),
       ...pick("tasks", { tasks }),
       ...pick("rules", { rules }),
+      ...pick("progress", { progress: steps }),
+      ...pick("settings", { settings: table }),
+      ...pick("standards", { standards: norms }),
     }, null, 2);
   }
 
@@ -234,6 +275,16 @@ function missionInspect(config: Config, p: Params): string {
   if (want.has("rules")) {
     out.push("", "## Rules", ...rules.map((r) => `- ${r.level}: ${r.text}`));
   }
+  if (steps) {
+    out.push("", "## Progress", ...steps.steps.map((s) => `- [${s.done ? "x" : " "}] ${s.step}: ${s.detail}`), `Next: ${steps.next}`);
+  }
+  if (table) {
+    out.push("", "## Settings", "| Setting | Value | From |", "|---|---|---|", ...table.map((r) => `| ${r.name} | ${r.value || "(unset)"} | ${r.from} |`));
+  }
+  if (norms) {
+    out.push("", "## Standards", "The guide's Rule of Twos, callsigns and 9-man squad (section 6); Gameplay First allows other structures.");
+    out.push(...(norms.length ? norms.map((n) => `- ${n.level}: ${n.text}`) : ["- nothing to note"]));
+  }
   const issues = (want.has("names") ? refs.filter((r) => !r.found && !r.fromDefault).length : 0) + (want.has("rules") ? rules.filter((r) => r.level !== "info").length : 0) + (want.has("sides") ? sideWarnings.length : 0);
   out.push("", `${issues} issue(s). Read-only.`);
   return out.join("\n");
@@ -250,10 +301,13 @@ export function registerMissionInspect(server: McpServer, config: Config): void 
         "safestart and forward-deploy zones, markers, MSPs, vehicle spawners and depots per side; every entity name the " +
         "mission's components refer to (Task Creator anchors, Cache Hunt caches, CTF bases, Rush triggers...) checked " +
         "against the world's entity names with near-miss suggestions; Task Creator entries; and rule checks (COA_Lobby " +
-        "name, AI World, mission .conf count, vanilla compositions the guide says to avoid). Read-only and offline, no Workbench.",
+        "name, AI World, mission .conf count, vanilla compositions the guide says to avoid and its replacement, sub-scene " +
+        "and terrain folder, spawns inside safe start zones and everything inside the game border). On request: progress " +
+        "(which of the guide's plugin steps are done and the next one), settings (plugin 2 to 4 values) and standards " +
+        "(Rule of Twos, callsigns, 9-man squad). Read-only and offline, no Workbench.",
       inputSchema: {
         world: z.string().min(1).describe("Mission world .ent, CRF-relative (e.g. 'Worlds/Arland/MyMission.ent'; also a published mission in the Workshop CRF), project-path-relative or absolute. Must be inside the project path or the guide's Projects folder."),
-        sections: z.array(z.enum(SECTIONS)).optional().describe("Limit the report. Default: all of summary, sides, names, tasks, rules."),
+        sections: z.array(z.enum(SECTIONS)).optional().describe("Limit or extend the report. Default: summary, sides, names, tasks, rules. Also: progress, settings, standards."),
         format: z.enum(["markdown", "json"]).default("markdown").describe("json returns the same data with entity names per row."),
         crfPath: z.string().optional().describe(CRF_PATH_HELP),
         lobbyPath: z.string().optional().describe(LOBBY_PATH_HELP),

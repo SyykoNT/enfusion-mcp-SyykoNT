@@ -56,6 +56,26 @@ describe("mission_inspect", () => {
     expect(text).not.toContain("mission .conf files point");
   });
 
+  it("names the guide's COAL_ replacement when CRF has it, says when it does not, and lists off-list props (D-039)", async () => {
+    const { text } = await call({ sections: ["rules"] });
+    expect(text).toContain(
+      "- warning: Vanilla composition on the guide's avoid list (suspected server crashes): Prefabs/Compositions/Slotted/SlotRoadLarge/Barricade_L_US_01.et; use Prefabs/Compositions/Slotted/SlotRoadLarge/COAL_Barricade_L_US_Green_01.et"
+    );
+    expect(text).toContain(`Helipad_L_US_01.et x2; the guide's replacement for it was not found in CRF clone unknown (${fx.crf}) or the game files`);
+    expect(text).toContain("- info: PROPS compositions on neither the guide's safe list nor its avoid list: Prefabs/Compositions/Slotted/SlotFlatSmall/SandbagPosition_S_US_01.et");
+  });
+
+  it("adds progress, settings and standards only when asked", async () => {
+    const plain = (await call({})).text;
+    expect(plain).not.toMatch(/## (Progress|Settings|Standards)/);
+    const { text } = await call({ sections: ["progress", "settings", "standards"] });
+    expect(text).toContain("- [x] 1 Create initial layers and COA_Lobby: COA_Lobby placed; guide layers not in the world: SPAWNPOINTSGROUPS, VEHICLES");
+    expect(text).toContain("- [ ] 5 Configure Descriptions:");
+    expect(text).toContain("Next: Run plugin 2 Configure Settings (Plugins > Coalition Lobby Mission Plugins).");
+    expect(text).toContain("| CVON | (unset) | unset |");
+    expect(text).toContain("## Standards");
+  });
+
   it("warns on the PrefabsEditable (E_) copy of an avoid-list composition", async () => {
     const { text } = await call({ sections: ["rules"] });
     expect(text).toContain("avoid list (suspected server crashes): PrefabsEditable/Auto/Compositions/Slotted/SlotRoadSmall/E_Barricade_S_US_01.et");

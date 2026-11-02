@@ -8,6 +8,10 @@ export const SIDES = ["BLUFOR", "OPFOR", "INDFOR", "CIV"] as const;
 export type Side = (typeof SIDES)[number];
 // CIV is m_CIVSlots (validate_mission.py:204-212 field map)
 export const SLOTS_FIELD: Record<Side, string> = { BLUFOR: "m_BLUFORSlots", OPFOR: "m_OPFORSlots", INDFOR: "m_INDFORSlots", CIV: "m_CIVSlots" };
+// COA_Gamemode.c:183-195: CIV is m_CIVILIANGearScriptSettings
+export const SETTINGS_FIELD: Record<Side, string> = {
+  BLUFOR: "m_BLUFORGearScriptSettings", OPFOR: "m_OPFORGearScriptSettings", INDFOR: "m_INDFORGearScriptSettings", CIV: "m_CIVILIANGearScriptSettings",
+};
 
 export interface MissionEntity {
   layer: string;

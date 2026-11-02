@@ -459,18 +459,18 @@ export class WorkbenchClient {
     return { written, replaced: files.stale, current: files.current, extra: files.extra, gitNote };
   }
 
-  /** wb_handlers never writes or deletes in a forbidden root, checked for the addon and, by real path, its handler folder (a junction). */
-  private refuseForbidden(modDir: string): void {
+  /** No handler write or delete in a forbidden root, checked for the addon and, by real path, its handler folder (a junction). */
+  private refuseForbidden(modDir: string, why = "."): void {
     const handlerDir = join(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
     for (const p of existsSync(handlerDir) ? [modDir, handlerDir] : [modDir]) {
       const root = this.config && forbiddenRoot(this.config, p);
-      if (root) throw new WorkbenchError(`Refused: ${p} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS).`, "LAUNCH_FAILED");
+      if (root) throw new WorkbenchError(`Refused: ${p} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS)${why}`, "LAUNCH_FAILED");
     }
   }
 
   /** allowProtected: only wb_handlers remove (D-040); wb_cleanup keeps protected handlers (D-036). */
   cleanupHandlerScripts(modDir: string, allowProtected = false): boolean {
-    if (allowProtected) this.refuseForbidden(modDir);
+    this.refuseForbidden(modDir);
     // A protected addon (CRF) keeps its handlers: putting them back needs the owner's OK (D-024, D-036).
     if (!allowProtected && this.isProtectedMod(modDir)) {
       throw new WorkbenchError(`Refused: ${modDir} is a protected addon (ENFUSION_PROTECTED_ADDONS); its handler scripts are kept.`);
@@ -886,14 +886,7 @@ export class WorkbenchClient {
     const isFallback = !modDir;
     const targetBase = modDir || join(fallbackBase!, HANDLER_FOLDER);
     const targetScriptsDir = join(targetBase, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
-    const root = this.config && forbiddenRoot(this.config, targetBase);
-    if (root) {
-      throw new WorkbenchError(
-        `Refused: ${targetBase} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS); ` +
-          `wb_launch would copy handler scripts into it. Pass the .gproj of an addon of your own.`,
-        "LAUNCH_FAILED"
-      );
-    }
+    this.refuseForbidden(targetBase, "; wb_launch would copy handler scripts into it. Pass the .gproj of an addon of your own.");
 
     // Before the skip below: handlers already on disk need the exclude as much as new ones.
     const gitNote = existsSync(targetBase) ? excludeHandlersFromGit(targetBase) : undefined;
