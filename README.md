@@ -95,11 +95,11 @@ Added since that test pass:
   resulting `data.pak`.
 - `server install` and `server update` leave Steam's own server install to Steam.
 - New tools: `resource_resolve`, `wb_watch`, `addon_git_guard`, `addon_deps`, `release_audit`,
-  `script_errors`, `log_watch`, `wb_handlers`, and read-only tools for COALITION CRF missions: `mission_inspect`,
-  `mission_validate`, `gearscript_inspect`, `mission_names`, `server_params`, `mission_git`, `mission_pr_draft`
-  and `mission_preflight`.
+  `script_errors`, `log_watch`, `wb_handlers`, and read-only tools for COALITION CRF missions:
+  `coalition_doctor`, `mission_inspect`, `mission_validate`, `gearscript_inspect`, `mission_names`,
+  `server_params`, `mission_git`, `mission_pr_draft` and `mission_preflight`.
 
-Test suite: 1241 passed, 14 skipped.
+Test suite: 1244 passed, 14 skipped.
 
 ## Requirements
 
@@ -192,7 +192,7 @@ there are refused (see [COALITION CRF missions](#coalition-crf-missions-offline-
 
 ## Tool reference
 
-76 tools, 3 guided prompts and 3 resource templates.
+77 tools, 3 guided prompts and 3 resource templates.
 
 ### Knowledge (offline)
 | Tool | Purpose |
@@ -242,8 +242,11 @@ there are refused (see [COALITION CRF missions](#coalition-crf-missions-offline-
 Set up your local repo of CRF via GitHub according to the Coalition Mission Making Guide found here:
 https://www.coalitiongroup.net/mission-making-guide
 
+Then run `coalition_doctor` to check your setup against the guide.
+
 | Tool | Purpose |
 |---|---|
+| `coalition_doctor` | Checks this PC against the guide's Tools Setup in 20 rows, each with its state and the guide's fix: Tools, Server, Git, GitHub Desktop, the CRF and Lobby downloads, the Workbench addons link, the Projects folder, the CRF clone and its branches, plus this server's own setup (Python, Lobby, `ENFUSION_PROJECT_PATH`, `ENFUSION_PROTECTED_ADDONS`, handler git-ignore). Writes nothing and never fetches |
 | `mission_inspect` | Per-side readiness report for a mission world from its saved layers: slots, spawn points, safestart and forward-deploy zones, markers, MSPs, vehicle spawners and depots; entity names the mission's components refer to, checked against the world with near-miss suggestions; Task Creator entries; and rule checks from the guide |
 | `mission_validate` | Runs CRF's own mission checks (`validate_mission.py`, `mission_synopsis.py`, `validate_resources.py`) on one mission world or on the worlds a branch changes, with the Lobby clone from `lobbyPath` or beside CRF; returns failures, warnings, the pull request title and check ticks CI would set, and the synopsis |
 | `gearscript_inspect` | What each role in a gearscript spawns with, by the rules of COALITION-Lobby's gear manager: weapons, magazines, clothing, items and radios; lists what the gear manager skips, and with `usedBy` which missions use the gearscript |
@@ -458,7 +461,7 @@ tests/          vitest
 
 ## Status
 
-Version 0.13.1, 76 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
+Version 0.13.1, 77 tools. Everything described here is merged on `syyko/dev`. Checks that need a running
 Workbench are still open for the newest work: loading files written by the new text writer, and the watchdog
 against live dialogs.
 
