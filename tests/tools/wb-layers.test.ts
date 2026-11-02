@@ -18,11 +18,11 @@ function layers(answer: Record<string, unknown> | Error) {
 }
 
 describe("wb_layers", () => {
-  it("create sends name and parentPath, no sub-scene unless given, and prints the path the handler made", async () => {
-    const t = layers({ status: "ok", layerPath: "MISSION/OBJECTIVES", activeLayer: "default", currentSubScene: 2 });
+  it("create sends the name, no sub-scene unless given and no parent, and prints the path the handler made", async () => {
+    const t = layers({ status: "ok", layerPath: "OBJECTIVES", activeLayer: "default", currentSubScene: 2 });
     const r = await t.run({ action: "create", name: "OBJECTIVES", parentPath: "MISSION" });
-    expect(t.call).toHaveBeenCalledWith("EMCP_WB_Layers", { action: "create", name: "OBJECTIVES", parentPath: "MISSION" });
-    expect(r.content[0].text).toContain("- **Layer:** MISSION/OBJECTIVES\n");
+    expect(t.call).toHaveBeenCalledWith("EMCP_WB_Layers", { action: "create", name: "OBJECTIVES" });
+    expect(r.content[0].text).toContain("- **Layer:** OBJECTIVES\n");
     expect(r.content[0].text).toContain("Written to disk on the next wb_save.");
   });
 

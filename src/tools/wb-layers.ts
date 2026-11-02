@@ -12,7 +12,8 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
     "wb_layers",
     {
       description:
-        "Manage layers in the World Editor. create makes a layer (nested with parentPath) in the sub-scene being edited; " +
+        "Manage layers in the World Editor. create makes a top-level layer in the sub-scene being edited (nested layers made " +
+        "through the script API are not saved, so they are not offered); " +
         "it is written to disk on the next wb_save. setActive sets the layer new entities go to and confirms it by reading it back. " +
         "getActive reports the current sub-scene and its active layer. Also list, isVisible, getInfo and toggleLock (layer IDs). " +
         "create, setActive and toggleLock only work in edit mode.",
@@ -42,22 +43,18 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         layerPath: z
           .string()
           .optional()
-          .describe("Layer path as create returns it (e.g. 'MISSION' or 'MISSION/OBJECTIVES'). Required for setActive"),
+          .describe("Layer path as list or create shows it (e.g. 'MISSION'). Required for setActive"),
         name: z
           .string()
           .optional()
-          .describe("Layer name for create (one name, no '/')"),
-        parentPath: z
-          .string()
-          .optional()
-          .describe("Existing layer to create the new one under (e.g. 'MISSION'); omit for a top-level layer"),
+          .describe("Layer name for create (one name, no '/'; layers are top-level)"),
         visible: z
           .boolean()
           .optional()
           .describe("Visibility state for setVisibility (true = visible, false = hidden)"),
       },
     },
-    async ({ action, subScene, layerPath, name, parentPath, visible }) => {
+    async ({ action, subScene, layerPath, name, visible }) => {
       if (MUTATING_LAYER_ACTIONS.has(action)) {
         const modeErr = await ensureMode(client, "edit", `${action} layer`);
         if (modeErr) {
@@ -69,7 +66,6 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         if (subScene !== undefined) params.subScene = subScene;
         if (layerPath) params.layerPath = layerPath;
         if (name) params.name = name;
-        if (parentPath) params.parentPath = parentPath;
         if (visible !== undefined) params.visible = visible;
 
         const result = await client.call<Record<string, unknown>>("EMCP_WB_Layers", params);

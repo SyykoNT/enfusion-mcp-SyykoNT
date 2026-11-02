@@ -2,7 +2,7 @@
  * EMCP_WB_Layers.c - Layer management handler
  *
  * Actions: list, getActive, create, setActive, getEntityLayer, isVisible, getInfo, toggleLock
- * create and setActive use the documented sub-scene layer calls (CreateSubsceneLayer,
+ * create (top-level layers only) and setActive use the documented sub-scene layer calls (CreateSubsceneLayer,
  * SetActiveSubsceneLayer); every response carries the active layer of the sub-scene.
  * The other actions identify layers by IDs from IEntitySource.GetLayerID().
  *
@@ -92,6 +92,14 @@ class EMCP_WB_Layers : NetApiHandler
 		return new EMCP_WB_LayersRequest();
 	}
 
+	//! GetSubsceneLayerId returns an id >= 0 even for an unknown path (live 1.8), so check the sub-scene's own list.
+	protected bool HasLayer(WorldEditorAPI api, int sub, string path)
+	{
+		array<string> layers = {};
+		api.GetSubsceneFolders(sub, layers);
+		return layers.Contains(path);
+	}
+
 	//! Layer and folder paths of a sub-scene, comma-separated, for "not found" messages.
 	protected string LayerList(WorldEditorAPI api, int sub)
 	{
@@ -178,25 +186,23 @@ class EMCP_WB_Layers : NetApiHandler
 		}
 		else if (req.action == "create")
 		{
-			string newPath = req.name;
-			if (req.parentPath != "")
-				newPath = req.parentPath + "/" + req.name;
 			resp.status = "error";
 			if (req.name == "" || req.name.Contains("/"))
-				resp.message = "name parameter required for create: one layer name without '/' (use parentPath to nest)";
+				resp.message = "name parameter required for create: one layer name without '/'";
+			// Live 1.8: a layer created under another layer was not written by Save(), and its entities were lost
+			else if (req.parentPath != "")
+				resp.message = "Nested layers are not offered: a layer created under another layer through the script API is not saved (Save() returned false and its entities were lost, live check 2026-11-02). Create a top-level layer.";
 			// A layer in a parent world would be saved into that world, which is usually packed or someone else's
 			else if (sub != resp.currentSubScene)
 				resp.message = "create works only in the sub-scene being edited (" + resp.currentSubScene.ToString() + "), not in " + sub.ToString();
-			else if (req.parentPath != "" && api.GetSubsceneLayerId(sub, req.parentPath) < 0)
-				resp.message = "Parent layer not found: " + req.parentPath + ". Layers: " + LayerList(api, sub);
-			else if (api.GetSubsceneLayerId(sub, newPath) >= 0)
-				resp.message = "Layer already exists: " + newPath;
+			else if (HasLayer(api, sub, req.name))
+				resp.message = "Layer already exists: " + req.name;
 			else
 			{
-				resp.layerPath = api.CreateSubsceneLayer(sub, req.name, req.parentPath);
+				resp.layerPath = api.CreateSubsceneLayer(sub, req.name, "");
 				if (resp.layerPath == "")
 				{
-					resp.message = "CreateSubsceneLayer returned no path for " + newPath;
+					resp.message = "CreateSubsceneLayer returned no path for " + req.name;
 				}
 				else
 				{
@@ -212,7 +218,7 @@ class EMCP_WB_Layers : NetApiHandler
 			{
 				resp.message = "layerPath parameter required for setActive";
 			}
-			else if (api.GetSubsceneLayerId(sub, req.layerPath) < 0)
+			else if (!HasLayer(api, sub, req.layerPath))
 			{
 				resp.message = "Layer not found: " + req.layerPath + ". Layers: " + LayerList(api, sub);
 			}
