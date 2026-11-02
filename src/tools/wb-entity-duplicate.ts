@@ -9,7 +9,7 @@ import {
 import { join, dirname } from "node:path";
 import type { Config } from "../config.js";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { resolveGameDataPath, findLooseFile, resolveAddonDir } from "../utils/game-paths.js";
+import { resolveGameDataPath, findLooseFile, resolveWriteAddon } from "../utils/game-paths.js";
 import { validateProjectPath } from "../utils/safe-path.js";
 import { ensureMode, formatConnectionStatus } from "../workbench/status.js";
 
@@ -50,9 +50,13 @@ export function registerWbEntityDuplicate(
           .string()
           .optional()
           .describe(
-            "Addon folder name under ENFUSION_PROJECT_PATH (e.g. 'MyMod'). " +
-            "If omitted, the first addon found in the project path is used."
+            "Addon folder name under ENFUSION_PROJECT_PATH or ENFUSION_ADDONS_DIR (e.g. 'MyMod'). " +
+            "modName or projectPath is required; writes never default to ENFUSION_DEFAULT_MOD."
           ),
+        projectPath: z
+          .string()
+          .optional()
+          .describe("Addon root path, for an addon outside the project path. Wins over modName."),
         replaceInScene: z
           .boolean()
           .default(true)
@@ -62,28 +66,17 @@ export function registerWbEntityDuplicate(
           ),
       },
     },
-    async ({ entityName, destPath, modName, replaceInScene }) => {
+    async ({ entityName, destPath, modName, projectPath, replaceInScene }) => {
+      // Refuse a bad target before any Workbench call.
+      const target = resolveWriteAddon(config, { projectPath, modName });
+      if ("error" in target) {
+        return { content: [{ type: "text" as const, text: target.error }], isError: true };
+      }
+      const addonDir = target.dir;
+
       const modeErr = await ensureMode(client, "edit", "duplicate entity");
       if (modeErr) {
         return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
-      }
-
-      // Resolve addon directory
-      const addonDir = resolveAddonDir(config.projectPath, modName ?? config.defaultMod);
-      if (!addonDir) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Could not find addon directory. ` +
-                (modName
-                  ? `'${modName}' not found under ${config.projectPath}`
-                  : `No addons found under ${config.projectPath}`) +
-                `. Provide modName matching the addon folder name.`,
-            },
-          ],
-          isError: true,
-        };
       }
 
       // Check destination doesn't already exist
