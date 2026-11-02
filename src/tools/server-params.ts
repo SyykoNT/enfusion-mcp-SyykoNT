@@ -53,7 +53,8 @@ export function findMissionHeader(worldFile: string): { header?: string; addon?:
  */
 export function dstProfiles(dump: string): { server: string; peers: string[] } {
   const line = dump.match(/^ScriptTools\\SCR_DedicatedServerPlugin=(.*)$/m)?.[1] ?? "";
-  const parts = [...line.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\"/g, '"').trim());
+  // The dump escapes inside each quoted part: \" for a quote and \\ for a backslash (paths read C:\\Users\\...).
+  const parts = [...line.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\(.)/g, "$1").trim());
   let server = "";
   const peers: string[] = [];
   let peer: { profile: string; enabled: boolean } | undefined;

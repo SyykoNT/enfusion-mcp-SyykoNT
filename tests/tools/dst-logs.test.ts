@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 import { dstProfileDirs, dstProfiles } from "../../src/tools/server-params.js";
 import { registerScriptErrors } from "../../src/tools/script-errors.js";
-import { registerLogWatch } from "../../src/tools/log-watch.js";
+import { logRoots, registerLogWatch } from "../../src/tools/log-watch.js";
 
 type Result = { content: { text: string }[]; isError?: boolean };
 type Handler = (p: Record<string, unknown>) => Promise<Result>;
@@ -22,7 +22,8 @@ const head = "---\r\nLog x started at 2026-11-02 10:00:00\r\n\r\n";
 
 // The line format seen on this PC (no Profile, no peers set), plus a Profile and PeerConfig blocks as the dump would hold them (block form unverified).
 type Peer = { profile?: string; enabled?: boolean };
-const q = (s: string) => `\\"${s}\\"`;
+// A quoted value as the real dump writes it: backslashes doubled, quotes escaped (seen: C:\\Users\\donmu, \\\"= new\\\").
+const q = (s: string) => `\\"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}\\"`;
 const peerBlock = (p: Peer) =>
   `"  PeerConfig ${q("{5E3A1B2C3D4E5F60}")} {", ` + (p.profile !== undefined ? `"   Profile ${q(p.profile)}", ` : "") + (p.enabled === false ? `"   Enabled 0", ` : "") + `"  }", `;
 const dumpLine = (server: string, peers: Peer[]) =>
@@ -66,6 +67,10 @@ describe("Dedicated Server Tool logs (GI-14)", () => {
   it("reads each peer's own Profile from Workbench's settings dump, numbered over enabled peers as the plugin does", () => {
     const thisPc = 'ScriptTools\\SCR_DedicatedServerPlugin=SCR_DedicatedServerPlugin {, " m_bNoThrow 0", " m_iLogBackend None", " m_iMaxFPS 30", " m_bRunPeers 0", }';
     expect(dstProfiles(thisPc)).toEqual({ server: "", peers: [] });
+    // A real dump doubles backslashes, so a path (and one ending in a backslash) comes back as written in the tool (review N8).
+    expect(dstProfiles(dumpLine("D:\\Runs\\srv", [])).server).toBe("D:\\Runs\\srv");
+    expect(dstProfiles(dumpLine("C:\\", [])).server).toBe("C:\\");
+    expect(dstProfiles(String.raw`ScriptTools\SCR_DedicatedServerPlugin=SCR_DedicatedServerPlugin {, " m_sProfile \"D:\\Runs\\srv\"", }`).server).toBe("D:\\Runs\\srv");
     // Default Profile, own Profile, a disabled peer (not counted), Profile "" (counted, but no -profile so no folder), own Profile again.
     expect(dstProfiles(dumpLine("server", [{}, { profile: "Client" }, { profile: "Off", enabled: false }, { profile: "" }, { profile: "Client" }]))).toEqual({
       server: "server",
@@ -100,6 +105,9 @@ describe("Dedicated Server Tool logs (GI-14)", () => {
     const outside = join(root, "dst", "server", "notlogs", "secret.log");
     expect((await scan({ source: "path", path: outside })).content[0].text).toBe(`Path is not under an allowed log root: ${outside}`);
     setDump("C:\\", []);
+    // The drive root really is parsed now (review N8): its root is C:\logs, not C:\, so the temp .log stays refused.
+    expect(logRoots(config)).toContain(join("C:\\", "logs"));
+    expect(logRoots(config)).not.toContain("C:\\");
     expect((await scan({ source: "path", path: outside })).content[0].text).toMatch(/^Path is not under an allowed log root/);
     setDump(join(root, "dst", "server"), twoPeers());
     expect((await scan({ source: "path", path: join(root, "dst", "server", "logs"), file: "error" })).isError).toBeUndefined();
