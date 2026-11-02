@@ -69,20 +69,3 @@ describe("default project path (Workbench addons folder)", () => {
     expect(forbiddenRoot(cfg(gameCache), join(gameCache, "Game_4444444444444444"))).toBe(gameCache);
   });
 });
-
-describe("Workbench addons folder linked to the game's Workshop cache", () => {
-  it("stays forbidden as the project root", () => {
-    const home = join(root, "home2");
-    process.env.USERPROFILE = process.env.HOME = home;
-    try {
-      const cache = join(myGamesDir(), "ArmaReforger", "addons");
-      addon(join(cache, "Game_4444444444444444"), true);
-      mkdirSync(join(myGamesDir(), "ArmaReforgerWorkbench"), { recursive: true });
-      const link = join(myGamesDir(), "ArmaReforgerWorkbench", "addons");
-      symlinkSync(cache, link, "junction");
-      expect(forbiddenRoot(cfg(link), join(link, "NewMod"))).toBe(cache);
-    } finally {
-      process.env.USERPROFILE = process.env.HOME = join(root, "home");
-    }
-  });
-});

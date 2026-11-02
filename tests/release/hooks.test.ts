@@ -28,7 +28,9 @@ describe("hook templates", () => {
     const msg = ["Subject line", "", "Body text", "", ...AI_SAMPLES.map((s) => s.line), ...HUMAN_LINES, "", "last line"].join("\n");
     const file = join(dir, "MSG");
     writeFileSync(file, msg + "\n");
-    const r = spawnSync("sh", [hook, file], { encoding: "utf-8" });
+    // As git runs it: a relative path from the folder the files are in. sed -i writes its temp file beside a bare name, and a
+    // Windows temp folder on another drive than the working folder fails with "Invalid cross-device link".
+    const r = spawnSync("sh", ["commit-msg", "MSG"], { encoding: "utf-8", cwd: dir });
     expect(r.status, r.stderr).toBe(0);
     const out = readFileSync(file, "utf-8");
     expect(out.replace(/\n+$/, "")).toBe(stripLines(msg).replace(/\n+$/, ""));

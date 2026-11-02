@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -45,6 +45,13 @@ describe.skipIf(!hasGit)("mission_git", { timeout: 30_000 }, () => {
     expect(r.fetchedAt).not.toBeNull();
     expect(state(fx.crf)).toBe(before);
     expect(formatMissionGit(r)).toContain("- Against origin/release (");
+  });
+
+  it("reads a clone reached through a link: git names the real folder, which is still the clone's own", () => {
+    const fx = setup();
+    const link = join(fx.root, "crf-link");
+    symlinkSync(fx.crf, link, "junction");
+    expect(missionGit(fx.config, { crfPath: link })).toMatchObject({ branch: "mission/test", ahead: 0, behind: 0 });
   });
 
   it("groups committed, uncommitted and untracked changes and warns on handlers, outside files, world without .conf, bad .conf and missing metas", () => {
