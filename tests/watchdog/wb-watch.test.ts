@@ -119,6 +119,21 @@ describe("watcher main loop", () => {
     expect(logged).toEqual(["Ignore clicked 02:14:14", "reload finished 02:14:20"]);
   });
 
+  it("reports a Qt modal (owner disabled, not a #32770 box) as blocked_dialog other with its title, and never clicks it", async () => {
+    const t = setup();
+    const w = t.watcher();
+    const main = { hwnd: 7100, cls: "Qt683QWindowIcon", text: "World Editor", visible: true, hung: false, owner: 0, ownerEnabled: null };
+    t.sample.wins = [main, { hwnd: 7101, cls: "Qt683QWindowIcon", text: "Validating $MCPParity:Worlds/ScnStub_V1.ent", visible: true, hung: false, owner: 7100, ownerEnabled: false }];
+    await w.tick();
+    t.clock.now += 12_000;
+    const s = await w.tick();
+    expect([s.state, s.kind]).toEqual(["blocked_dialog", "other"]);
+    expect(s.dialog?.title).toBe("Validating $MCPParity:Worlds/ScnStub_V1.ent");
+    expect(t.dismiss).not.toHaveBeenCalled();
+    t.sample.wins = [main];
+    expect((await w.tick()).state).toBe("ok");
+  });
+
   it("a second watcher on the same PID exits with already watched", async () => {
     const t = setup();
     expect(claimWatch(t.stateDir, 19524)).toEqual({ ok: true });

@@ -1,12 +1,13 @@
 /**
  * Windows side of the watchdog: one long-lived PowerShell per watched Workbench that prints one JSON line
  * every 5 s (windows of that PID, IsHungAppWindow, memory, CPU, CrashReporter, NET API port owner), and a
- * one-shot script that clicks Ignore on the leak assert. Neither may focus, show, close or end anything.
+ * one-shot script that clicks Ignore on the leak assert, and a read-only one that lists open dialogs. None may focus,
+ * show, close or end anything.
  */
 
 import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { leakAssertButton, LEAK_TEXT, type WinInfo } from "./signals.js";
+import { isDialog, leakAssertButton, LEAK_TEXT, type DialogProbe, type WinInfo } from "./signals.js";
 
 export interface ProbeSample {
   t: number;
@@ -32,6 +33,8 @@ public class EmcpWatch {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
   public static string Text(IntPtr h) { var s = new StringBuilder(4096); GetWindowText(h, s, 4096); return s.ToString(); }
   public static string Cls(IntPtr h) { var s = new StringBuilder(256); GetClassName(h, s, 256); return s.ToString(); }
   public static List<IntPtr> Top(uint pid) { var r = new List<IntPtr>(); EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p); if (p == pid && IsWindowVisible(h)) r.Add(h); return true; }, IntPtr.Zero); return r; }
@@ -40,6 +43,12 @@ public class EmcpWatch {
 "@
 function Kids($h) { @(foreach ($k in [EmcpWatch]::Kids($h)) { [ordered]@{ hwnd = $k.ToInt64(); cls = [EmcpWatch]::Cls($k); text = [EmcpWatch]::Text($k) } }) }
 function Say($o) { [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress -Depth 5)); [Console]::Out.Flush() }
+function Own($h, $o) {
+  $ow = [EmcpWatch]::GetWindow($h, 4)
+  $o.owner = $ow.ToInt64()
+  $o.ownerEnabled = $null
+  if ($ow -ne [IntPtr]::Zero) { [uint32]$op = 0; [void][EmcpWatch]::GetWindowThreadProcessId($ow, [ref]$op); if ($op -eq $WbPid) { $o.ownerEnabled = [EmcpWatch]::IsWindowEnabled($ow) } }
+}
 `;
 
 /** Needs $WbPid and $Port. Children are listed only for #32770 dialog boxes. */
@@ -51,6 +60,7 @@ while ($true) {
   if (-not $p) { Say ([ordered]@{ t = [DateTimeOffset]::Now.ToUnixTimeMilliseconds(); alive = $false }); break }
   $wins = @(foreach ($h in [EmcpWatch]::Top([uint32]$WbPid)) {
     $o = [ordered]@{ hwnd = $h.ToInt64(); cls = [EmcpWatch]::Cls($h); text = [EmcpWatch]::Text($h); visible = $true; hung = [EmcpWatch]::IsHungAppWindow($h) }
+    Own $h $o
     if ($o.cls -ceq '#32770') { $o.children = Kids $h }
     $o
   })
@@ -81,6 +91,38 @@ if (-not $btn -or -not $leak) { 'refused: not the leak assert or no &Ignore butt
 'clicked'
 `;
 
+/**
+ * Needs $WbPid. One run: every visible top-level window of that PID that the same rule as isDialog() calls a
+ * dialog, with its text. Reads only: Win32 getters and UI Automation FromHandle/FindAll/Name, no input, no focus.
+ */
+export const DIALOG_SCRIPT = `$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+${WIN32}
+# --- dialog probe body ---
+$titles = @('Opening world', 'Script Authorization Required')
+$ae = [System.Windows.Automation.AutomationElement]
+$descend = [System.Windows.Automation.TreeScope]::Descendants
+function Names($el, $type) {
+  $c = New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, $type)
+  @(foreach ($e in $el.FindAll($descend, $c)) { $e.Current.Name })
+}
+$wins = @(foreach ($h in [EmcpWatch]::Top([uint32]$WbPid)) {
+  $o = [ordered]@{ hwnd = $h.ToInt64(); cls = [EmcpWatch]::Cls($h); text = [EmcpWatch]::Text($h); visible = $true }
+  Own $h $o
+  if (($o.owner -ne 0 -and $o.ownerEnabled -eq $false) -or $o.cls -ceq '#32770' -or $titles -contains $o.text -or $o.text.StartsWith('Validating ')) {
+    if ($o.cls -ceq '#32770') { $o.children = Kids $h }
+    else {
+      $el = $ae::FromHandle($h)
+      $o.children = @(foreach ($t in (Names $el ([System.Windows.Automation.ControlType]::Text))) { [ordered]@{ hwnd = 0; cls = 'Text'; text = $t } })
+      $o.buttons = @(Names $el ([System.Windows.Automation.ControlType]::Button))
+    }
+    $o
+  }
+})
+Say ([ordered]@{ wins = $wins })
+`;
+
 /** Prefix integer parameters; anything else is refused so no text reaches the script. */
 export function withArgs(script: string, args: Record<string, number>): string {
   const lines = Object.entries(args).map(([k, v]) => {
@@ -92,14 +134,33 @@ export function withArgs(script: string, args: Record<string, number>): string {
 
 const psArgs = (script: string) => ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
 
-export type PsRunner = (script: string) => Promise<{ code: number; out: string }>;
+export type PsRunner = (script: string, timeoutMs?: number) => Promise<{ code: number; out: string }>;
 
-export const runPs: PsRunner = (script) =>
+export const runPs: PsRunner = (script, timeoutMs = 30_000) =>
   new Promise((done) => {
-    execFile("powershell", psArgs(script), { windowsHide: true, timeout: 30_000 }, (err, out) =>
+    execFile("powershell", psArgs(script), { windowsHide: true, timeout: timeoutMs }, (err, out) =>
       done({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, out: String(out) })
     );
   });
+
+const DIALOG_TIMEOUT_MS = 8000;
+
+/** Dialogs of each Workbench PID, one read-only PowerShell run per PID. Never throws: a failed run is that PID's "unavailable". */
+export function probeDialogs(pids: number[], run: PsRunner = runPs): Promise<DialogProbe[]> {
+  return Promise.all(
+    pids.map(async (pid): Promise<DialogProbe> => {
+      if (run === runPs && process.platform !== "win32") return { pid, unavailable: "only Windows can be checked" };
+      try {
+        const r = await run(withArgs(DIALOG_SCRIPT, { WbPid: pid }), DIALOG_TIMEOUT_MS);
+        if (r.code !== 0) return { pid, unavailable: `the check failed or took over ${DIALOG_TIMEOUT_MS / 1000} s (exit ${r.code})` };
+        const wins = (JSON.parse(r.out.trim().split("\n").pop()!) as { wins?: WinInfo[] }).wins ?? [];
+        return { pid, dialogs: wins.filter(isDialog) };
+      } catch (e) {
+        return { pid, unavailable: e instanceof Error ? e.message : String(e) };
+      }
+    })
+  );
+}
 
 /** Click Ignore on the leak assert `hwnd` of Workbench `pid`, only when both checks (here and in the script) match. */
 export async function dismissLeakAssert(pid: number, hwnd: number, run: PsRunner = runPs): Promise<string> {

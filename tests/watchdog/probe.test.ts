@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { PROBE_SCRIPT, DISMISS_SCRIPT, dismissLeakAssert, startProbe, withArgs, type PsRunner } from "../../src/watchdog/probe.js";
+import { PROBE_SCRIPT, DISMISS_SCRIPT, DIALOG_SCRIPT, dismissLeakAssert, probeDialogs, startProbe, withArgs, type PsRunner } from "../../src/watchdog/probe.js";
 
 describe("probe scripts", () => {
-  it.each([["probe", PROBE_SCRIPT], ["dismiss", DISMISS_SCRIPT]])("%s never focuses, shows, closes or ends anything", (_n, script) => {
+  it.each([["probe", PROBE_SCRIPT], ["dismiss", DISMISS_SCRIPT], ["dialogs", DIALOG_SCRIPT]])("%s never focuses, shows, closes or ends anything", (_n, script) => {
     for (const banned of ["SetForegroundWindow", "SetFocus", "ShowWindow", "WM_CLOSE", "Stop-Process", "taskkill"]) {
       expect(script).not.toContain(banned);
     }
@@ -13,6 +13,15 @@ describe("probe scripts", () => {
   it("the only message posted is BM_CLICK", () => {
     expect(PROBE_SCRIPT).not.toContain("]::PostMessage(");
     expect([...DISMISS_SCRIPT.matchAll(/\]::PostMessage\(([^)]*)\)/g)].map((m) => m[1].split(",")[1].trim())).toEqual(["0x00F5"]);
+  });
+
+  it("the dialog probe body calls nothing that sends input, focuses or posts", () => {
+    const body = DIALOG_SCRIPT.split("# --- dialog probe body ---")[1];
+    expect(body.length).toBeGreaterThan(100);
+    for (const banned of ["PostMessage", "SendMessage", "Invoke(", "InvokePattern", "SetFocus", "SetForegroundWindow", "SendInput", "SendKeys", "Click"]) {
+      expect(body).not.toContain(banned);
+    }
+    expect(DIALOG_SCRIPT).not.toContain("]::PostMessage(");
   });
 
   it("takes integer parameters only", () => {
@@ -50,6 +59,38 @@ describe("dismissLeakAssert through a stub runner", () => {
     const { run, calls } = runner(look);
     expect(await dismissLeakAssert(7, 100, run)).toMatch(/^refused/);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("probeDialogs through a stub runner", () => {
+  const modal = { hwnd: 5, cls: "Qt683QWindowIcon", text: "Validating $A:Worlds/B.ent", visible: true, owner: 4, ownerEnabled: false, buttons: ["Yes", "No"] };
+  const main = { hwnd: 4, cls: "Qt683QWindowIcon", text: "World Editor", visible: true, owner: 0, ownerEnabled: null };
+
+  it("runs once per PID with the PID as the only argument and keeps only the dialogs", async () => {
+    const calls: [string, number | undefined][] = [];
+    const run: PsRunner = async (s, t) => {
+      calls.push([s, t]);
+      return { code: 0, out: `${JSON.stringify({ wins: [main, modal] })}\r\n` };
+    };
+    expect(await probeDialogs([11, 12], run)).toEqual([{ pid: 11, dialogs: [modal] }, { pid: 12, dialogs: [modal] }]);
+    expect(calls.map((c) => c[0].split("\n")[0])).toEqual(["$WbPid = 11", "$WbPid = 12"]);
+    expect(calls[0][1]).toBe(8000);
+  });
+
+  it.each([
+    ["malformed JSON", async () => ({ code: 0, out: "not json" })],
+    ["a failed run", async () => ({ code: 1, out: "" })],
+    ["a rejected runner", async () => { throw new Error("spawn powershell ENOENT"); }],
+  ])("reports %s as unavailable", async (_n, run) => {
+    const [r] = await probeDialogs([11], run as PsRunner);
+    expect(r).toMatchObject({ pid: 11 });
+    expect(r).toHaveProperty("unavailable");
+  });
+
+  it("returns nothing for no PIDs and does not run", async () => {
+    const run = vi.fn();
+    expect(await probeDialogs([], run)).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
   });
 });
 

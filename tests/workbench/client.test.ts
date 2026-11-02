@@ -140,26 +140,57 @@ describe("WorkbenchClient", () => {
     }
   });
 
-  it("throws TIMEOUT on slow response", async () => {
-    // Create a server that never responds.
-    // allowHalfOpen prevents Node auto-ending when client sends FIN.
+  describe("on a slow response", () => {
     const openSockets: Socket[] = [];
-    const slowServer = createServer({ allowHalfOpen: true }, (socket) => {
-      openSockets.push(socket);
-      socket.on("data", () => {});
+    let slowServer: Server;
+    let slowClient: WorkbenchClient;
+    beforeEach(() => {
+      // A server that never responds. allowHalfOpen prevents Node auto-ending when client sends FIN.
+      slowServer = createServer({ allowHalfOpen: true }, (socket) => {
+        openSockets.push(socket);
+        socket.on("data", () => {});
+      });
+      slowServer.listen(0);
+      const addr = slowServer.address();
+      slowClient = new WorkbenchClient("127.0.0.1", addr && typeof addr !== "string" ? addr.port : 0);
+      slowClient.dialogProbe = async () => []; // the real one would start PowerShell on the test PC
     });
-    slowServer.listen(0);
-    const addr = slowServer.address();
-    const port = addr && typeof addr !== "string" ? addr.port : 0;
-    const slowClient = new WorkbenchClient("127.0.0.1", port);
+    afterEach(async () => {
+      // Destroy all held sockets so server.close() doesn't hang
+      for (const s of openSockets.splice(0)) s.destroy();
+      await new Promise<void>((res) => slowServer.close(() => res()));
+    });
 
-    await expect(
-      slowClient.call("ReloadScripts", {}, { timeout: 200 })
-    ).rejects.toThrow("timed out");
+    it("throws TIMEOUT", async () => {
+      await expect(slowClient.call("ReloadScripts", {}, { timeout: 200 })).rejects.toThrow("timed out");
+    });
 
-    // Destroy all held sockets so server.close() doesn't hang
-    for (const s of openSockets) s.destroy();
-    await new Promise<void>((res) => slowServer.close(() => res()));
+    it("names the open dialog, keeps TIMEOUT and carries the dialogs", async () => {
+      const modal = { hwnd: 5, cls: "Qt683QWindowIcon", text: "Validating $A:Worlds/B.ent", visible: true, children: [{ hwnd: 0, cls: "Text", text: "File data structure of the world is obsolete" }], buttons: ["Yes", "No"] };
+      slowClient.dialogProbe = async () => [{ pid: 7, dialogs: [modal] }];
+      const err = await slowClient.call("ReloadScripts", {}, { timeout: 200 }).catch((e) => e);
+      expect(err).toBeInstanceOf(WorkbenchError);
+      expect(err.code).toBe("TIMEOUT");
+      expect(err.message).toContain("timed out");
+      expect(err.message).toContain("[obsolete_world]");
+      expect(err.message).toContain("may still run");
+      expect(err.dialogs).toHaveLength(1);
+    });
+
+    it("still throws TIMEOUT, saying the check is unavailable, when the dialog check throws", async () => {
+      slowClient.dialogProbe = async () => { throw new Error("no powershell"); };
+      const err = await slowClient.call("ReloadScripts", {}, { timeout: 200 }).catch((e) => e);
+      expect(err.code).toBe("TIMEOUT");
+      expect(err.message).toContain("dialog check unavailable: no powershell");
+    });
+
+    it("never runs the dialog check for ping()", async () => {
+      const probe = vi.fn(async () => []);
+      const c = new WorkbenchClient("127.0.0.1", 1);
+      c.dialogProbe = probe;
+      expect(await c.ping()).toBe(false);
+      expect(probe).not.toHaveBeenCalled();
+    });
   });
 
   it("toString shows host and port", () => {

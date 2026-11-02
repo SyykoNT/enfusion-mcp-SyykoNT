@@ -97,6 +97,7 @@ describe("launchWorkbench stops waiting when its Workbench has exited", () => {
   function refusingClient() {
     const { c, gproj } = client();
     vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockRejectedValue(new WorkbenchError("refused", "CONNECTION_REFUSED"));
+    c.dialogProbe = async () => []; // the real one starts PowerShell
     return { c, gproj };
   }
 
@@ -106,6 +107,41 @@ describe("launchWorkbench stops waiting when its Workbench has exited", () => {
     const t0 = Date.now();
     await expect(c.ensureRunning(gproj)).rejects.toThrow(/PID 4242\) exited .*CrashReporter/);
     expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("stops at once, naming the dialog, when a probe 30 s in finds one; no dialog keeps it polling", async () => {
+    const { c, gproj } = refusingClient();
+    const modal = { hwnd: 5, cls: "Qt683QWindowIcon", text: "Validating $TestAddon:Worlds/W.ent", visible: true, buttons: ["Yes", "No"], children: [{ hwnd: 0, cls: "Text", text: "The world is obsolete" }] };
+    const probe = vi.fn(async () => [{ pid: 4242, dialogs: [modal] }]);
+    c.dialogProbe = probe;
+    vi.useFakeTimers();
+    try {
+      const done = expect(c.ensureRunning(gproj, false, "Worlds/W.ent")).rejects.toThrow(/PID 4242\).*showing a dialog[\s\S]*Validating[\s\S]*\[obsolete_world\]/);
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(probe).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(6_000);
+      await done;
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(probe).toHaveBeenCalledWith([4242]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("checks for a dialog at most every 15 s and keeps waiting when there is none", async () => {
+    const { c, gproj } = refusingClient();
+    const probe = vi.fn(async () => [{ pid: 4242, dialogs: [] }]);
+    c.dialogProbe = probe;
+    vi.useFakeTimers();
+    try {
+      const done = expect(c.ensureRunning(gproj)).rejects.toThrow(/did not connect within 90s/);
+      await vi.advanceTimersByTimeAsync(95_000);
+      await done;
+      expect(probe.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(probe.mock.calls.length).toBeLessThanOrEqual(5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps polling to the timeout while the process is alive", async () => {

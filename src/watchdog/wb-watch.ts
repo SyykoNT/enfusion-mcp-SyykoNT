@@ -16,7 +16,7 @@ import { parseArgs } from "node:util";
 import { MCP_HOME } from "../config.js";
 import { crashReporters, isAlive, killPids, processInfo, sleep, spawnDetached } from "../utils/process.js";
 import {
-  decide, likelyTrigger, leakAssertButton, loadedProjects, lockHeldBy, newCarry, parseCrashLog, parseLogChunk, portOwner,
+  decide, dialogText, isDialog, likelyTrigger, leakAssertButton, loadedProjects, lockHeldBy, newCarry, parseCrashLog, parseLogChunk, portOwner,
   type Dismiss, type LogCarry, type Signals, type WatchStateName,
 } from "./signals.js";
 import { dismissLeakAssert, startProbe, type ProbeSample } from "./probe.js";
@@ -24,8 +24,6 @@ import { dismissLeakAssert, startProbe, type ProbeSample } from "./probe.js";
 export const WATCH_DIR = join(MCP_HOME, "watch");
 const SELF = fileURLToPath(import.meta.url);
 const TICK_MS = 5000;
-/** Qt prompts found by title (tools\reforger-test-kit assert_ignorer.ps1); report only. */
-const DIALOG_TITLES = ["Opening world", "Script Authorization Required"];
 
 export interface WatchOpts {
   pid: number;
@@ -209,12 +207,12 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
         statFolder();
       }
 
-      const win = s?.wins?.find((w) => w.cls === "#32770" || DIALOG_TITLES.includes(w.text));
+      const win = s?.wins?.find(isDialog);
       if (!win) sig.dialog = undefined;
       else if (sig.dialog?.hwnd !== win.hwnd) {
         const button = leakAssertButton(win);
         sig.dialog = { hwnd: win.hwnd, kind: button ? "leak_assert" : "other", since: now, button };
-        st.dialog = { title: win.text, text: (win.children ?? []).map((c) => c.text).filter(Boolean).join(" | ").slice(0, 300) };
+        st.dialog = { title: win.text, text: dialogText(win) };
       }
       if (!win) st.dialog = undefined;
       sig.hungSince = s?.wins?.some((w) => w.hung && w !== win) ? (sig.hungSince ?? now) : undefined;
