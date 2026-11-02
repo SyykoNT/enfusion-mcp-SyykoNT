@@ -16,7 +16,7 @@ import { workbenchProfileDir } from "../workbench/cli.js";
 import { parseScriptErrors } from "../workbench/script-errors.js";
 import { SETTINGS_FIELD } from "./gearscript-inspect.js";
 import { loadLobbyMission } from "./mission-inspect.js";
-import { missionGit } from "./mission-git.js";
+import { changedWorld, missionGit } from "./mission-git.js";
 
 const ROLES = ["Attacking", "Defending", "NA"] as const;
 export interface PrDraftOptions {
@@ -46,13 +46,14 @@ function factionOf(roots: string[], gearscript: string): string | undefined {
 }
 
 /** Counts from the newest Workbench session log, or why there are none. */
-async function newestScriptErrors(config: Config): Promise<string | null> {
+export async function newestWorkbenchErrors(config: Config): Promise<{ session: string; errors: number; vme: number; groups: number; text: string } | null> {
   const root = join(workbenchProfileDir(config), "logs");
   const session = existsSync(root) ? readdirSync(root).filter((n) => n.startsWith("logs_")).sort().reverse()[0] : undefined;
   const file = session && ["error.log", "console.log"].map((f) => join(root, session, f)).find((f) => existsSync(f));
   if (!file) return null;
   const s = await parseScriptErrors(readFileSync(file, "utf-8").split(/\r?\n/));
-  return `Newest Workbench session ${session}: ${plural(s.errors, "script error")} and ${plural(s.vme, "VM exception")} in ${plural(s.groups.length, "group")} (script_errors has the details).`;
+  const text = `Newest Workbench session ${session}: ${plural(s.errors, "script error")} and ${plural(s.vme, "VM exception")} in ${plural(s.groups.length, "group")} (script_errors has the details).`;
+  return { session: session!, errors: s.errors, vme: s.vme, groups: s.groups.length, text };
 }
 
 /** Text for the hand-filled sections of CRF's mission PR template. Reads files only; never posts. */
@@ -66,12 +67,7 @@ export async function missionPrDraft(config: Config, opts: PrDraftOptions = {}):
     if (!opts.world) throw e;
     unfilled.push(`Links to Added Mods: ${(e as Error).message}`);
   }
-  let world = opts.world;
-  if (!world) {
-    const worlds = branch!.files.filter((f) => f.status !== "D" && /^Worlds\/.+\.ent$/i.test(f.path)).map((f) => f.path);
-    if (worlds.length !== 1) throw new Error(worlds.length ? `Several worlds changed (${worlds.join(", ")}): pass world.` : `No world changed against ${branch!.base}: pass world.`);
-    world = worlds[0];
-  }
+  const world = opts.world ?? changedWorld(branch!);
   const m = loadLobbyMission(config, crf, world);
   const classify = prefabClassifier(config, [lobbyRoot, crf, m.root]);
   const classes = m.entities.map((e) => ({ e, c: classify(e.prefab, e.className) }));
@@ -107,7 +103,7 @@ export async function missionPrDraft(config: Config, opts: PrDraftOptions = {}):
   unfilled.push("Objectives: win conditions in your own words");
 
   // testing and mods
-  const testing = await newestScriptErrors(config);
+  const testing = (await newestWorkbenchErrors(config))?.text;
   if (!testing) unfilled.push("Technical testing: no Workbench session log found");
   const links: string[] = [];
   if (branch) {

@@ -108,6 +108,13 @@ export function missionGit(config: Config, opts: MissionGitOptions = {}): Missio
   return { crf, branch, base, baseCommit, ahead, behind, fetchedAt, fetched: !!opts.fetch, files: changed, warnings };
 }
 
+/** The one mission world (.ent) the branch adds or changes; throws asking for world when there are none or several. */
+export function changedWorld(r: MissionGit): string {
+  const worlds = r.files.filter((f) => f.status !== "D" && /^Worlds\/.+\.ent$/i.test(f.path)).map((f) => f.path);
+  if (worlds.length !== 1) throw new Error(worlds.length ? `Several worlds changed (${worlds.join(", ")}): pass world.` : `No world changed against ${r.base}: pass world.`);
+  return worlds[0];
+}
+
 export function formatMissionGit(r: MissionGit): string {
   const age = r.fetchedAt ? `${((Date.now() - Date.parse(r.fetchedAt)) / 3_600_000).toFixed(1)} h ago (${r.fetchedAt})` : "never";
   const out = [
