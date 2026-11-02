@@ -1,8 +1,10 @@
+import { SED_PROGRAM } from "./ai-attribution.js";
+
 /** Staged paths that must never be committed: the MCP's Workbench handlers, their folder .meta, and the rdb cache. Matched ignoring case: Windows paths do. */
 export const GUARDED_PATH = String.raw`^Scripts/WorkbenchGame/EnfusionMCP(/|\.meta$)|(^|/)resourceDatabase\.rdb$`;
 
-// v3: the hook texts no longer name one person's file prefix or account; install replaces v2 hooks.
-export const HOOK_VERSION = 3;
+// v4: the commit-msg hook carries the shared AI attribution list (ai-attribution.ts); install replaces older hooks.
+export const HOOK_VERSION = 4;
 const MARKER = `# enfusion-mcp-syykont commit guard v${HOOK_VERSION} (local hook, not tracked)`;
 
 // Only sh builtins, grep, head and git: GitHub Desktop's embedded Git has no od or mktemp.
@@ -34,7 +36,12 @@ sed -i -E "/^[Cc]o-[Aa]uthored-[Bb]y:.*([Cc]laude|[Aa]nthropic)/d; /[Gg]enerated
 sed -i -e :a -e "/^\n*\$/{\$d;N;ba" -e "}" "$1"
 `;
 
-export const COMMIT_MSG = STRIPPER_COMMIT_MSG.replace("\n", `\n${MARKER}\n`);
+// The strip rows come from the same list G5 checks; the trailing-blank-line cleanup is the older stripper's, unchanged.
+export const COMMIT_MSG = `#!/bin/sh
+${MARKER}
+# Local hook (not tracked): strip AI tool attribution lines from the commit message (list from enfusion-mcp-syykont).
+sed -i -E ${SED_PROGRAM} "$1"
+${STRIPPER_COMMIT_MSG.slice(STRIPPER_COMMIT_MSG.indexOf("# drop trailing"))}`;
 
 /** Version from our marker line, or null for a hook we did not write. */
 export function ourVersion(text: string): number | null {

@@ -108,10 +108,16 @@ export function guardStatus(config: Config, extra?: string): string[] {
   return dirs.map((d) => {
     const hdir = hooksDir(d);
     const ignored = gitOrNull(d, ["check-ignore", "-q", "Scripts/WorkbenchGame/EnfusionMCP/EMCP_WB_Ping.c"]) !== null;
+    const older = (["pre-commit", "commit-msg"] as const).flatMap((h) => {
+      const f = join(hdir, h);
+      const v = existsSync(f) ? ourVersion(readFileSync(f, "utf-8")) : null;
+      return v !== null && v < HOOK_VERSION ? [`\n${basename(d)}: ${h} v${v} is older than v${HOOK_VERSION}: run install to refresh`] : [];
+    });
     return (
       `${basename(d)}: pre-commit ${hookState(join(hdir, "pre-commit"), "pre-commit")}; ` +
       `commit-msg ${hookState(join(hdir, "commit-msg"), "commit-msg")}; ` +
-      `handlers ignored ${ignored ? "yes" : "no"}; handler files on disk ${handlerFiles(d).length}`
+      `handlers ignored ${ignored ? "yes" : "no"}; handler files on disk ${handlerFiles(d).length}` +
+      older.join("")
     );
   });
 }
@@ -123,7 +129,7 @@ export function registerAddonGitGuard(server: McpServer, config: Config): void {
       description:
         "Git commit guard for addon repos. status: hooks, ignore rule and handler files per repo under the projects folder (read-only). " +
         "check: the guard rules on the staged index now (G2 handler file, folder .meta or resourceDatabase.rdb; T1 .c with a UTF-8 BOM), read-only. " +
-        "install: write a local pre-commit guard and, if absent, the attribution-stripping commit-msg hook into <repo>/.git/hooks. " +
+        "install: write a local pre-commit guard and, if absent, the commit-msg hook that strips AI tool attribution lines into <repo>/.git/hooks. " +
         "Only for one named addon; refuses protected addons, repos outside the projects folder, core.hooksPath, foreign pre-commit hooks, " +
         "and any origin outside ENFUSION_GITHUB_OWNERS unless sharedRepoOk (set it only after the user says yes for that repo).",
       inputSchema: {

@@ -243,8 +243,8 @@ export function checkGit(s: GitState): Finding[] {
   if (untracked.length) out.push({ id: "G1", level: "blocker", check: "git", message: `${untracked.length} untracked resource files: ${list(untracked)}`, fix: "Commit them or ignore them; show the user the list" });
   if (s.trackedForbidden.length) out.push({ id: "G2", level: "blocker", check: "git", message: `Tracked or staged: ${list(s.trackedForbidden)}`, fix: "git rm --cached (ask the user first)" });
   if (!s.ignoresHandlers) out.push({ id: "G3", level: "warning", check: "git", message: `${HANDLER_DIR}/ is not ignored`, fix: "Add it to .git/info/exclude (local) or .gitignore (own repos)" });
-  if (!s.hasCommitMsgHook) out.push({ id: "G4", level: "warning", check: "git", message: "No commit-msg hook (attribution stripper)", fix: "addon_git_guard install" });
-  if (s.aiMessages.length) out.push({ id: "G5", level: "blocker", check: "git", message: `${s.aiMessages.length} unpushed commit messages mention Claude, Anthropic or Co-Authored-By: ${list(s.aiMessages)}`, fix: "Reword them before pushing" });
+  if (!s.hasCommitMsgHook) out.push({ id: "G4", level: "warning", check: "git", message: "No commit-msg hook (strips AI tool attribution)", fix: "addon_git_guard install" });
+  if (s.aiMessages.length) out.push({ id: "G5", level: "blocker", check: "git", message: `${s.aiMessages.length} unpushed commits carry AI tool attribution: ${list(s.aiMessages)}`, fix: "Remove the lines (git commit --amend for the last commit, or an interactive rebase for older ones); for an AI author, recommit under your own name. Human Co-Authored-By lines are fine." });
   if (s.note) out.push({ id: "G6", level: "info", check: "git", message: s.note });
   if (s.unborn) out.push({ id: "G6", level: "info", check: "git", message: "No commit yet" });
   else out.push({ id: "G6", level: "info", check: "git", message: s.note ? `Branch ${s.branch}` : s.upstream ? `Branch ${s.branch}, upstream ${s.upstream}, ${s.ahead} commits not pushed` : `Branch ${s.branch} has no upstream; ${s.ahead} commits on no remote branch` });

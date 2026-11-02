@@ -361,7 +361,7 @@ only read (apart from those git refs), so they are not affected. To write, name 
   `.git/info/exclude`, and refuses if handler files are already committed. `mod pack` and `mod build` refuse
   while they are present (`allowHandlers=true` for a local test pack). Run `wb_cleanup` before you publish, and
   keep that folder out of version control. `addon_git_guard install` adds local pre-commit and commit-msg hooks
-  (`hooks` picks which); the pre-commit hook refuses commits of those files, their folder `.meta`,
+  (`hooks` picks which; the commit-msg hook strips AI tool attribution lines); the pre-commit hook refuses commits of those files, their folder `.meta`,
   `resourceDatabase.rdb`, and `.c` files that start with a UTF-8 BOM.
 - `wb_launch` refuses a `gprojPath` in the game or Tools install, in the game's Workshop cache or in a Workshop
   download (a folder with `ServerData.json`). Without `gprojPath` it falls back to `ENFUSION_DEFAULT_MOD` or the

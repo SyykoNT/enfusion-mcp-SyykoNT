@@ -74,6 +74,40 @@ describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", { timeout: 30_000
     expect(f[6].message).toMatch(/no upstream; 1 commits on no remote branch/);
   });
 
+  it("G5 blocks an AI line, author or committer; a human co-author and the bare word Claude pass", () => {
+    const d = repo();
+    const commit = (msg: string, author?: string, committer?: [string, string]) =>
+      execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-m", msg, ...(author ? ["--author", author] : [])], {
+        stdio: "ignore",
+        env: { ...process.env, ...(committer ? { GIT_COMMITTER_NAME: committer[0], GIT_COMMITTER_EMAIL: committer[1] } : {}) },
+      });
+    commit("human co-author\n\nCo-authored-by: Jane Doe <12345+janedoe@users.noreply.github.com>");
+    commit("Thanks to Claude for the review");
+    commit("codex line\n\nCo-authored-by: Codex <noreply@openai.com>");
+    commit("jules author", "google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>");
+    commit("aider author", "Jane (aider) <jane@example.com>");
+    commit("ai committer", undefined, ["Claude Code", "noreply@anthropic.com"]);
+    const hits = gitState(d).aiMessages;
+    expect(hits).toHaveLength(4);
+    expect(hits[0]).toMatch(/ ai committer: committer noreply@anthropic\.com$/);
+    expect(hits[1]).toMatch(/ aider author: author Jane \(aider\)$/);
+    expect(hits[2]).toMatch(/ jules author: author 161369871\+google-labs-jules\[bot\]@users\.noreply\.github\.com$/);
+    expect(hits[3]).toMatch(/ codex line: matched "Co-authored-by: Codex <noreply@openai\.com>"$/);
+    const g5 = checkGit(gitState(d)).find((x) => x.id === "G5")!;
+    expect(g5).toMatchObject({ level: "blocker" });
+    expect(g5.message).toMatch(/^4 unpushed commits carry AI tool attribution: /);
+    expect(g5.fix).toContain("Human Co-Authored-By lines are fine");
+  });
+
+  it("a 0x1E byte in a message neither throws nor hides an AI trailer after it", () => {
+    const d = repo();
+    execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-m", "odd\x1eby design\n\nCo-authored-by: Codex <noreply@openai.com>"], { stdio: "ignore" });
+    execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--no-verify", "--allow-empty", "-m", "plain"], { stdio: "ignore" });
+    const hits = gitState(d).aiMessages;
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatch(/ odd\x1eby design: matched "Co-authored-by: Codex <noreply@openai\.com>"$/);
+  });
+
   it("a clean repo with ignore rule and hook gives only G6; an unborn repo says no commit yet", () => {
     const d = repo();
     writeFileSync(join(d, ".gitignore"), "Scripts/WorkbenchGame/EnfusionMCP/\n");
