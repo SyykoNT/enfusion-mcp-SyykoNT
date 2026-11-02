@@ -3,18 +3,24 @@ import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
-const MUTATING_LAYER_ACTIONS = new Set(["create", "delete", "rename", "toggleLock"]);
+const MUTATING_LAYER_ACTIONS = new Set(["create", "delete", "rename", "toggleLock", "setActive"]);
+// Handlers older than WE-SAVEAS answer these with "Unknown action"
+const NEW_HANDLER_ACTIONS = new Set(["create", "setActive"]);
 
 export function registerWbLayers(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
     "wb_layers",
     {
       description:
-        "Manage layers in the World Editor. List layers, create/delete layers, rename, set active layer, query visibility, get layer info, or toggle lock. Create/delete/rename/toggleLock only work in edit mode.",
+        "Manage layers in the World Editor. create makes a layer (nested with parentPath) in the sub-scene being edited; " +
+        "it is written to disk on the next wb_save. setActive sets the layer new entities go to and confirms it by reading it back. " +
+        "getActive reports the current sub-scene and its active layer. Also list, isVisible, getInfo and toggleLock (layer IDs). " +
+        "create, setActive and toggleLock only work in edit mode.",
       inputSchema: {
         action: z
           .enum([
             "list",
+            "getActive",
             "create",
             "delete",
             "rename",
@@ -29,20 +35,22 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
           .describe("Layer management action to perform"),
         subScene: z
           .number()
-          .default(0)
-          .describe("SubScene index (default 0, the main scene)"),
+          .int()
+          .min(0)
+          .optional()
+          .describe("Sub-scene index (default: the sub-scene being edited; 0 is the terrain's base world). create works only in the edited one"),
         layerPath: z
           .string()
           .optional()
-          .describe("Layer path (e.g., 'default/MyLayer'). Required for most actions except list and create."),
+          .describe("Layer path as create returns it (e.g. 'MISSION' or 'MISSION/OBJECTIVES'). Required for setActive"),
         name: z
           .string()
           .optional()
-          .describe("Layer name for create or new name for rename"),
+          .describe("Layer name for create (one name, no '/')"),
         parentPath: z
           .string()
           .optional()
-          .describe("Parent layer path for create (e.g., 'default')"),
+          .describe("Existing layer to create the new one under (e.g. 'MISSION'); omit for a top-level layer"),
         visible: z
           .boolean()
           .optional()
@@ -57,7 +65,8 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         }
       }
       try {
-        const params: Record<string, unknown> = { action, subScene };
+        const params: Record<string, unknown> = { action };
+        if (subScene !== undefined) params.subScene = subScene;
         if (layerPath) params.layerPath = layerPath;
         if (name) params.name = name;
         if (parentPath) params.parentPath = parentPath;
@@ -73,7 +82,7 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
             };
           }
 
-          const lines = [`**Layers** (SubScene ${subScene})\n`];
+          const lines = [`**Layers** (SubScene ${result.currentSubScene ?? subScene ?? "current"})\n`];
           for (const layer of layers) {
             const l = layer as Record<string, unknown>;
             const path = l.path || l.name || "(unnamed)";
@@ -103,6 +112,20 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
           return { content: [{ type: "text" as const, text: lines.join("\n") + formatConnectionStatus(client) }] };
         }
 
+        const done = (text: string) => ({ content: [{ type: "text" as const, text: text + formatConnectionStatus(client) }] });
+        // An old handler's getActive reports the sub-scene only
+        const active = typeof result.activeLayer === "string" && result.activeLayer ? result.activeLayer : "(not reported: handler out of date)";
+        if (action === "getActive") {
+          return done(`**Active Layer**\n\n- **Sub-scene:** ${result.currentSubScene}\n- **Active layer:** ${active}`);
+        }
+        if (action === "create") {
+          return done(`**Layer Created**\n\n- **Layer:** ${result.layerPath}\n- **Active layer:** ${active}\n\nWritten to disk on the next wb_save.`);
+        }
+        if (action === "setActive") {
+          // The handler confirms by reading the layer back; ok means it took
+          return done(`**Active Layer Set**\n\n- **Active layer:** ${active}\n\nNew entities go to this layer.`);
+        }
+
         if (action === "toggleLock") {
           const nowLocked = result.layerLocked;
           return {
@@ -114,10 +137,8 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         }
 
         const actionLabels: Record<string, string> = {
-          create: `Created layer "${name || "(unnamed)"}"${parentPath ? ` under ${parentPath}` : ""}`,
           delete: `Deleted layer "${layerPath}"`,
           rename: `Renamed layer "${layerPath}" to "${name}"`,
-          setActive: `Set active layer to "${layerPath}"`,
           setVisibility: `Set "${layerPath}" visibility to ${visible ? "visible" : "hidden"}`,
           lock: `Locked layer "${layerPath}"`,
           unlock: `Unlocked layer "${layerPath}"`,
@@ -135,7 +156,10 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
           ],
         };
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        let msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith("Unknown action") && NEW_HANDLER_ACTIONS.has(action)) {
+          msg = `EMCP_WB_Layers is out of date (it has no ${action}); refresh the handlers (see CHANGELOG). Nothing was changed.`;
+        }
         return {
           content: [
             { type: "text" as const, text: `Error managing layers (${action}): ${msg}${formatConnectionStatus(client)}` },

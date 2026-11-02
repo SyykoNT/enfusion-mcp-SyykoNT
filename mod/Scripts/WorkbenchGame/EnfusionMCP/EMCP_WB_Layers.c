@@ -1,9 +1,10 @@
 /**
  * EMCP_WB_Layers.c - Layer management handler
  *
- * Actions: list, getActive, setVisible, getEntityLayer
- * Layer operations in WorldEditorAPI are limited in the public API.
- * Layers are identified by IDs from IEntitySource.GetLayerID().
+ * Actions: list, getActive, create, setActive, getEntityLayer, isVisible, getInfo, toggleLock
+ * create and setActive use the documented sub-scene layer calls (CreateSubsceneLayer,
+ * SetActiveSubsceneLayer); every response carries the active layer of the sub-scene.
+ * The other actions identify layers by IDs from IEntitySource.GetLayerID().
  *
  * Called via NET API TCP protocol: APIFunc = "EMCP_WB_Layers"
  */
@@ -15,6 +16,8 @@ class EMCP_WB_LayersRequest : JsonApiStruct
 	string entityName;
 	bool visible;
 	string layerPath;
+	string name;
+	string parentPath;
 
 	void EMCP_WB_LayersRequest()
 	{
@@ -23,6 +26,8 @@ class EMCP_WB_LayersRequest : JsonApiStruct
 		RegV("entityName");
 		RegV("visible");
 		RegV("layerPath");
+		RegV("name");
+		RegV("parentPath");
 		subScene = -1;
 	}
 }
@@ -38,6 +43,8 @@ class EMCP_WB_LayersResponse : JsonApiStruct
 	bool layerLocked;
 	bool layerActive;
 	int layerEntityCount;
+	string activeLayer;
+	string layerPath;
 
 	// Layer data collected for list
 	ref array<int> m_aLayerIDs;
@@ -54,6 +61,8 @@ class EMCP_WB_LayersResponse : JsonApiStruct
 		RegV("layerLocked");
 		RegV("layerActive");
 		RegV("layerEntityCount");
+		RegV("activeLayer");
+		RegV("layerPath");
 
 		m_aLayerIDs = {};
 		m_aEntityCounts = {};
@@ -83,6 +92,21 @@ class EMCP_WB_Layers : NetApiHandler
 		return new EMCP_WB_LayersRequest();
 	}
 
+	//! Layer and folder paths of a sub-scene, comma-separated, for "not found" messages.
+	protected string LayerList(WorldEditorAPI api, int sub)
+	{
+		array<string> layers = {};
+		api.GetSubsceneFolders(sub, layers);
+		string list;
+		foreach (string layer : layers)
+		{
+			if (list != "")
+				list += ", ";
+			list += layer;
+		}
+		return list;
+	}
+
 	override JsonApiStruct GetResponse(JsonApiStruct request)
 	{
 		EMCP_WB_LayersRequest req = EMCP_WB_LayersRequest.Cast(request);
@@ -106,6 +130,10 @@ class EMCP_WB_Layers : NetApiHandler
 		}
 
 		resp.currentSubScene = api.GetCurrentSubScene();
+		int sub = req.subScene;
+		if (sub < 0)
+			sub = resp.currentSubScene;
+		resp.activeLayer = api.GetActiveSubsceneLayer(sub);
 
 		if (req.action == "list")
 		{
@@ -145,9 +173,65 @@ class EMCP_WB_Layers : NetApiHandler
 		}
 		else if (req.action == "getActive")
 		{
-			resp.currentSubScene = api.GetCurrentSubScene();
 			resp.status = "ok";
-			resp.message = "Current sub-scene: " + resp.currentSubScene.ToString();
+			resp.message = "Current sub-scene: " + resp.currentSubScene.ToString() + ", active layer: " + resp.activeLayer;
+		}
+		else if (req.action == "create")
+		{
+			string newPath = req.name;
+			if (req.parentPath != "")
+				newPath = req.parentPath + "/" + req.name;
+			resp.status = "error";
+			if (req.name == "" || req.name.Contains("/"))
+				resp.message = "name parameter required for create: one layer name without '/' (use parentPath to nest)";
+			// A layer in a parent world would be saved into that world, which is usually packed or someone else's
+			else if (sub != resp.currentSubScene)
+				resp.message = "create works only in the sub-scene being edited (" + resp.currentSubScene.ToString() + "), not in " + sub.ToString();
+			else if (req.parentPath != "" && api.GetSubsceneLayerId(sub, req.parentPath) < 0)
+				resp.message = "Parent layer not found: " + req.parentPath + ". Layers: " + LayerList(api, sub);
+			else if (api.GetSubsceneLayerId(sub, newPath) >= 0)
+				resp.message = "Layer already exists: " + newPath;
+			else
+			{
+				resp.layerPath = api.CreateSubsceneLayer(sub, req.name, req.parentPath);
+				if (resp.layerPath == "")
+				{
+					resp.message = "CreateSubsceneLayer returned no path for " + newPath;
+				}
+				else
+				{
+					resp.status = "ok";
+					resp.message = "Created layer " + resp.layerPath + " in sub-scene " + sub.ToString() + " (written on the next save)";
+				}
+			}
+		}
+		else if (req.action == "setActive")
+		{
+			resp.status = "error";
+			if (req.layerPath == "")
+			{
+				resp.message = "layerPath parameter required for setActive";
+			}
+			else if (api.GetSubsceneLayerId(sub, req.layerPath) < 0)
+			{
+				resp.message = "Layer not found: " + req.layerPath + ". Layers: " + LayerList(api, sub);
+			}
+			else
+			{
+				api.SetActiveSubsceneLayer(sub, req.layerPath);
+				// SetActiveSubsceneLayer ignores a path it cannot use without an error: trust only the read-back
+				resp.activeLayer = api.GetActiveSubsceneLayer(sub);
+				resp.layerPath = req.layerPath;
+				if (resp.activeLayer == req.layerPath)
+				{
+					resp.status = "ok";
+					resp.message = "Active layer in sub-scene " + sub.ToString() + ": " + resp.activeLayer;
+				}
+				else
+				{
+					resp.message = "Active layer did not change to " + req.layerPath + ": it is " + resp.activeLayer;
+				}
+			}
 		}
 		else if (req.action == "getEntityLayer")
 		{
@@ -257,7 +341,7 @@ class EMCP_WB_Layers : NetApiHandler
 		else
 		{
 			resp.status = "error";
-			resp.message = "Unknown action: " + req.action + ". Valid: list, getActive, getEntityLayer, isVisible, getInfo, toggleLock";
+			resp.message = "Unknown action: " + req.action + ". Valid: list, getActive, create, setActive, getEntityLayer, isVisible, getInfo, toggleLock";
 		}
 
 		return resp;
