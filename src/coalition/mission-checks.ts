@@ -293,14 +293,14 @@ export function zoneChecks(m: Mission, classes: Map<MissionEntity, Classified | 
   const name = (e: MissionEntity) => e.name ?? `${e.className} in ${e.layer}`;
   // Child entities' coords are relative to their parent, so only top-level entities are checked
   const top = [...classes].filter(([e]) => !e.parent);
+  const rotated = (e: MissionEntity) => ["angleX", "angleY", "angleZ", "angles"].some((k) => prop(e.node, k) !== undefined);
   // Every zone of one kind (and side), or none when one of them cannot be read: a point outside the others may sit in it
   const zones = (kind: string, side?: string): Pt[][] => {
     const polys: Pt[][] = [];
     for (const [e] of top.filter(([, c]) => c?.kind === kind && (!side || c.side === side))) {
-      const rotated = ["angleX", "angleY", "angleZ", "angles"].some((k) => prop(e.node, k) !== undefined);
-      const o = rotated ? undefined : outline(e);
+      const o = rotated(e) ? undefined : outline(e);
       if (!o) {
-        notes.push({ level: "info", text: `${name(e)} ${rotated ? "is rotated" : "has no readable outline"}; zone checks against it were skipped` });
+        notes.push({ level: "info", text: `${name(e)} ${rotated(e) ? "is rotated" : "has no readable outline"}; zone checks against it were skipped` });
         return [];
       }
       polys.push(o);
@@ -331,6 +331,10 @@ export function zoneChecks(m: Mission, classes: Map<MissionEntity, Classified | 
       if (d !== undefined) notes.push({ level: "warning", text: `${name(e)} is ${d} m outside the game border` });
     }
     for (const [e] of top.filter(([, c]) => c?.kind === "forwardDeploy")) {
+      if (rotated(e)) {
+        notes.push({ level: "info", text: `${name(e)} is rotated; zone checks against it were skipped` });
+        continue;
+      }
       const o = outline(e);
       const worst = o && Math.max(...o.map((p) => miss(p, border) ?? 0));
       if (worst) notes.push({ level: "warning", text: `Forward deploy zone ${name(e)} reaches ${worst} m outside the game border` });

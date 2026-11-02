@@ -205,4 +205,11 @@ describe("zone geometry (GI-08)", () => {
       "info: COA_SafestartBorder in ZONES is rotated; zone checks against it were skipped",
     ]);
   });
+
+  it("skips a rotated forward deploy zone too, even when it reaches outside the border", () => {
+    const layer = square("COA_GameBorder", 0, 0, 1000) + square("COA_ForwardDeployBorder", 980, 0, 50, " angleY 30\n");
+    expect(check(layer, { COA_GameBorder: border, COA_ForwardDeployBorder: fd })).toEqual([
+      "info: COA_ForwardDeployBorder in ZONES is rotated; zone checks against it were skipped",
+    ]);
+  });
 });
