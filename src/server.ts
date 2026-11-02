@@ -54,6 +54,7 @@ import { registerWbEntityDuplicate } from "./tools/wb-entity-duplicate.js";
 import { registerWorkshopInfo } from "./tools/workshop-info.js";
 import { registerAddonDeps } from "./tools/addon-deps.js";
 import { registerAddonGitGuard } from "./tools/addon-git-guard.js";
+import { registerReleaseAudit } from "./tools/release-audit.js";
 import { registerScenarioTools } from "./tools/wb-scenario.js";
 import { registerScenarioCreate } from "./tools/scenario-create.js";
 import { registerAnimationGraph } from "./tools/animation-graph.js";
@@ -134,6 +135,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerWorkshopInfo(server, config);
   registerAddonDeps(server, config);
   registerAddonGitGuard(server, config);
+  registerReleaseAudit(server, config);
   registerAnimationGraph(server, config);
   registerWbKnowledge(server);
   registerBuildingSetup(server, config);
