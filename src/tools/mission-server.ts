@@ -201,9 +201,11 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const rows = ports.map((port) => {
             const log = resolveLogFile({ dir: join(MISSION_ROOT, port, "server"), file: "console" });
             const t = log ? readFileSync(log, "utf-8") : "";
-            const game = GAME_STATE.test(t) ? "online, GAME reached" : ONLINE.test(t) ? "online (no GAME state yet: a lobby game mode waits for players)" : "not online";
+            const game = GAME_STATE.test(t) ? "online, GAME reached" : ONLINE.test(t) ? "online (no GAME state: a lobby game mode waits for players)" : "not online";
             const live = entries.filter((e) => e.file && isUnder(e.file, join(MISSION_ROOT, port)));
-            return `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`;
+            return live.length
+              ? `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`
+              : `- port ${port}: nothing running; last run was ${game}${log ? `, log ${log}` : ""}`;
           });
           return text(`**mission_server**\n${rows.length ? rows.join("\n") : "No runs yet."}${entries.length ? `\n\n${instanceTable(entries)}` : ""}`);
         }

@@ -111,6 +111,14 @@ describe("mission_server start and stop", () => {
     expect(sys.spawned).toEqual([]);
   });
 
+  it("status reads online from the log and says when nothing of a run is still running", async () => {
+    const log = join(MISSION_ROOT, "2523", "server", "logs", "logs_2026-11-02_00-19-27");
+    mkdirSync(log, { recursive: true });
+    writeFileSync(join(log, "console.log"), "00:19:53.459 DEFAULT      : Entered online game state.\r\n");
+    const r = await tool(config(home))({ action: "status" });
+    expect(r.content[0].text).toContain("- port 2523: nothing running; last run was online (no GAME state: a lobby game mode waits for players)");
+  });
+
   it("stops only its own processes, clients before the server", async () => {
     const own = (pid: number, kind: "server" | "client", dir: string) => {
       mkdirSync(dir, { recursive: true });
