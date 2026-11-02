@@ -292,7 +292,15 @@ export function registerWbLaunch(
           isError: true,
         };
       }
-      const removed = client.cleanupHandlerScripts(resolvedModDir);
+      let removed: boolean;
+      try {
+        removed = client.cleanupHandlerScripts(resolvedModDir);
+      } catch (e) {
+        return {
+          content: [{ type: "text" as const, text: `**${e instanceof Error ? e.message : String(e)}**${formatConnectionStatus(client)}` }],
+          isError: true,
+        };
+      }
       if (removed) {
         return {
           content: [
