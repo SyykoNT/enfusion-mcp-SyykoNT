@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerTools } from "./server.js";
-import { serverVersion } from "./tools/env-check.js";
+import { buildInfo, serverVersion } from "./tools/env-check.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { SERVER_INSTRUCTIONS } from "./server-instructions.js";
@@ -12,7 +12,7 @@ const config = loadConfig();
 
 const server = new McpServer({
   name: "enfusion-mcp",
-  version: serverVersion(),
+  version: serverVersion(buildInfo),
 }, { instructions: SERVER_INSTRUCTIONS });
 
 registerTools(server, config);

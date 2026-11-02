@@ -12,8 +12,10 @@ import type { WorkbenchClient } from "../workbench/client.js";
 
 export interface BuildInfo { version: string; commit: string; builtAt: string }
 
+const BUILD_INFO_FILE = fileURLToPath(new URL("../build-info.json", import.meta.url));
+
 // dist/build-info.json is written by scripts/build-info.mjs; missing or broken means an unstamped build.
-export function readBuildInfo(file = fileURLToPath(new URL("../build-info.json", import.meta.url))): BuildInfo | undefined {
+export function readBuildInfo(file = BUILD_INFO_FILE): BuildInfo | undefined {
   try {
     const j = JSON.parse(readFileSync(file, "utf-8"));
     if (typeof j.version === "string" && typeof j.commit === "string" && typeof j.builtAt === "string") return j;
@@ -23,10 +25,10 @@ export function readBuildInfo(file = fileURLToPath(new URL("../build-info.json",
 
 const packageVersion = (): string => createRequire(import.meta.url)("../../package.json").version;
 
-export function serverVersion(file?: string): string {
-  const info = readBuildInfo(file);
-  return info ? `${info.version}+${info.commit}` : packageVersion();
-}
+// Read once at load: a rebuild over a live dist must not change what this process reports.
+export const buildInfo = readBuildInfo();
+
+export const serverVersion = (info: BuildInfo | undefined): string => (info ? `${info.version}+${info.commit}` : packageVersion());
 
 export function registerEnvCheck(server: McpServer, config: Config, client: WorkbenchClient): void {
   server.registerTool(
@@ -40,8 +42,8 @@ export function registerEnvCheck(server: McpServer, config: Config, client: Work
     },
     async () => {
       const ok = (b: boolean) => (b ? "✅" : "❌");
-      const info = readBuildInfo();
-      const lines: string[] = ["## Environment", "", info ? `- MCP build: ${info.version}+${info.commit}, built ${info.builtAt}` : `- MCP build: ${packageVersion()} (no build-info.json: built without scripts/build-info.mjs)`];
+      const unstamped = existsSync(BUILD_INFO_FILE) ? "build-info.json unreadable" : "no build-info.json: built without scripts/build-info.mjs";
+      const lines: string[] = ["## Environment", "", buildInfo ? `- MCP build: ${serverVersion(buildInfo)}, built ${buildInfo.builtAt}` : `- MCP build: ${packageVersion()} (${unstamped})`];
       const gameExe = join(config.gamePath, "ArmaReforgerSteam.exe");
       const gameDiag = join(config.gamePath, "ArmaReforgerSteamDiag.exe");
       const wbExe = findWorkbenchExe(config.workbenchPath);
