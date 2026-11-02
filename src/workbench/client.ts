@@ -20,6 +20,8 @@ import { findPids, isAlive } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher } from "../watchdog/wb-watch.js";
+import { probeDialogs } from "../watchdog/probe.js";
+import { dialogKind, formatDialogs, type DialogProbe } from "../watchdog/signals.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 import { git, gitOrNull } from "../release/git.js";
@@ -35,6 +37,9 @@ const HANDLER_PATH = `Scripts/WorkbenchGame/${HANDLER_FOLDER}/`;
 const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
 const WORLD_LAUNCH_TIMEOUT_MS = 300_000;
+/** wb_launch looks for a blocking dialog from this long after launch, then at most this often. */
+const DIALOG_CHECK_AFTER_MS = 30_000;
+const DIALOG_CHECK_EVERY_MS = 15_000;
 
 /**
  * Workbench command line. worldPath (a .ent of the opened project) adds the World Editor flags
@@ -141,6 +146,8 @@ export interface DiagnosticReport {
   /** Result of the NET API probe. */
   netApi: "up_with_handlers" | "up_no_handlers" | "refused" | "timeout" | "error";
   netApiError?: string;
+  /** Dialogs found in each Workbench process when the NET API timed out. */
+  dialogs?: DialogProbe[];
 }
 
 export interface WorkbenchState {
@@ -171,7 +178,9 @@ export class WorkbenchError extends Error {
       | "TIMEOUT"
       | "PROTOCOL_ERROR"
       | "API_ERROR"
-      | "LAUNCH_FAILED" = "API_ERROR"
+      | "LAUNCH_FAILED" = "API_ERROR",
+    /** Set when a dialog check ran for this failure. */
+    public readonly dialogs?: DialogProbe[]
   ) {
     super(message);
     this.name = "WorkbenchError";
@@ -190,6 +199,8 @@ function isUndefinedHandler(err: unknown): boolean {
 export class WorkbenchClient {
   private launchPromise: Promise<string | undefined> | null = null;
   private _state: WorkbenchState = { connected: false, mode: "unknown", lastUpdated: 0 };
+  /** Public so tests can stub it: the real one starts PowerShell. */
+  dialogProbe: (pids: number[]) => Promise<DialogProbe[]> = (pids) => probeDialogs(pids);
 
   /** Current cached connection state. Updated after every successful call. */
   get state(): Readonly<WorkbenchState> {
@@ -229,6 +240,11 @@ export class WorkbenchClient {
             "API_ERROR"
           );
         }
+        // A modal in any Workbench copy makes every call time out; name it so the caller does not blame the network.
+        if (err.code === "TIMEOUT") {
+          const r = await this.dialogReport(findPids(WORKBENCH_EXE));
+          throw new WorkbenchError(r.text ? `${err.message}\n${r.text}` : err.message, "TIMEOUT", r.dialogs);
+        }
         // Only wb_launch starts Workbench (D-025): a shared PC may have someone else's session waiting on it.
         if (err.code === "CONNECTION_REFUSED") {
           throw new WorkbenchError(
@@ -239,6 +255,16 @@ export class WorkbenchClient {
         }
       }
       throw err;
+    }
+  }
+
+  /** Dialog text for these Workbench PIDs, or the reason the check could not run. Never throws. */
+  private async dialogReport(pids: number[]): Promise<{ text: string; dialogs?: DialogProbe[] }> {
+    try {
+      const dialogs = await this.dialogProbe(pids);
+      return { text: formatDialogs(dialogs), dialogs };
+    } catch (e) {
+      return { text: `(dialog check unavailable: ${e instanceof Error ? e.message : e})` };
     }
   }
 
@@ -575,6 +601,8 @@ export class WorkbenchClient {
       }
     }
 
+    const dialogs = netApi === "timeout" ? (await this.dialogReport(findPids(WORKBENCH_EXE))).dialogs : undefined;
+
     return {
       host,
       port,
@@ -586,6 +614,7 @@ export class WorkbenchClient {
       installedMods,
       netApi,
       netApiError,
+      dialogs,
     };
   }
 
@@ -645,11 +674,14 @@ export class WorkbenchClient {
     // Starting another copy would not help and piles up instances.
     const running = findPids(WORKBENCH_EXE);
     if (running.length) {
+      const r = await this.dialogReport(running);
       throw new WorkbenchError(
         `Workbench is already running (PID ${running.join(", ")}) but its NET API does not answer. ` +
           `It may still be loading, showing a dialog, or hung. Not starting another copy; ` +
-          `check the Workbench window (wb_close closes it only if this MCP session started it).`,
-        "LAUNCH_FAILED"
+          `check the Workbench window (wb_close closes it only if this MCP session started it).` +
+          (r.text ? `\n${r.text}` : ""),
+        "LAUNCH_FAILED",
+        r.dialogs
       );
     }
 
@@ -747,6 +779,8 @@ export class WorkbenchClient {
     const timeoutMs = worldPath ? WORLD_LAUNCH_TIMEOUT_MS : LAUNCH_TIMEOUT_MS;
     const deadline = Date.now() + timeoutMs;
     let lastErrorCode: WorkbenchError["code"] | undefined;
+    let lastDialogCheck = 0;
+    let lastDialogs = new Set<number>();
     while (Date.now() < deadline) {
       try {
         await this.rawCall("EMCP_WB_Ping", {}, { timeout: 3000 });
@@ -767,6 +801,23 @@ export class WorkbenchClient {
           `Check its log folder (${join(workbenchProfileDir(this.config!), "logs")}) and, if it crashed, CrashReporter.`,
           "LAUNCH_FAILED"
         );
+      }
+      // A modal while the world loads never closes by itself; stop waiting out the full timeout once one is open.
+      // It must stay open across two checks, and a leak assert never counts: the watchdog clicks Ignore on that one.
+      if (proc.pid && Date.now() - launchedAt >= DIALOG_CHECK_AFTER_MS && Date.now() - lastDialogCheck >= DIALOG_CHECK_EVERY_MS) {
+        lastDialogCheck = Date.now();
+        const r = await this.dialogReport([proc.pid]);
+        const open = (r.dialogs ?? []).flatMap((p) => ("dialogs" in p ? p.dialogs : [])).filter((w) => dialogKind(w) !== "leak_assert");
+        const persisted = open.some((w) => lastDialogs.has(w.hwnd));
+        lastDialogs = new Set(open.map((w) => w.hwnd));
+        if (persisted) {
+          throw new WorkbenchError(
+            `Workbench (PID ${proc.pid}) has not connected ${Math.round((Date.now() - launchedAt) / 1000)}s after launch and is showing a dialog. ` +
+              `It is still running; nothing was answered.\n${r.text}`,
+            "LAUNCH_FAILED",
+            r.dialogs
+          );
+        }
       }
       await new Promise((r) => setTimeout(r, LAUNCH_POLL_INTERVAL_MS));
     }

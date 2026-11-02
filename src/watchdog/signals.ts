@@ -101,6 +101,58 @@ export interface WinInfo {
   visible?: boolean;
   hung?: boolean;
   children?: WinInfo[];
+  /** Owner window (0 or absent: none) and whether it is enabled; null when the owner belongs to another process. */
+  owner?: number;
+  ownerEnabled?: boolean | null;
+  /** The window itself; a modal blocks its whole app, so tool windows under it are disabled too. */
+  enabled?: boolean;
+  buttons?: string[];
+}
+
+const DIALOG_TITLES = ["Opening world", "Script Authorization Required"];
+const VALIDATING = "Validating ";
+
+/** A blocking dialog (D3): it is enabled and its same-PID owner is disabled; fallback for owners we could not read: box class or known title. */
+export function isDialog(w: WinInfo): boolean {
+  return !!w.visible && ((!!w.owner && w.ownerEnabled === false && w.enabled !== false) || w.cls === "#32770" || DIALOG_TITLES.includes(w.text) || w.text.startsWith(VALIDATING));
+}
+
+export type DialogKind = "leak_assert" | "script_authorization" | "open_world_prompt" | "obsolete_world" | "save_as" | "other";
+
+/** Title and body text are data from the window, only compared here, never used to build a command. */
+export function dialogKind(w: WinInfo): DialogKind {
+  if (leakAssertButton(w)) return "leak_assert";
+  if (w.text === "Script Authorization Required") return "script_authorization";
+  if (w.text === "Opening world") return "open_world_prompt";
+  if (/obsolete/i.test(dialogText(w))) return "obsolete_world";
+  if (w.text.startsWith("Save world as")) return "save_as";
+  return "other";
+}
+
+/** Body text of a dialog: its child texts, capped at 300 characters. */
+export const dialogText = (w: WinInfo) => (w.children ?? []).map((c) => c.text).filter(Boolean).join(" | ").slice(0, 300);
+
+/** Windows that blocked one Workbench PID, or why they could not be read. */
+export type DialogProbe = { pid: number; dialogs: WinInfo[] } | { pid: number; unavailable: string };
+
+/** The text appended to a timeout or launch failure. Empty when there is no Workbench PID to report on. */
+export function formatDialogs(list: DialogProbe[]): string {
+  const lines: string[] = [];
+  let open = false;
+  for (const p of list) {
+    if ("unavailable" in p) lines.push(`Workbench PID ${p.pid} (dialog check unavailable: ${p.unavailable})`);
+    else if (!p.dialogs.length) lines.push(`No dialog was found in Workbench PID ${p.pid}; it may be loading, compiling, hung, or showing a dialog this check cannot see.`);
+    else {
+      open = true;
+      lines.push(`Workbench PID ${p.pid} has a dialog open, which blocks every NET API call:`);
+      for (const w of p.dialogs) {
+        const text = dialogText(w);
+        lines.push(`- "${w.text}" (${w.cls})${text ? `: "${text}"` : ""}${w.buttons?.some(Boolean) ? ` buttons: ${w.buttons.filter(Boolean).join(", ")}` : ""} [${dialogKind(w)}]`);
+      }
+    }
+  }
+  if (open) lines.push("The call may still run once the dialog is closed. Check the state before repeating it.");
+  return lines.join("\n");
 }
 
 /** Handle of the "&Ignore" button when `win` is the leak assert box, else undefined. Exact matches only. */

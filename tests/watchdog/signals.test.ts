@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { join, resolve } from "node:path";
 import {
   parseLogChunk, parseCrashLog, loadedProjects, likelyTrigger, leakAssertButton, lockHeldBy, portOwner, decide, newCarry,
-  type Signals, type Ctx, type LogCarry,
+  isDialog, dialogKind, formatDialogs,
+  type Signals, type Ctx, type LogCarry, type WinInfo,
 } from "../../src/watchdog/signals.js";
 
 // Lines copied from logs_2026-10-31_06-12-43 (Workbench PID 19524, started 06:12:43), unless noted.
@@ -201,6 +202,71 @@ describe("decide: who may be clicked or killed", () => {
     expect(lockHeldBy("owner: overnight-boats\nsession: s1\n", { session: "s1" })).toBe(true);
     expect(lockHeldBy("owner: overnight-boats\nsession: s2\n", { session: "s1" })).toBe(false);
     expect(lockHeldBy(undefined, { session: "s1" })).toBe(false);
+  });
+});
+
+// Title and text as SCN-STUB / P-SUB-1 read them from the live modal; hwnds and owner are made up.
+const OBSOLETE = "File data structure of the world is obsolete and needs to be changed. Do you want to change it now?";
+const validating = (over: Partial<WinInfo> = {}): WinInfo => ({
+  hwnd: 5, cls: "Qt683QWindowIcon", text: "Validating $MCPParity:Worlds/ScnStub_V1.ent", visible: true,
+  children: [{ hwnd: 0, cls: "Text", text: OBSOLETE }], buttons: ["Yes", "No"], ...over,
+});
+
+describe("isDialog", () => {
+  it("is true for a window whose same-PID owner is disabled, even with an unknown title", () => {
+    expect(isDialog(validating({ text: "Some new Qt dialog", owner: 4, ownerEnabled: false }))).toBe(true);
+  });
+  it("is false for a tool window that a modal disabled too (live PR-1: the Resource Browser under the Validating box)", () => {
+    expect(isDialog({ hwnd: 9, cls: "Qt683QWindowToolSaveBits", text: "Resource Browser", visible: true, owner: 4, ownerEnabled: false, enabled: false })).toBe(false);
+    expect(isDialog(validating({ owner: 4, ownerEnabled: false, enabled: true }))).toBe(true);
+  });
+  it("is false for an owned tool window whose owner is enabled, or whose owner is another process's", () => {
+    expect(isDialog({ hwnd: 6, cls: "Qt683QWindowIcon", text: "Resource Browser", visible: true, owner: 4, ownerEnabled: true })).toBe(false);
+    expect(isDialog({ hwnd: 6, cls: "Qt683QWindowIcon", text: "Tool", visible: true, owner: 4, ownerEnabled: null })).toBe(false);
+  });
+  it("falls back to the box class and the known titles when no owner was read", () => {
+    expect(isDialog({ hwnd: 7, cls: "#32770", text: "Assertion", visible: true })).toBe(true);
+    expect(isDialog(validating())).toBe(true);
+    expect(isDialog({ hwnd: 8, cls: "Qt683QWindowIcon", text: "Opening world", visible: true })).toBe(true);
+  });
+  it("is false for the World Editor window and for a hidden window", () => {
+    expect(isDialog({ hwnd: 4, cls: "Qt683QWindowIcon", text: "World Editor - MCPParity", visible: true, owner: 0, ownerEnabled: null })).toBe(false);
+    expect(isDialog(validating({ visible: false, owner: 4, ownerEnabled: false }))).toBe(false);
+  });
+});
+
+describe("dialogKind", () => {
+  it.each<[string, WinInfo, string]>([
+    ["leak assert", { hwnd: 1, cls: "#32770", text: "Assertion", visible: true, children: [{ hwnd: 2, cls: "Static", text: "Reason: Resources are leaking! Check log!" }, { hwnd: 3, cls: "Button", text: "&Ignore" }] }, "leak_assert"],
+    ["script authorization", { hwnd: 1, cls: "Qt683QWindowIcon", text: "Script Authorization Required", visible: true }, "script_authorization"],
+    ["open world prompt", { hwnd: 1, cls: "Qt683QWindowIcon", text: "Opening world", visible: true }, "open_world_prompt"],
+    ["obsolete world", validating(), "obsolete_world"],
+    ["save as", { hwnd: 1, cls: "Qt683QWindowIcon", text: "Save world as", visible: true }, "save_as"],
+    ["anything else", validating({ text: "Validating x", children: [{ hwnd: 0, cls: "Text", text: "Please wait" }] }), "other"],
+  ])("%s", (_n, win, kind) => {
+    expect(dialogKind(win)).toBe(kind);
+  });
+});
+
+describe("formatDialogs", () => {
+  it("names one dialog with its class, text, buttons and kind", () => {
+    expect(formatDialogs([{ pid: 89992, dialogs: [validating()] }])).toBe(
+      "Workbench PID 89992 has a dialog open, which blocks every NET API call:\n" +
+      `- "Validating $MCPParity:Worlds/ScnStub_V1.ent" (Qt683QWindowIcon): "${OBSOLETE}" buttons: Yes, No [obsolete_world]\n` +
+      "The call may still run once the dialog is closed. Check the state before repeating it."
+    );
+  });
+  it("says so when there is none, and when the check could not run", () => {
+    expect(formatDialogs([{ pid: 7, dialogs: [] }])).toBe("No dialog was found in Workbench PID 7; it may be loading, compiling, hung, or showing a dialog this check cannot see.");
+    expect(formatDialogs([{ pid: 7, unavailable: "boom" }])).toBe("Workbench PID 7 (dialog check unavailable: boom)");
+    expect(formatDialogs([])).toBe("");
+  });
+  it("leaves out buttons with no name", () => {
+    expect(formatDialogs([{ pid: 1, dialogs: [validating({ buttons: ["", "Yes", "", "No"] })] }])).toContain("buttons: Yes, No [");
+  });
+  it("caps the text of a dialog at 300 characters", () => {
+    const long = validating({ children: [{ hwnd: 0, cls: "Text", text: "x".repeat(500) }] });
+    expect(formatDialogs([{ pid: 1, dialogs: [long] }])).toContain(`"${"x".repeat(300)}" buttons`);
   });
 });
 
