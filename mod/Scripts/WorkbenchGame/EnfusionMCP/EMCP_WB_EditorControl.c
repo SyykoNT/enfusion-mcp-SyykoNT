@@ -134,7 +134,7 @@ class EMCP_WB_EditorControl : NetApiHandler
 		else if (req.action == "saveAs")
 		{
 			resp.status = "error";
-			resp.message = "Save As is not available in the 1.8 script API (WBModuleDef has only Save()). Nothing was saved.";
+			resp.message = "Save As is not reachable from the 1.8 script API: GameWorldEditor (which has SaveWorldAs) is not a Workbench module, GetGame().GetWorldEditor() returns null in Workbench, and the World Editor module has only Save(). Save under a new name by hand (File > Save World As). Nothing was saved.";
 		}
 		else if (req.action == "undo")
 		{
