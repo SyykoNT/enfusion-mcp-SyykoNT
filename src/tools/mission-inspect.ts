@@ -1,12 +1,15 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "node:fs";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import { components, loadMission, slotRoles, SIDES, type Mission, type MissionEntity, type Side } from "../coalition/mission-model.js";
 import { prefabClassifier, type Classified, type PrefabKind } from "../coalition/mission-prefabs.js";
 import { collectNameRefs, gamemodeNames, nameDefaults, resolveNames, taskEntries, type NameRef } from "../coalition/name-refs.js";
-import { gitRevision, resolveCoalitionRoots } from "../utils/coalition-paths.js";
+import type { Layer } from "../pak/stack.js";
+import {
+  cloneCopy, CRF_PATH_HELP, guideProjectsDir, LOBBY_PATH_HELP, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
+} from "../utils/coalition-paths.js";
 import { enumDefault, loadLobbyEnums } from "../utils/lobby-enums.js";
 import { stripGuid } from "../utils/prefab-ancestry.js";
 import { validateProjectPath } from "../utils/safe-path.js";
@@ -37,23 +40,43 @@ const LAYER: Partial<Record<PrefabKind, string>> = {
 const AVOID = /\/Compositions\/Slotted\/(?:\w+\/)?(?:E_)?(Barricade|Checkpoint|LivingArea|Helipad|FieldHospital|VehicleMaintenance|FiringRange|AmmoStorage)_[^/]*\.et$/;
 
 interface Rule { level: "error" | "warning" | "info"; text: string }
-interface Params { world: string; sections?: Section[]; crfPath?: string; lobbyPath?: string; format: "markdown" | "json" }
+interface Params { world: string; sections?: Section[]; crfPath?: string; lobbyPath?: string; source?: "clone" | "workshop"; format: "markdown" | "json" }
 
 const label = (e: MissionEntity) => e.name ?? `${e.className} in ${e.layer}`;
 
-function resolveWorld(config: Config, crf: string, world: string): string {
-  const candidates = isAbsolute(world) ? [world] : [join(crf, world), join(config.projectPath, world)];
-  const found = candidates.find((c) => existsSync(c)) ?? candidates[0];
-  try {
-    return validateProjectPath(config.projectPath, found);
-  } catch {
-    throw new Error(`World must be inside the project path ${config.projectPath}.`);
+/** The copy holding a world and its path in it: CRF (clone or Workshop) first, else a folder under the project path or the guide's Projects folder. */
+function locateWorld(config: Config, crf: CoalitionCopy, world: string): { copy: Layer; rel: string } {
+  const slashed = world.replace(/\\/g, "/");
+  if (!isAbsolute(world) && crf.exists(slashed)) return { copy: crf, rel: slashed };
+  const abs = isAbsolute(world) ? world : join(config.projectPath, world);
+  let file: string | undefined;
+  for (const base of [config.projectPath, guideProjectsDir()]) {
+    try {
+      file = validateProjectPath(base, abs);
+      break;
+    } catch {
+      // try the next allowed folder
+    }
   }
+  if (!file) throw new Error(`World must be inside the project path ${config.projectPath}.`);
+  // A relative world was looked for in CRF first, so name both places
+  if (!isAbsolute(world) && !existsSync(file)) throw new Error(`World not found: ${slashed} is not in CRF ${crf.label} nor under ${config.projectPath}.`);
+  // The addon is the folder holding the nearest Worlds folder
+  let root = dirname(file);
+  for (let d = dirname(file); dirname(d) !== d; d = dirname(d)) {
+    if (basename(d) === "Worlds") {
+      root = dirname(d);
+      break;
+    }
+  }
+  const copy = crf.kind === "loose" && relative(crf.root, root) === "" ? crf : cloneCopy(root);
+  return { copy, rel: relative(root, file).replace(/\\/g, "/") };
 }
 
-/** A mission world (CRF-relative, project-relative or absolute, inside the project path) that has a COA_Lobby entity. */
-export function loadLobbyMission(config: Config, crf: string, world: string): Mission & { lobby: MissionEntity } {
-  const m = loadMission(config, resolveWorld(config, crf, world));
+/** A mission world (CRF-relative, project-relative or absolute) that has a COA_Lobby entity, with its prefabs read from the CRF and Lobby copies. */
+export function loadLobbyMission(config: Config, roots: CoalitionRoots, world: string): Mission & { lobby: MissionEntity } {
+  const { copy, rel } = locateWorld(config, roots.crf, world);
+  const m = loadMission(config, copy, rel, [...new Set([copy, roots.crf, roots.lobby])]);
   if (!m.lobby) {
     throw new Error(`${m.worldRel} has no COA_Lobby entity: not a Lobby mission, or plugin 1 (Automatically Create Initial Layers/Objects) was not run.`);
   }
@@ -61,11 +84,12 @@ export function loadLobbyMission(config: Config, crf: string, world: string): Mi
 }
 
 function missionInspect(config: Config, p: Params): string {
-  const { crf, lobby: lobbyRoot } = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath);
-  const m = loadLobbyMission(config, crf, p.world);
+  const roots = resolveCoalitionRoots(config, p.crfPath, p.lobbyPath, p.source);
+  const { crf, lobby: lobbyCopy } = roots;
+  const m = loadLobbyMission(config, roots, p.world);
   const want = new Set<Section>(p.sections?.length ? p.sections : SECTIONS);
   const lobby = m.lobby;
-  const classify = prefabClassifier(config, [lobbyRoot, crf, m.root]);
+  const classify = prefabClassifier(config, [...new Set([lobbyCopy, crf, m.copy])]);
   const classes = new Map<MissionEntity, Classified | undefined>(m.entities.map((e) => [e, classify(e.prefab, e.className)]));
   const names = new Set(m.entities.flatMap((e) => (e.name ? [e.name] : [])));
 
@@ -97,11 +121,11 @@ function missionInspect(config: Config, p: Params): string {
 
   // ── names and tasks ──
   const gm = gamemodeNames(m.entities, names);
-  const refs = resolveNames([...collectNameRefs(m.entities, nameDefaults([lobbyRoot, crf])), ...gm.refs], names);
+  const refs = resolveNames([...collectNameRefs(m.entities, nameDefaults([lobbyCopy, crf])), ...gm.refs], names);
   const byName = new Map(m.entities.filter((e) => e.name).map((e) => [e.name!, e]));
   const entries = taskEntries(m.entities);
   // Unset enum fields read as the member with value 0 (CRF_TaskCreatorComponent.c:83-87, Attribute "0")
-  const enums = entries.length ? loadLobbyEnums([lobbyRoot, crf]) : new Map();
+  const enums = entries.length ? loadLobbyEnums([lobbyCopy, crf]) : new Map();
   const unset = (name: string) => `${enumDefault(enums, name) ?? "?"} (default)`;
   const tasks = entries.map((t) => {
     const anchor = byName.get(t.anchor);
@@ -125,7 +149,7 @@ function missionInspect(config: Config, p: Params): string {
   for (const e of m.entities) {
     const path = e.prefab ? stripGuid(e.prefab) : "";
     // CRF's and the Lobby's own compositions are never flagged (D-035)
-    if (AVOID.test(path) && ![crf, lobbyRoot].some((r) => existsSync(join(r, path)))) {
+    if (AVOID.test(path) && ![crf, lobbyCopy].some((c) => c.exists(path))) {
       comps.set(path, (comps.get(path) ?? 0) + 1);
     }
   }
@@ -148,7 +172,8 @@ function missionInspect(config: Config, p: Params): string {
     return JSON.stringify({
       world: m.worldRel,
       root: m.root,
-      note: "From saved files; unsaved World Editor changes are not included.",
+      copies: { crf: crf.label, lobby: lobbyCopy.label },
+      note:"From saved files; unsaved World Editor changes are not included.",
       ...pick("summary", { layers: m.layers, lobby: lobbyInfo, confs: m.confs, aiWorld }),
       ...pick("sides", { sides, global, unclassified, sideWarnings }),
       ...pick("names", { names: refs, nameNotes: gm.notes }),
@@ -157,7 +182,13 @@ function missionInspect(config: Config, p: Params): string {
     }, null, 2);
   }
 
-  const out = [`# Mission ${basename(m.worldRel, ".ent")}`, `${m.worldRel} in ${m.root}`, "From saved files; unsaved World Editor changes are not included."];
+  const out = [
+    `# Mission ${basename(m.worldRel, ".ent")}`,
+    `CRF: ${crf.label}`,
+    `Lobby: ${lobbyCopy.label}`,
+    `${m.worldRel} in ${m.root}`,
+    "From saved files; unsaved World Editor changes are not included.",
+  ];
   if (want.has("summary")) {
     out.push("", "## Summary");
     for (const l of m.layers) out.push(`- ${l.name}: ${l.error ? `**parse error**: ${l.error}` : `${l.entities} entities`}`);
@@ -204,7 +235,7 @@ function missionInspect(config: Config, p: Params): string {
     out.push("", "## Rules", ...rules.map((r) => `- ${r.level}: ${r.text}`));
   }
   const issues = (want.has("names") ? refs.filter((r) => !r.found && !r.fromDefault).length : 0) + (want.has("rules") ? rules.filter((r) => r.level !== "info").length : 0) + (want.has("sides") ? sideWarnings.length : 0);
-  out.push("", `${issues} issue(s). Read-only. CRF @ ${gitRevision(crf)}, Lobby @ ${gitRevision(lobbyRoot)}`);
+  out.push("", `${issues} issue(s). Read-only.`);
   return out.join("\n");
 }
 
@@ -221,11 +252,12 @@ export function registerMissionInspect(server: McpServer, config: Config): void 
         "against the world's entity names with near-miss suggestions; Task Creator entries; and rule checks (COA_Lobby " +
         "name, AI World, mission .conf count, vanilla compositions the guide says to avoid). Read-only and offline, no Workbench.",
       inputSchema: {
-        world: z.string().min(1).describe("Mission world .ent, CRF-relative (e.g. 'Worlds/Arland/MyMission.ent'), project-path-relative or absolute. Must be inside the project path."),
+        world: z.string().min(1).describe("Mission world .ent, CRF-relative (e.g. 'Worlds/Arland/MyMission.ent'; also a published mission in the Workshop CRF), project-path-relative or absolute. Must be inside the project path or the guide's Projects folder."),
         sections: z.array(z.enum(SECTIONS)).optional().describe("Limit the report. Default: all of summary, sides, names, tasks, rules."),
         format: z.enum(["markdown", "json"]).default("markdown").describe("json returns the same data with entity names per row."),
-        crfPath: z.string().optional().describe("CRF clone. Default: as mission_validate. Must be inside the project path."),
-        lobbyPath: z.string().optional().describe("COALITION-Lobby clone. Default: next to CRF. Must be inside the project path."),
+        crfPath: z.string().optional().describe(CRF_PATH_HELP),
+        lobbyPath: z.string().optional().describe(LOBBY_PATH_HELP),
+        source: z.enum(["clone", "workshop"]).optional().describe(SOURCE_HELP),
       },
     },
     async (params) => {

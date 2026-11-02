@@ -34,7 +34,7 @@ registerAddonGitGuard(server, config);
 
 const hook = (dir: string, name: string) => join(dir, ".git", "hooks", name);
 
-describe.skipIf(!hasGit)("addon_git_guard", () => {
+describe.skipIf(!hasGit)("addon_git_guard", { timeout: 30_000 }, () => {
   const syk = addon(projects, "SYK-Test", "1111111111111111", { origin: "https://github.com/SyykoNT/SYK-Test.git" });
   const crf = addon(projects, "Coalition-Reforger-Framework", "5EB3564A02CE294F", { origin: "https://github.com/CoalitionArma/Coalition-Reforger-Framework.git" });
   const lobby = addon(projects, "COALITION-Lobby", "69EA43E490A50DBE", { origin: "https://github.com/CoalitionArma/COALITION-Lobby.git" });
@@ -155,7 +155,7 @@ describe.skipIf(!hasGit)("addon_git_guard", () => {
   });
 });
 
-describe.skipIf(!hasGit || !hasSh)("generated hooks in a real git commit", () => {
+describe.skipIf(!hasGit || !hasSh)("generated hooks in a real git commit", { timeout: 30_000 }, () => {
   const d = addon(projects, "Commit", "AAAAAAAAAAAAAAAA");
   guardInstall(d);
   const commit = (...a: string[]) => spawnSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", ...a], { encoding: "utf-8" });

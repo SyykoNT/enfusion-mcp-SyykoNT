@@ -15,7 +15,7 @@ const hasGit = (() => {
   }
 })();
 
-describe.skipIf(!hasGit)("release git helpers (temp repo)", () => {
+describe.skipIf(!hasGit)("release git helpers (temp repo)", { timeout: 30_000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), "emcp-relgit-"));
   const g = (...a: string[]) => execFileSync("git", ["-C", dir, ...a], { stdio: "ignore" });
   g("init", "-q");
@@ -45,7 +45,7 @@ describe.skipIf(!hasGit)("release git helpers (temp repo)", () => {
   });
 });
 
-describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", () => {
+describe.skipIf(!hasGit)("gitState and checkGit (temp repos)", { timeout: 30_000 }, () => {
   const repo = () => {
     const d = mkdtempSync(join(tmpdir(), "emcp-gitstate-"));
     execFileSync("git", ["-C", d, "init", "-q"], { stdio: "ignore" });

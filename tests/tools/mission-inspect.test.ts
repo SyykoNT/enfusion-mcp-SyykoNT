@@ -22,6 +22,7 @@ describe("mission_inspect", () => {
   it("renders the side table with a safestart warning", async () => {
     const { text, isError } = await call({ sections: ["sides"] });
     expect(isError).toBe(false);
+    expect(text.split("\n").slice(1, 3)).toEqual([`CRF: clone unknown (${fx.crf})`, `Lobby: clone unknown (${fx.lobby})`]);
     expect(text).toContain("| Item | BLUFOR | OPFOR | INDFOR |");
     expect(text).toContain("| Slots (groups) | 3 (1) | 1 (1) | 2 (1) |");
     expect(text).toContain("| Spawn points | 1 | 2 | 0 |");
@@ -88,5 +89,12 @@ describe("mission_inspect", () => {
     write(fx.crf, "Worlds/Test/Plain_Layers/default.layer", "GenericEntity Thing {\n}\n");
     expect(await call({ world: "Worlds/Test/Plain.ent" })).toMatchObject({ isError: true, text: expect.stringContaining("has no COA_Lobby entity") });
     expect(await call({ world: "C:/Windows/x.ent" })).toMatchObject({ isError: true, text: expect.stringContaining("inside the project path") });
+  });
+
+  it("names the CRF copy searched when a relative world is missing", async () => {
+    expect(await call({ world: "Worlds/Test/Nope.ent" })).toMatchObject({
+      isError: true,
+      text: `World not found: Worlds/Test/Nope.ent is not in CRF clone unknown (${fx.crf}) nor under ${fx.root}.`,
+    });
   });
 });

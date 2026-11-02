@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Config } from "../../src/config.js";
+import { cloneCopy, type CoalitionCopy } from "../../src/utils/coalition-paths.js";
 
 // Hand-written fixtures only: CRF and the Lobby are under the Arma Public License, so nothing is copied from them.
 
@@ -155,7 +156,9 @@ class CRF_CacheHuntGamemodeManager : SCR_BaseGameModeComponent
 const WORLD = "Worlds/Test/Author_TVT_Fixture.ent";
 
 /** A project path with CRF, COALITION-Lobby and one mission world. Returns the project path and a Config for it. */
-export function makeProjects(): { root: string; crf: string; lobby: string; world: string; config: Config } {
+export function makeProjects(): {
+  root: string; crf: string; lobby: string; world: string; worldRel: string; crfCopy: CoalitionCopy; lobbyCopy: CoalitionCopy; config: Config;
+} {
   const root = mkdtempSync(join(tmpdir(), "mission-inspect-"));
   const crf = join(root, "CRF");
   const lobby = join(root, "COALITION-Lobby");
@@ -186,7 +189,10 @@ export function makeProjects(): { root: string; crf: string; lobby: string; worl
   };
   for (const [rel, text] of Object.entries(files)) write(root, rel, text);
   // gamePath only has to exist as a string: ancestry reads fall back to it and find nothing
-  return { root, crf, lobby, world: join(crf, WORLD), config: { projectPath: root, gamePath: join(root, "no-game") } as Config };
+  return {
+    root, crf, lobby, world: join(crf, WORLD), worldRel: WORLD, crfCopy: cloneCopy(crf), lobbyCopy: cloneCopy(lobby),
+    config: { projectPath: root, gamePath: join(root, "no-game") } as Config,
+  };
 }
 
 export function write(root: string, rel: string, text: string): void {

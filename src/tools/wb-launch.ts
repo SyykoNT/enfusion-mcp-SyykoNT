@@ -3,7 +3,7 @@ import { z } from "zod";
 import { basename, dirname, join, resolve } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import type { Config } from "../config.js";
-import type { WorkbenchClient } from "../workbench/client.js";
+import { handlerGitState, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 import { findPids, killPids, sleep } from "../utils/process.js";
 import { isOwned } from "../utils/instances.js";
@@ -311,6 +311,81 @@ export function registerWbLaunch(
           },
         ],
       };
+    }
+  );
+
+  server.registerTool(
+    "wb_handlers",
+    {
+      description:
+        "Install, remove or check the MCP handler scripts (EMCP_*.c in Scripts/WorkbenchGame/EnfusionMCP/) in one addon. " +
+        "The only tool that may write them into a protected addon (ENFUSION_PROTECTED_ADDONS, e.g. a CRF clone); wb_launch " +
+        "and wb_cleanup never do. Ask the user before install or remove. install: refuses game/Tools installs and Workshop " +
+        "caches, and git repos where handler files are committed; adds the folder to the repo's local .git/info/exclude; " +
+        "copies missing and stale handlers. remove: deletes only EMCP_* files. Other files in that folder are never touched. " +
+        "status (read only): missing, stale and current handlers, exclude and tracked state. Workbench registers handlers only " +
+        "at start: restart it after install.",
+      inputSchema: {
+        action: z.enum(["install", "remove", "status"]),
+        gprojPath: z.string().describe("Path to the addon's .gproj file"),
+      },
+    },
+    async ({ action, gprojPath }) => {
+      const reply = (text: string, isError = false) => ({
+        content: [{ type: "text" as const, text: text + formatConnectionStatus(client) }],
+        ...(isError ? { isError: true as const } : {}),
+      });
+      const gproj = resolve(gprojPath);
+      if (!gproj.toLowerCase().endsWith(".gproj") || !existsSync(gproj)) {
+        return reply(`**Error:** Not found or not a .gproj file: ${gprojPath}`, true);
+      }
+      const modDir = dirname(gproj);
+      const prot = client.isProtectedMod(modDir) ? " (protected)" : "";
+      const gitLine = () => {
+        try {
+          const g = handlerGitState(modDir);
+          return !g ? "not a git repo" : `ignored by git: ${g.ignored ? "yes" : "no"}; tracked handler files: ${g.tracked.length ? g.tracked.join(", ") : "none"}`;
+        } catch {
+          return "git not found on PATH";
+        }
+      };
+      try {
+        if (action === "install") {
+          const r = client.writeHandlers(modDir);
+          const lines = [
+            `**Handlers installed** in ${modDir}${prot}: ${r.written.length} file(s) written` +
+              (r.replaced.length ? `, ${r.replaced.length} stale replaced (${r.replaced.join(", ")})` : "") +
+              `, ${r.current.length} already current.`,
+            r.gitNote ?? `Git: ${gitLine()}.`,
+            r.extra.length ? `Not touched: EMCP_* files not in this MCP version: ${r.extra.join(", ")}.` : "",
+            r.written.length ? "Restart Workbench for new handlers to register." : "",
+          ];
+          return reply(lines.filter(Boolean).join("\n\n"));
+        }
+        if (action === "remove") {
+          const before = client.handlerFiles(modDir);
+          client.cleanupHandlerScripts(modDir, true);
+          const after = client.handlerFiles(modDir);
+          const left = [...after.current, ...after.stale, ...after.extra];
+          const removed = before.current.length + before.stale.length + before.extra.length - left.length;
+          return reply(
+            `**Handlers removed** from ${modDir}${prot}: ${removed} EMCP_* file(s) deleted; other files and the exclude line are kept.` +
+              (left.length ? `\n\nStill present (could not delete): ${left.join(", ")}` : ""),
+            left.length > 0
+          );
+        }
+        const f = client.handlerFiles(modDir);
+        return reply([
+          `**Handler status** for ${modDir}${prot}`,
+          `- current: ${f.current.length}`,
+          `- stale (differs from this MCP version): ${f.stale.length ? f.stale.join(", ") : "none"}`,
+          `- missing: ${f.missing.length ? f.missing.join(", ") : "none"}`,
+          `- other EMCP_* files: ${f.extra.length ? f.extra.join(", ") : "none"}`,
+          `- git: ${gitLine()}`,
+        ].join("\n"));
+      } catch (e) {
+        return reply(`**${action} refused or failed**\n\n${e instanceof Error ? e.message : String(e)}`, true);
+      }
     }
   );
 }

@@ -1,8 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Config } from "../config.js";
-import { stripGuid, walkChain } from "../utils/prefab-ancestry.js";
-import type { Side } from "./mission-model.js";
+import type { Layer } from "../pak/stack.js";
+import { stripGuid } from "../utils/prefab-ancestry.js";
+import { chainOf, type Side } from "./mission-model.js";
 
 export type PrefabKind =
   | "spawn" | "groupSpawn" | "msp" | "vehicleSpawner" | "gameBorder" | "safestart" | "forwardDeploy"
@@ -49,20 +48,17 @@ export function classifyPath(path: string): Omit<Classified, "via"> | undefined 
 const guidOf = (res: string) => /^\{([0-9A-Fa-f]{16})\}/.exec(res)?.[1]?.toUpperCase();
 
 /**
- * Mission-maker prefabs by GUID, read from the `.meta` files under each root's PrefabsMissionMaking,
- * so a mission that still points at an old path of the same prefab is classified too.
+ * Mission-maker prefabs by GUID (from the `.meta` of a clone, the rdb of a Workshop copy) under each
+ * copy's PrefabsMissionMaking, so a mission that still points at an old path of the same prefab is classified too.
  */
-export function loadMissionPrefabs(roots: string[]): Map<string, { resource: string; kind: PrefabKind; side?: Side | "GLOBAL" }> {
+export function loadMissionPrefabs(copies: Layer[]): Map<string, { resource: string; kind: PrefabKind; side?: Side | "GLOBAL" }> {
   const table = new Map<string, { resource: string; kind: PrefabKind; side?: Side | "GLOBAL" }>();
-  for (const root of roots) {
-    const dir = join(root, "PrefabsMissionMaking");
-    if (!existsSync(dir)) continue;
-    for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
-      if (!rel.endsWith(".et.meta")) continue;
-      const resource = /^\s*Name\s+"([^"]+)"/m.exec(readFileSync(join(dir, rel), "utf-8"))?.[1];
-      const hit = resource && classifyPath(stripGuid(resource));
-      const guid = resource && guidOf(resource);
-      if (hit && guid) table.set(guid, { resource, ...hit });
+  for (const copy of copies) {
+    for (const path of copy.list("PrefabsMissionMaking")) {
+      if (!path.endsWith(".et")) continue;
+      const hit = classifyPath(path);
+      const guid = hit && copy.guidOf(path);
+      if (hit && guid) table.set(guid, { resource: `{${guid}}${path}`, ...hit });
     }
   }
   return table;
@@ -70,10 +66,10 @@ export function loadMissionPrefabs(roots: string[]): Map<string, { resource: str
 
 /**
  * Classify mission entities by prefab GUID, then prefab path, then the prefab's nearest five
- * ancestors (only for prefabs inside the given roots), then entity class. Ancestry is cached per classifier.
+ * ancestors (only for prefabs inside the given copies), then entity class. Ancestry is cached per classifier.
  */
-export function prefabClassifier(config: Config, roots: string[]) {
-  const table = loadMissionPrefabs(roots);
+export function prefabClassifier(config: Config, copies: Layer[]) {
+  const table = loadMissionPrefabs(copies);
   const cache = new Map<string, Classified | undefined>();
   const direct = (res: string) => {
     const g = guidOf(res);
@@ -85,9 +81,9 @@ export function prefabClassifier(config: Config, roots: string[]) {
     let hit: Classified | undefined;
     const d = direct(prefab);
     if (d) hit = { ...d, via: "prefab" };
-    else if (roots.some((r) => existsSync(join(r, stripGuid(prefab))))) {
-      // walkChain lists oldest first and ends with the prefab itself
-      const ancestors = walkChain(prefab, config).levels.slice(0, -1).reverse().slice(0, 5);
+    else if (copies.some((c) => c.exists(stripGuid(prefab)))) {
+      // chainOf lists newest first, starting with the prefab itself
+      const ancestors = chainOf(prefab, copies, config).slice(1, 6);
       const a = ancestors.map((l) => classifyPath(l.path)).find(Boolean);
       if (a) hit = { ...a, via: "ancestor" };
     }

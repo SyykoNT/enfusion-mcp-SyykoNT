@@ -31,6 +31,7 @@ const MAX_RESPONSE_SIZE = 10 * 1024 * 1024;
 const WORKBENCH_EXE = "ArmaReforgerWorkbenchSteamDiag.exe";
 const WORKBENCH_SUBDIR = "Workbench";
 const HANDLER_FOLDER = "EnfusionMCP";
+const HANDLER_PATH = `Scripts/WorkbenchGame/${HANDLER_FOLDER}/`;
 const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
 const WORLD_LAUNCH_TIMEOUT_MS = 300_000;
@@ -65,46 +66,65 @@ export function buildLaunchArgs(opts: { gproj?: string | null; addonsDir?: strin
  * git gets addonDir only as the -C value.
  */
 export function excludeHandlersFromGit(addonDir: string): string | undefined {
-  let inside: string | null;
+  let state: ReturnType<typeof handlerGitState>;
   try {
-    inside = gitOrNull(addonDir, ["rev-parse", "--is-inside-work-tree"]);
+    state = handlerGitState(addonDir);
   } catch {
-    return `git was not found on PATH, so the MCP could not check whether ${addonDir} is a git repo; if it is, keep Scripts/WorkbenchGame/${HANDLER_FOLDER}/ out of your commits.`;
+    return `git was not found on PATH, so the MCP could not check whether ${addonDir} is a git repo; if it is, keep ${HANDLER_PATH} out of your commits.`;
   }
-  if (inside !== "true") return undefined;
-  const handlerPath = `Scripts/WorkbenchGame/${HANDLER_FOLDER}/`;
-  const tracked = (gitOrNull(addonDir, ["ls-files", "-z", "--", handlerPath]) ?? "").split("\0").filter((f) => /(^|\/)EMCP_[^/]*$/.test(f));
-  if (tracked.length) {
+  if (!state) return undefined;
+  const handlerPath = HANDLER_PATH;
+  if (state.tracked.length) {
     throw new WorkbenchError(
-      `Refused: handler files are committed in this repo (${tracked.length}, e.g. ${tracked[0]}); an exclude cannot hide tracked files. ` +
-        `Remove them from git first (git rm -r --cached ${handlerPath}, then commit), then launch again. Nothing was copied.`,
+      `Refused: handler files are committed in this repo (${state.tracked.length}, e.g. ${state.tracked[0]}); an exclude cannot hide tracked files. ` +
+        `Remove them from git first (git rm -r --cached ${handlerPath}, then commit), then try again. Nothing was copied.`,
       "LAUNCH_FAILED"
     );
   }
+  if (state.ignored) return undefined;
   const probe = `${handlerPath}EMCP_WB_Ping.c`;
-  if (gitOrNull(addonDir, ["check-ignore", "-q", probe]) !== null) return undefined;
   // Relative to the repo root, so an addon in a subfolder of the repo is covered too.
   const line = `${gitOrNull(addonDir, ["rev-parse", "--show-prefix"]) ?? ""}${handlerPath}`;
   const exclude = resolve(addonDir, git(addonDir, ["rev-parse", "--git-path", "info/exclude"]).trim());
   try {
     mkdirSync(dirname(exclude), { recursive: true });
     const old = existsSync(exclude) ? readFileSync(exclude, "utf-8") : "";
-    appendFileSync(exclude, `${old && !old.endsWith("\n") ? "\n" : ""}# enfusion-mcp: keep the MCP Workbench handler scripts out of commits\n${line}\n`);
+    // Already there from a refused earlier try: append once only.
+    if (!old.split(/\r?\n/).includes(line)) {
+      appendFileSync(exclude, `${old && !old.endsWith("\n") ? "\n" : ""}# enfusion-mcp: keep the MCP Workbench handler scripts out of commits\n${line}\n`);
+    }
   } catch (e) {
     throw new WorkbenchError(
       `Refused: could not write ${exclude} (${e instanceof Error ? e.message : e}), so the MCP handlers would show up in your commits. ` +
-        `Add the line ${line} to that file (or to the repo's .gitignore) by hand, then launch again. Nothing was copied.`,
+        `Add the line ${line} to that file (or to the repo's .gitignore) by hand, then try again. Nothing was copied.`,
       "LAUNCH_FAILED"
     );
   }
   if (gitOrNull(addonDir, ["check-ignore", "-q", probe]) === null) {
     throw new WorkbenchError(
       `Refused: added ${line} to ${exclude}, but git still does not ignore ${probe} (a .gitignore rule may re-include it). ` +
-        `Fix the ignore rules so that folder is ignored, then launch again. Nothing was copied.`,
+        `Fix the ignore rules so that folder is ignored, then try again. Nothing was copied.`,
       "LAUNCH_FAILED"
     );
   }
   return `Added ${line} to ${exclude} (local, not committed) so the MCP handlers stay out of your commits.`;
+}
+
+/** True when dir or a parent holds .git (a folder, or a file in a worktree); needs no git binary. */
+function inGitRepo(dir: string): boolean {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    if (existsSync(join(d, ".git"))) return true;
+    if (dirname(d) === d) return false;
+  }
+}
+
+/** Read-only git view of the handler folder; null when addonDir is not in a git work tree. Throws when git is not on PATH. */
+export function handlerGitState(addonDir: string): { ignored: boolean; tracked: string[] } | null {
+  if (gitOrNull(addonDir, ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
+  return {
+    ignored: gitOrNull(addonDir, ["check-ignore", "-q", `${HANDLER_PATH}EMCP_WB_Ping.c`]) !== null,
+    tracked: (gitOrNull(addonDir, ["ls-files", "-z", "--", HANDLER_PATH]) ?? "").split("\0").filter((f) => /(^|\/)EMCP_[^/]*$/.test(f)),
+  };
 }
 
 export type WorkbenchMode = "edit" | "play" | "no_world" | "unknown";
@@ -385,19 +405,74 @@ export class WorkbenchClient {
 
   /** Bundled handler files that are missing or differ (bytes) in modDir. Reads only. */
   staleHandlers(modDir: string): string[] {
+    const { missing, stale } = this.handlerFiles(modDir);
+    return [...missing, ...stale];
+  }
+
+  /** Installed handlers against the bundled ones: missing, stale (bytes differ), current, and extra EMCP_* files not in the bundle. Reads only. */
+  handlerFiles(modDir: string): { bundledDir: string; handlerDir: string; missing: string[]; stale: string[]; current: string[]; extra: string[] } {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const bundledDir = join(packageRoot, "mod", "Scripts", "WorkbenchGame", HANDLER_FOLDER);
     const handlerDir = join(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
-    if (!existsSync(bundledDir)) return [];
-    return readdirSync(bundledDir).filter((f) => f.endsWith(".c")).filter((f) => {
-      const installed = join(handlerDir, f);
-      return !existsSync(installed) || !readFileSync(installed).equals(readFileSync(join(bundledDir, f)));
-    });
+    const bundled = existsSync(bundledDir) ? readdirSync(bundledDir).filter((f) => f.endsWith(".c")) : [];
+    const installed = existsSync(handlerDir) ? readdirSync(handlerDir).filter((f) => f.startsWith("EMCP_")) : [];
+    const r = { bundledDir, handlerDir, missing: [] as string[], stale: [] as string[], current: [] as string[], extra: installed.filter((f) => !bundled.includes(f)) };
+    for (const f of bundled) {
+      if (!installed.includes(f)) r.missing.push(f);
+      else (readFileSync(join(handlerDir, f)).equals(readFileSync(join(bundledDir, f))) ? r.current : r.stale).push(f);
+    }
+    return r;
   }
 
-  cleanupHandlerScripts(modDir: string): boolean {
+  /**
+   * wb_handlers install (D-040): the one path that may write handlers into a protected addon. Refuses a forbidden
+   * root, then runs the git exclude step (refuses tracked handlers), then copies missing and stale bundled files.
+   * Only EMCP_* files are written; other files in the folder are left alone.
+   */
+  writeHandlers(modDir: string): { written: string[]; replaced: string[]; current: string[]; extra: string[]; gitNote?: string } {
+    this.refuseForbidden(modDir);
+    const files = this.handlerFiles(modDir);
+    if (!existsSync(files.bundledDir)) throw new WorkbenchError("Bundled handler scripts not found in the MCP package.", "LAUNCH_FAILED");
+    // D-040 allows writing into a protected repo only with the exclude line and the tracked-file check, which need git.
+    if (this.isProtectedMod(modDir) && inGitRepo(modDir)) {
+      try {
+        handlerGitState(modDir);
+      } catch {
+        throw new WorkbenchError(
+          `Refused: ${modDir} is a protected git repo, but git was not found on PATH, so the MCP cannot keep the handlers out of its commits. ` +
+            `Install git or put it on PATH, then try again; or add ${HANDLER_PATH} to the repo's .git/info/exclude by hand first. Nothing was copied.`,
+          "LAUNCH_FAILED"
+        );
+      }
+    }
+    const gitNote = excludeHandlersFromGit(modDir);
+    mkdirSync(files.handlerDir, { recursive: true });
+    const written: string[] = [];
+    try {
+      for (const f of [...files.missing, ...files.stale]) {
+        copyFileSync(join(files.bundledDir, f), join(files.handlerDir, f));
+        written.push(f);
+      }
+    } catch (e) {
+      throw new WorkbenchError(`Handler install stopped after ${written.length} file(s) (${written.join(", ") || "none"}): ${e instanceof Error ? e.message : e}`, "LAUNCH_FAILED");
+    }
+    return { written, replaced: files.stale, current: files.current, extra: files.extra, gitNote };
+  }
+
+  /** wb_handlers never writes or deletes in a forbidden root, checked for the addon and, by real path, its handler folder (a junction). */
+  private refuseForbidden(modDir: string): void {
+    const handlerDir = join(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);
+    for (const p of existsSync(handlerDir) ? [modDir, handlerDir] : [modDir]) {
+      const root = this.config && forbiddenRoot(this.config, p);
+      if (root) throw new WorkbenchError(`Refused: ${p} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS).`, "LAUNCH_FAILED");
+    }
+  }
+
+  /** allowProtected: only wb_handlers remove (D-040); wb_cleanup keeps protected handlers (D-036). */
+  cleanupHandlerScripts(modDir: string, allowProtected = false): boolean {
+    if (allowProtected) this.refuseForbidden(modDir);
     // A protected addon (CRF) keeps its handlers: putting them back needs the owner's OK (D-024, D-036).
-    if (this.isProtectedMod(modDir)) {
+    if (!allowProtected && this.isProtectedMod(modDir)) {
       throw new WorkbenchError(`Refused: ${modDir} is a protected addon (ENFUSION_PROTECTED_ADDONS); its handler scripts are kept.`);
     }
     const handlerDir = resolve(modDir, "Scripts", "WorkbenchGame", HANDLER_FOLDER);

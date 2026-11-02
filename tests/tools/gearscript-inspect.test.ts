@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -326,6 +327,7 @@ describe("gearscript_inspect lookup and output", () => {
   it("picks the roles config named in the gear manager; the global one gets CRF's override merged", async () => {
     const cvon = await call({ cvon: true });
     expect(cvon.content[0].text).toContain("Roles config: CVON, {5555666677778888}Configs/Gearscripts/Extra/CVON_Roles.conf (from COALITION-Lobby)");
+    expect(cvon.content[0].text).toContain(`\nCRF: clone unknown (${join(root, "CRF")})\nLobby: clone unknown (${join(root, "COALITION-Lobby")})\n`);
     expect(Object.keys(await loadouts({ cvon: true }))).toEqual(["RIFLEMAN", "SQUAD_LEAD"]);
     expect((await call({})).content[0].text).toContain("(from COALITION-Lobby + override in CRF; cvon: false)");
     expect(Object.keys(await loadouts())).toContain("ZOMBIE");
@@ -348,6 +350,27 @@ describe("gearscript_inspect lookup and output", () => {
     expect(text).toContain("  - CRF/Worlds/Testland/Mission_Layers/_INIT.layer: m_CIVILIANGearScriptSettings");
     expect(text).toContain("  - Other/Worlds/Stray.ent: (GUID found outside a gearscript settings field)");
     expect(text).toContain("- Lobby default (COA_Lobby.et): m_OPFORGearScriptSettings");
+  });
+
+  it.skipIf(process.platform !== "win32")("usedBy finds CRF's missions when the project path holds CRF as a junction", async () => {
+    const linked = join(root, "linked");
+    mkdirSync(linked);
+    const junction = (name: string) => execFileSync("cmd", ["/d", "/c", "mklink", "/J", join(linked, name), join(root, name)], { stdio: "ignore", windowsHide: true });
+    junction("CRF");
+    junction("COALITION-Lobby");
+    try {
+      let h!: Handler;
+      registerGearscriptInspect(
+        { registerTool: (_n: string, _d: unknown, x: Handler) => void (h = x) } as unknown as McpServer,
+        { projectPath: linked, gamePath: join(root, "no-game") } as Config
+      );
+      const text = (await h({ gearscript: "GS_Alpha.conf", cvon: false, usedBy: true, roles: ["MEDIC"], format: "markdown" })).content[0].text;
+      expect(text).toContain(`CRF: clone unknown (${join(linked, "CRF")})`);
+      expect(text).toContain("- Used by: 2 mission file(s)");
+      expect(text).toContain("  - CRF/Worlds/Testland/Mission_Layers/_INIT.layer: m_CIVILIANGearScriptSettings");
+    } finally {
+      for (const name of ["CRF", "COALITION-Lobby"]) execFileSync("cmd", ["/d", "/c", "rmdir", join(linked, name)], { stdio: "ignore", windowsHide: true }); // the junctions only
+    }
   });
 
   it("markdown shows random options, counts of 0 and skipped items", async () => {
