@@ -51,7 +51,21 @@ export interface Config {
   logRoots?: string[];
   /** Register the nine COALITION mission-making tools. Off unless ENFUSION_COALITION_TOOLS is on, 1 or true. */
   coalitionTools?: boolean;
+  /** How the watchdog answers "Script Authorization Required": rules (default), all (Yes to All) or off. Set via ENFUSION_SCRIPT_AUTH. */
+  scriptAuth?: AuthMode;
+  /** Where the log files of a crashed Workbench are copied. Set via ENFUSION_CRASH_LOGS_DIR; default: "Workbench Crash Logs" beside the Workbench profile folder. */
+  crashLogsDir?: string;
 }
+
+export type AuthMode = "rules" | "all" | "off";
+
+/** A setting value as a mode: rules, all or off in any case; anything else gives rules, with the value in `invalid`. */
+export function parseAuthMode(value: unknown): { mode: AuthMode; invalid?: string } {
+  if (value === undefined || value === null || value === "") return { mode: "rules" };
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return v === "rules" || v === "all" || v === "off" ? { mode: v } : { mode: "rules", invalid: String(value) };
+}
+let authWarned = false;
 
 const DEFAULT_WORKBENCH_PATH =
   "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools";
@@ -165,6 +179,15 @@ export function loadConfig(): Config {
   // The config file can hold any JSON value, so the file and the environment variable are read by one rule.
   const coalition: unknown = process.env.ENFUSION_COALITION_TOOLS || config.coalitionTools;
   if (coalition !== undefined) config.coalitionTools = coalition === true || (typeof coalition === "string" && /^(on|1|true)$/i.test(coalition.trim()));
+
+  // The file and the environment variable are read by one rule; an unknown value is rules, with one warning per process.
+  const auth = parseAuthMode(process.env.ENFUSION_SCRIPT_AUTH || config.scriptAuth);
+  config.scriptAuth = auth.mode;
+  if (auth.invalid !== undefined && !authWarned) {
+    authWarned = true;
+    logger.warn(`ENFUSION_SCRIPT_AUTH "${auth.invalid}" is not rules, all or off; using rules.`);
+  }
+  if (process.env.ENFUSION_CRASH_LOGS_DIR) config.crashLogsDir = process.env.ENFUSION_CRASH_LOGS_DIR;
 
   // Auto-derive gamePath from workbenchPath if not explicitly set.
   //

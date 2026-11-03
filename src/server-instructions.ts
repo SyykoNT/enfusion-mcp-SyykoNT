@@ -6,6 +6,7 @@ export const SERVER_INSTRUCTIONS = [
   "Before live or process tools: Workbench may be shared with other users or agents. Check with the user (or a lock file the user names) before you launch, close, or edit in Workbench.",
   "wb_close and wb_launch act on the Workbench process, not on one project; never close a Workbench you did not start.",
   "A modal dialog in Workbench makes every live call time out; on a timeout ask the user to check Workbench for an open dialog and answer it.",
+  "A \"Script Authorization Required\" dialog that asks to run a program is left open in the default mode; answer it with wb_watch answer, following the rules in that tool's description.",
   "A timed-out mutation may still run later: check the state before repeating it.",
   "Never type {GUID}paths from memory; get them from asset_search, game_read or the project files.",
   "The wiki is an offline snapshot; for API facts prefer api_search and the local Workbench API docs.",

@@ -13,13 +13,18 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { MCP_HOME } from "../config.js";
-import { crashReporters, isAlive, killPids, processInfo, sleep, spawnDetached } from "../utils/process.js";
+import { MCP_HOME, loadConfig, parseAuthMode, type AuthMode } from "../config.js";
+import { crashReporters, isAlive, killPids, processInfo, sleep, spawnDetached, type ProcInfo } from "../utils/process.js";
 import {
   decide, dialogText, isDialog, likelyTrigger, leakAssertButton, loadedProjects, lockHeldBy, newCarry, parseCrashLog, parseLogChunk, portOwner,
   type Dismiss, type LogCarry, type Signals, type WatchStateName,
 } from "./signals.js";
-import { dismissLeakAssert, startProbe, type ProbeSample } from "./probe.js";
+import { answerDialog, dismissLeakAssert, probeDialogs, startProbe, type ProbeSample } from "./probe.js";
+import {
+  authLine, authText, crashLine, decideAuth, dialogKind, parseAuthWindow, recentPresses, textHash,
+  type AuthLog, type CrashLog, type WinInfo,
+} from "./signals.js";
+import { appendLockLine, authDetails, copyCrashFiles, endCrashReporters, loadSetOf, type LoadSet } from "./auth.js";
 
 export const WATCH_DIR = join(MCP_HOME, "watch");
 const SELF = fileURLToPath(import.meta.url);
@@ -36,6 +41,12 @@ export interface WatchOpts {
   dismiss: Dismiss;
   autoRecover: boolean;
   recoverAfterMin: number;
+  /** How "Script Authorization Required" is answered (ENFUSION_SCRIPT_AUTH); default rules. */
+  scriptAuth?: AuthMode;
+  /** Which Workbench gets it (authorizeScripts): owned, watched (default) or never. */
+  authScope?: Dismiss;
+  /** Where the log files of a crash of this Workbench are copied. */
+  crashDir?: string;
   host: string;
   port: number;
 }
@@ -70,6 +81,12 @@ export interface WatchDeps {
   now(): number;
   dismiss(pid: number, hwnd: number): Promise<string>;
   recover(o: WatchOpts, startTime: number | undefined): Promise<string>;
+  /** Script Authorization and crash handling. Each is off when its deps are missing, so a test never touches a real process. */
+  readAuth?(pid: number, hwnd: number): Promise<WinInfo | undefined>;
+  answer?(pid: number, hwnd: number, choice: 1 | 2 | 3, hash: number): Promise<string>;
+  loadSet?(): LoadSet | undefined;
+  crashReporters?(): ProcInfo[];
+  killProcess?(pid: number): void;
 }
 
 /** Workbench names its log folder after its process start: logs_yyyy-MM-dd_HH-mm-ss. Accept one within 3 s. */
@@ -130,17 +147,69 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
   let clickAt: number | undefined;
   let badSince: number | undefined;
   let recovered = false;
+  let authDone: number | undefined;
+  let crashDone = false;
+  const pressLog = new Map<string, number[]>();
   let startTime = o.startTime;
   const sig: Omit<Signals, "now" | "alive"> = {};
   const mem: { t: number; ws: number; cpu: number }[] = [];
   /** Every action goes into the report and into events.jsonl. */
-  const note = (t: number, action: string) => {
+  const note = (t: number, action: string, kind?: "auth" | "crash") => {
     st.actions.push(action);
-    appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action }) + "\n");
+    appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action, ...(kind ? { kind } : {}) }) + "\n");
   };
   const st: WatchState = {
     pid: o.pid, watcherPid: process.pid, owned: o.owned, state: "ok", since: deps.now(),
     lastLines: [], actions: [], dismiss: o.dismiss, autoRecover: o.autoRecover, updated: deps.now(),
+  };
+
+  /** One auth or crash event in every place: the report, events.jsonl (the next live tool result reads it) and, when a lock file is set, that file. */
+  const record = (t: number, kind: "auth" | "crash", line: string) => {
+    note(t, line, kind);
+    const why = appendLockLine(o.lock, line);
+    if (why) note(t, `lock line not written: ${why}`);
+  };
+
+  /** One Script Authorization dialog: read it once, decide (decideAuth), answer or leave it open, log it. */
+  const handleAuth = async (win: WinInfo, now: number) => {
+    const mode = o.scriptAuth ?? "rules";
+    const scope = o.authScope ?? "watched";
+    const seen = await deps.readAuth!(o.pid, win.hwnd);
+    const text = seen ? authText(seen) : "";
+    const parsed = seen ? parseAuthWindow(seen) : undefined;
+    if (seen) st.dialog = { title: win.text, text: text.replace(/\s+/g, " ").slice(0, 300) };
+    const set = deps.loadSet?.();
+    const found = parsed && set?.find(parsed.script);
+    const key = parsed ? `${parsed.script}:${parsed.line}|${parsed.method}` : "unreadable";
+    const d = decideAuth({
+      mode, inScope: scope === "watched" || (scope === "owned" && o.owned), parsed,
+      inLoadSet: parsed && set ? !!found : undefined, presses: recentPresses(pressLog.get(key), now),
+    });
+    let { choice, reason } = d;
+    if (choice !== "report") {
+      const r = await deps.answer!(o.pid, win.hwnd, { yes: 1, no: 2, yes_to_all: 3 }[choice] as 1 | 2 | 3, textHash(text));
+      if (r.startsWith("answered")) pressLog.set(key, [...(pressLog.get(key) ?? []), now]);
+      else {
+        reason = `${reason}; the answer was refused: ${r}`;
+        choice = "report";
+      }
+    }
+    const answered = choice !== "report";
+    const entry: AuthLog = { time: hms(now), pid: o.pid, choice, parsed, mode, reason, ...authDetails(set, parsed, answered, now) };
+    record(now, "auth", authLine(entry));
+  };
+
+  /** The Workbench is gone and crashed: copy its log files, then end only its own CrashReporter without sending a report. */
+  const handleCrash = async (now: number) => {
+    const copy = o.crashDir ? copyCrashFiles(logDir, o.crashDir, stamp(now), o.pid) : { copied: [], missing: ["no crash logs folder is set"] };
+    const reporters = endCrashReporters(o.pid, startTime, deps.crashReporters!(), deps.killProcess!, deps.alive);
+    const entry: CrashLog = { time: hms(now), pid: o.pid, reason: st.crash?.reason, ...copy, reporters };
+    record(now, "crash", crashLine(entry));
+  };
+
+  const save = () => {
+    writeFileSync(statePath + ".tmp", JSON.stringify(st, null, 2));
+    renameSync(statePath + ".tmp", statePath);
   };
 
   const readLog = (now: number) => {
@@ -211,10 +280,20 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
       if (!win) sig.dialog = undefined;
       else if (sig.dialog?.hwnd !== win.hwnd) {
         const button = leakAssertButton(win);
-        sig.dialog = { hwnd: win.hwnd, kind: button ? "leak_assert" : "other", since: now, button };
+        sig.dialog = { hwnd: win.hwnd, kind: button ? "leak_assert" : dialogKind(win) === "script_authorization" ? "script_authorization" : "other", since: now, button };
         st.dialog = { title: win.text, text: dialogText(win) };
       }
       if (!win) st.dialog = undefined;
+      // One look per dialog window: answered, or left open and reported (a dialog that stays is reported again by the blocked_dialog state)
+      const authWin = alive ? s?.wins?.find((w) => isDialog(w) && dialogKind(w) === "script_authorization") : undefined;
+      if (authWin && authWin.hwnd !== authDone && deps.readAuth && deps.answer) {
+        authDone = authWin.hwnd;
+        try {
+          await handleAuth(authWin, now);
+        } catch (e) {
+          note(now, `script authorization check failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       sig.hungSince = s?.wins?.some((w) => w.hung && w !== win) ? (sig.hungSince ?? now) : undefined;
 
       if (s?.ws !== undefined && s.cpu !== undefined) {
@@ -266,8 +345,17 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
         appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t: now, pid: o.pid, state: d.state, kind: d.kind }) + "\n");
       }
       st.updated = now;
-      writeFileSync(statePath + ".tmp", JSON.stringify(st, null, 2));
-      renameSync(statePath + ".tmp", statePath);
+      save();
+      // The state above says "crashed" first; then the copy, then the CrashReporter, each logged
+      if (d.state === "crashed" && !crashDone && deps.crashReporters && deps.killProcess) {
+        crashDone = true;
+        try {
+          await handleCrash(now);
+        } catch (e) {
+          note(now, `crash handling failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        save();
+      }
       return st;
     },
   };
@@ -351,6 +439,7 @@ export async function runWatcher(
     return 3;
   }
   let latest: ProbeSample | undefined;
+  let loadSet: LoadSet | undefined; // read once it succeeds: the addons a Workbench loaded do not change while it runs
   const probe = (over.probe ?? startProbe)(o.pid, o.port, (s) => (latest = s));
   const w = createWatcher(o, {
     sample: () => latest,
@@ -358,6 +447,14 @@ export async function runWatcher(
     now: Date.now,
     dismiss: (pid, hwnd) => dismissLeakAssert(pid, hwnd),
     recover,
+    readAuth: async (pid, hwnd) => {
+      const r = (await probeDialogs([pid]))[0];
+      return "dialogs" in r ? r.dialogs.find((w) => w.hwnd === hwnd) : undefined;
+    },
+    answer: (pid, hwnd, choice, hash) => answerDialog(pid, hwnd, choice, hash),
+    loadSet: () => (loadSet ??= loadSetOf(loadConfig(), processInfo(o.pid)?.cmd ?? "")),
+    crashReporters,
+    killProcess: (pid) => killPids([pid], true),
     ...over,
   });
   try {
@@ -382,6 +479,9 @@ export interface StartWatcher {
   host: string;
   port: number;
   stateDir?: string;
+  scriptAuth?: AuthMode;
+  authScope?: Dismiss;
+  crashDir?: string;
 }
 
 /** Start a detached watcher for one Workbench. Returns the watcher PID. */
@@ -393,6 +493,9 @@ export function startWatcher(w: StartWatcher): number {
   if (w.owned) args.push("--owned");
   if (w.autoRecover) args.push("--auto-recover");
   if (w.logsRoot) args.push("--logs-root", w.logsRoot);
+  if (w.scriptAuth) args.push("--auth", w.scriptAuth);
+  if (w.authScope) args.push("--auth-scope", w.authScope);
+  if (w.crashDir) args.push("--crash-dir", w.crashDir);
   if (process.env.ENFUSION_WORKBENCH_LOCK) args.push("--lock", process.env.ENFUSION_WORKBENCH_LOCK);
   return spawnDetached(process.execPath, args, dirname(SELF), join(stateDir, `${w.pid}.log`));
 }
@@ -427,6 +530,11 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export const hms = (ms: number) => {
   const d = new Date(ms);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+/** yyyy-MM-dd_HH-mm-ss, the form of a log folder name. */
+export const stamp = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
 };
 export const dur = (ms: number) => {
   const m = Math.floor(ms / 60_000);
@@ -466,7 +574,11 @@ export function formatReport(s: WatchState, now = Date.now()): string {
   if (s.lastLines.length) lines.push("  last log lines:", ...s.lastLines.map((l) => `    ${l}`));
   lines.push(`  actions: ${s.actions.length ? s.actions.join("; ") : `none (dismissLeakAssert = ${s.dismiss}${s.dismiss === "owned" && !s.owned ? "; this PID is not owned" : ""})`}`);
   if (s.state === "blocked_dialog") {
-    lines.push("  advice: answer the dialog in Workbench (for the leak assert click Ignore, never Abort or Retry), or ask whoever uses it. Do not save .c files in its loaded projects.");
+    lines.push(
+      s.kind === "script_authorization"
+        ? "  advice: a Script Authorization dialog is open. If it asks to run a program, answer it with wb_watch answer (yes or no), following the rules in that tool's description; otherwise answer it in Workbench or ask whoever uses it."
+        : "  advice: answer the dialog in Workbench (for the leak assert click Ignore, never Abort or Retry), or ask whoever uses it. Do not save .c files in its loaded projects."
+    );
   }
   if (s.logDir) lines.push(`  logs: ${s.logDir}`);
   return lines.join("\n");
@@ -494,6 +606,7 @@ async function main(argv: string[]): Promise<number> {
       session: { type: "string" }, lock: { type: "string" }, "state-dir": { type: "string" }, "logs-root": { type: "string" },
       dismiss: { type: "string" }, "auto-recover": { type: "boolean" }, "recover-after-min": { type: "string" },
       host: { type: "string" }, port: { type: "string" }, event: { type: "string" },
+      auth: { type: "string" }, "auth-scope": { type: "string" }, "crash-dir": { type: "string" },
     },
   });
   const stateDir = values["state-dir"] ?? WATCH_DIR;
@@ -507,12 +620,15 @@ async function main(argv: string[]): Promise<number> {
   const dismiss = (values.dismiss ?? "watched") as Dismiss;
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("--pid <workbench pid> is required");
   if (!["owned", "watched", "never"].includes(dismiss)) throw new Error("--dismiss must be owned, watched or never");
+  const authScope = (values["auth-scope"] ?? "watched") as Dismiss;
+  if (!["owned", "watched", "never"].includes(authScope)) throw new Error("--auth-scope must be owned, watched or never");
   return runWatcher({
     pid, stateDir, dismiss,
     startTime: values["start-time"] ? Number(values["start-time"]) : undefined,
     owned: !!values.owned, session: values.session, lock: values.lock, logsRoot: values["logs-root"],
     autoRecover: !!values["auto-recover"], recoverAfterMin: Number(values["recover-after-min"] ?? 5),
     host: values.host ?? "127.0.0.1", port: Number(values.port ?? 5775),
+    scriptAuth: parseAuthMode(values.auth).mode, authScope, crashDir: values["crash-dir"],
   });
 }
 

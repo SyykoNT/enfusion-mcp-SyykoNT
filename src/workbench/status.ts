@@ -1,3 +1,5 @@
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { WorkbenchClient } from "./client.js";
 import { WATCH_DIR, alertLine, isAlert, readStates } from "../watchdog/wb-watch.js";
 
@@ -6,7 +8,51 @@ import { WATCH_DIR, alertLine, isAlert, readStates } from "../watchdog/wb-watch.
  * Appended to all wb_* tool responses so the LLM always knows the mode.
  */
 export function formatConnectionStatus(client: WorkbenchClient, watchDir = WATCH_DIR): string {
-  return connectionLine(client) + watchAlerts(watchDir);
+  return connectionLine(client) + watchAlerts(watchDir) + watchEvents(watchDir);
+}
+
+/** Events from before this MCP process started are not repeated in its tool results. */
+let eventsSeen = Date.now();
+
+/** One footer line per Script Authorization answer or crash a watcher logged since the last call, then "". */
+export function watchEvents(dir = WATCH_DIR): string {
+  const { lines, last } = eventLines(dir, eventsSeen);
+  eventsSeen = Math.max(eventsSeen, last);
+  return lines.map((l) => `\n\`Watchdog: ${l}\``).join("");
+}
+
+/** The auth and crash lines in events.jsonl (its last 256 KB) with a time after `since`, and the newest time among them. */
+export function eventLines(dir: string, since: number): { lines: string[]; last: number } {
+  let text = "";
+  try {
+    const file = join(dir, "events.jsonl");
+    const size = statSync(file).size;
+    const fd = openSync(file, "r");
+    try {
+      const len = Math.min(size, 262_144);
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len);
+      text = buf.toString("utf-8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return { lines: [], last: since };
+  }
+  const lines: string[] = [];
+  let last = since;
+  for (const raw of text.split("\n")) {
+    try {
+      const e = JSON.parse(raw) as { t: number; kind?: string; action?: string };
+      if ((e.kind === "auth" || e.kind === "crash") && e.action && e.t > since) {
+        lines.push(e.action);
+        last = Math.max(last, e.t);
+      }
+    } catch {
+      // a partial first line of the tail, or a line that is not JSON
+    }
+  }
+  return { lines, last };
 }
 
 /** One footer line naming every watched Workbench in trouble, or "" when all are fine. */

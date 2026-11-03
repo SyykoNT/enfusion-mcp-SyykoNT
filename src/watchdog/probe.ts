@@ -124,6 +124,43 @@ $wins = @(foreach ($h in [EmcpWatch]::Top([uint32]$WbPid)) {
 Say ([ordered]@{ wins = $wins })
 `;
 
+/**
+ * Needs $WbPid, $Hwnd, $Choice (1 Yes, 2 No, 3 Yes to All) and $TextHash. Presses one button of the "Script Authorization Required"
+ * dialog with UI Automation Invoke, only after checking again that $Hwnd is a visible window of $WbPid with exactly that title, that
+ * its text still hashes to $TextHash (textHash() in signals.ts) and that exactly one button has the exact name for $Choice.
+ * "No to All" cannot be chosen. No focus, key, mouse or window message calls; the press itself brings the dialog forward for a moment.
+ */
+export const ANSWER_SCRIPT = `$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+${WIN32}
+# --- answer body ---
+$want = switch ($Choice) { 1 { 'Yes' } 2 { 'No' } 3 { 'Yes to All' } default { $null } }
+if (-not $want) { 'refused: choice must be 1, 2 or 3'; exit 2 }
+$h = [IntPtr][long]$Hwnd
+[uint32]$owner = 0
+[void][EmcpWatch]::GetWindowThreadProcessId($h, [ref]$owner)
+if ($owner -ne $WbPid -or -not [EmcpWatch]::IsWindowVisible($h)) { 'refused: the window is gone or is not a window of that Workbench'; exit 2 }
+if ([EmcpWatch]::Text($h) -cne 'Script Authorization Required') { 'refused: not the Script Authorization Required dialog'; exit 2 }
+$ae = [System.Windows.Automation.AutomationElement]
+$descend = [System.Windows.Automation.TreeScope]::Descendants
+$el = $ae::FromHandle($h)
+function Found($type) {
+  $c = New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, $type)
+  @($el.FindAll($descend, $c))
+}
+$text = (@(Found ([System.Windows.Automation.ControlType]::Text) | ForEach-Object { $_.Current.Name }) -join [string][char]10)
+[uint64]$hash = 2166136261
+foreach ($c in $text.ToCharArray()) { $hash = (($hash -bxor [uint64][int]$c) * 16777619) -band 4294967295 }
+if ($hash -ne [uint64]$TextHash) { 'refused: the dialog text changed'; exit 2 }
+$btn = @(Found ([System.Windows.Automation.ControlType]::Button) | Where-Object { $_.Current.Name -ceq $want })
+if ($btn.Count -ne 1) { 'refused: no single button named ' + $want; exit 2 }
+try {
+  $btn[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  'answered ' + $want
+} catch { 'refused: ' + $_.Exception.Message; exit 2 }
+`;
+
 /** Prefix integer parameters; anything else is refused so no text reaches the script. */
 export function withArgs(script: string, args: Record<string, number>): string {
   const lines = Object.entries(args).map(([k, v]) => {
@@ -161,6 +198,13 @@ export function probeDialogs(pids: number[], run: PsRunner = runPs): Promise<Dia
       }
     })
   );
+}
+
+/** Press Yes (1), No (2) or Yes to All (3) on the Script Authorization dialog `hwnd` of Workbench `pid`. Returns "answered <button>" or "refused: <why>". */
+export async function answerDialog(pid: number, hwnd: number, choice: 1 | 2 | 3, hash: number, run: PsRunner = runPs): Promise<string> {
+  if (![1, 2, 3].includes(choice)) return "refused: choice must be 1, 2 or 3";
+  const r = await run(withArgs(ANSWER_SCRIPT, { WbPid: pid, Hwnd: hwnd, Choice: choice, TextHash: hash }), 15_000);
+  return r.out.trim().split(/\r?\n/).pop() || `refused: the answer check failed (exit ${r.code})`;
 }
 
 /** Click Ignore on the leak assert `hwnd` of Workbench `pid`, only when both checks (here and in the script) match. */
