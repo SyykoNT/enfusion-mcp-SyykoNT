@@ -4,6 +4,7 @@
  */
 
 import { dirname, resolve } from "node:path";
+import type { AuthMode } from "../config.js";
 
 export type LogEventKind = "reloadStart" | "reloadEnd" | "appHangs" | "shutdown";
 export interface LogEvent {
@@ -189,7 +190,7 @@ export interface Signals {
   now: number;
   alive: boolean;
   /** Visible dialog box of the PID and when it was first seen. */
-  dialog?: { hwnd: number; kind: "leak_assert" | "other"; since: number; button?: number };
+  dialog?: { hwnd: number; kind: "leak_assert" | "script_authorization" | "other"; since: number; button?: number };
   /** Main window has reported IsHungAppWindow continuously since. */
   hungSince?: number;
   /** Last "Application hangs" line or FREEZE_*.mdmp. */
@@ -234,7 +235,7 @@ export function decide(s: Signals, ctx: Ctx): { state: WatchStateName; kind?: st
   const crashBlocks = !!s.crash?.assert && s.crash.at >= (s.lastLogAt ?? 0) - 2000;
   if ((d && s.now - d.since >= 10_000) || crashBlocks) {
     const leak = d?.kind === "leak_assert" || (!d && !!s.crash?.reason?.includes("Resources are leaking"));
-    return { state: "blocked_dialog", kind: leak ? "leak_assert" : "other", actions };
+    return { state: "blocked_dialog", kind: leak ? "leak_assert" : d?.kind === "script_authorization" ? "script_authorization" : "other", actions };
   }
   let state: WatchStateName = "ok";
   if ((s.hungSince !== undefined && s.now - s.hungSince >= 60_000) || (s.hangAt !== undefined && s.hangAt >= (s.lastLogAt ?? 0))) {
@@ -252,4 +253,141 @@ export function decide(s: Signals, ctx: Ctx): { state: WatchStateName; kind?: st
     actions.push({ type: "recover" });
   }
   return { state, actions };
+}
+
+// --- Script Authorization (F2.8-AUTH) ---
+
+/** What the dialog says: the script (addon-relative path, no addon name), its line and the method it wants to call. */
+export interface AuthDialog {
+  script: string;
+  line: number;
+  method: string;
+}
+
+/** The dialog's one UIA Text, with its two line breaks: "Allow script '<path>:<line>' / to access potentially dangerous / method '<Class.Method>'?". */
+export function parseAuthDialog(text: string): AuthDialog | undefined {
+  const m = text.trim().match(/^Allow script '(.+):(\d+)'\s+to access potentially dangerous\s+method '([\w.]+)'\?$/);
+  return m ? { script: m[1], line: Number(m[2]), method: m[3] } : undefined;
+}
+
+/** The Text elements of a dialog window, one per line. */
+export const authText = (w: WinInfo) => (w.children ?? []).filter((c) => c.cls === "Text").map((c) => c.text).join("\n");
+
+/** The dialog a window shows: the first of its Text elements that reads as the request (the real dialog has one; stand-ins may list button labels as Text too). */
+export const parseAuthWindow = (w: WinInfo) => (w.children ?? []).filter((c) => c.cls === "Text").map((c) => parseAuthDialog(c.text)).find((p) => !!p);
+
+/** FNV-1a over UTF-16 code units, so ANSWER_SCRIPT can recompute it from an integer argument and know the text did not change. */
+export function textHash(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619) >>> 0;
+  return h;
+}
+
+/** Calls that start a program. The dialog does not show the command line, so these are never answered by the default rules. */
+export const PROGRAM_METHODS = ["Workbench.RunCmd", "Workbench.RunProcess"];
+
+export type AuthChoice = "yes" | "no" | "yes_to_all" | "report";
+
+export interface AuthInput {
+  mode: AuthMode;
+  /** The PID is inside the per-watch authorizeScripts scope (owned, watched or never). */
+  inScope: boolean;
+  parsed?: AuthDialog;
+  /** The script is in an addon the Workbench loaded; undefined when that set could not be read. */
+  inLoadSet?: boolean;
+  /** Automatic presses on this script line and method in the last 60 s. */
+  presses: number;
+}
+
+export const AUTH_LOOP_LIMIT = 3;
+export const AUTH_LOOP_WINDOW_MS = 60_000;
+
+/** Press times inside the loop window. */
+export const recentPresses = (times: number[] | undefined, now: number) => (times ?? []).filter((t) => now - t < AUTH_LOOP_WINDOW_MS).length;
+
+/** What to do with one Script Authorization dialog. `report` leaves it open for the agent or the user. */
+export function decideAuth(a: AuthInput): { choice: AuthChoice; reason: string } {
+  if (a.mode === "off") return { choice: "report", reason: "ENFUSION_SCRIPT_AUTH is off" };
+  if (!a.inScope) return { choice: "report", reason: "this Workbench is outside the authorizeScripts scope" };
+  if (a.presses >= AUTH_LOOP_LIMIT) return { choice: "report", reason: `loop limit: ${AUTH_LOOP_LIMIT} automatic answers for this call in 60 s` };
+  if (a.mode === "all") return { choice: "yes_to_all", reason: "mode all answers Yes to All on every request" };
+  if (!a.parsed) return { choice: "report", reason: "the dialog text could not be read, so it is left open" };
+  if (a.inLoadSet === undefined) return { choice: "report", reason: "the addons this Workbench loaded could not be read, so it is left open" };
+  if (!a.inLoadSet) return { choice: "no", reason: "the script is not in an addon this Workbench loaded" };
+  if (PROGRAM_METHODS.includes(a.parsed.method)) return { choice: "report", reason: `${a.parsed.method} runs a program: the agent decides with wb_watch answer` };
+  return { choice: "yes", reason: "a script in a loaded addon" };
+}
+
+/** The first string literal argument of the Workbench.RunCmd or RunProcess call at `line` (1-based, or in the next two lines), or undefined when the command is not a plain literal. */
+export function programCommand(source: string, line: number, method: string): string | undefined {
+  const lines = source.split(/\r?\n/);
+  const window = lines.slice(Math.max(0, line - 1), line + 2).join("\n");
+  const m = window.match(new RegExp(`${method.replace(".", "\\.")}\\s*\\(\\s*"((?:[^"\\\\]|\\\\.)*)"\\s*([,)+]?)`));
+  // A literal followed by + is joined with something built at run time
+  if (!m || m[2] === "+") return undefined;
+  return m[1].replace(/\\(["\\])/g, "$1");
+}
+
+export interface AuthLog {
+  time: string;
+  pid: number;
+  choice: AuthChoice;
+  parsed?: AuthDialog;
+  addon?: string;
+  mode: AuthMode;
+  reason: string;
+  /** Answered by a wb_watch answer call, not by the watchdog. */
+  explicit?: boolean;
+  /** Program-run dialogs: the command read from the source line, or undefined when it is not readable. */
+  command?: string;
+  git?: string;
+  edds?: number;
+}
+
+const CHOICE_LABEL: Record<AuthChoice, string> = { yes: "YES", no: "NO", yes_to_all: "YES TO ALL", report: "LEFT OPEN" };
+
+/** Text that came from a script or a dialog is data in one short line: no line breaks, at most 200 characters. */
+const clip = (s: string) => s.replace(/\s+/g, " ").slice(0, 200);
+
+/** The one line for the lock file, the next tool result and the report. */
+export function authLine(e: AuthLog): string {
+  const p = e.parsed;
+  const what = p ? `script '${clip(p.script)}:${p.line}' (${clip(e.addon ?? "not in a loaded addon")}) method '${p.method}'` : "script (unreadable) method (unreadable)";
+  const cmd = p && PROGRAM_METHODS.includes(p.method) ? ` command ${e.command !== undefined ? `'${clip(e.command)}'` : "not readable from source"}` : "";
+  return (
+    `AUTH ${e.time} PID ${e.pid} ${CHOICE_LABEL[e.choice]}${e.explicit ? " explicit" : ""} ${what}${cmd} mode ${e.mode} reason ${clip(e.reason)}` +
+    (e.git ? ` [git: ${e.git}]` : "") +
+    (e.edds !== undefined ? ` [edds changed in mounted folders, last 5 min: ${e.edds}]` : "")
+  );
+}
+
+/** The log files that describe a crash: crash.log, any .mdmp, console.log, error.log, script.log. */
+const CRASH_NAMES = ["crash.log", "console.log", "error.log", "script.log"];
+
+/** Which of the folder's files to copy after a crash, and which of the expected ones are not there. */
+export function crashFiles(names: string[]): { copy: string[]; missing: string[] } {
+  const lower = new Map(names.map((n) => [n.toLowerCase(), n]));
+  const dumps = names.filter((n) => /\.mdmp$/i.test(n));
+  const copy = [...CRASH_NAMES.map((n) => lower.get(n)).filter((n): n is string => !!n), ...dumps];
+  const missing = [...CRASH_NAMES.filter((n) => !lower.has(n)), ...(dumps.length ? [] : ["*.mdmp"])];
+  return { copy, missing };
+}
+
+export interface CrashLog {
+  time: string;
+  pid: number;
+  reason?: string;
+  dir?: string;
+  copied: { name: string; size: number }[];
+  missing: string[];
+  /** CrashReporter processes whose parent is the crashed Workbench: ended, or not ended with the reason. */
+  reporters: { pid: number; ended: boolean; why?: string }[];
+}
+
+/** The one line for the lock file, the next tool result and the report. */
+export function crashLine(e: CrashLog): string {
+  const files = e.copied.length ? ` (${e.copied.map((f) => `${f.name} ${f.size} bytes`).join(", ")})` : "";
+  const missing = e.missing.length ? ` missing ${e.missing.join(", ")}` : "";
+  const rep = e.reporters.length ? e.reporters.map((r) => (r.ended ? `${r.pid} ended` : `${r.pid} not ended (${r.why ?? "unknown"})`)).join(", ") : "none";
+  return `CRASH ${e.time} PID ${e.pid} reason ${e.reason ?? "unknown"} copied ${e.copied.length} files to ${e.dir ?? "(no folder)"}${files}${missing} CrashReporter ${rep}`;
 }
