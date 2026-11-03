@@ -18,7 +18,7 @@ import { findGproj, findWorkbenchExe, isProtectedAddon } from "../utils/game-pat
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids, isAlive } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
-import { workbenchEnv, workbenchProfileDir } from "./cli.js";
+import { crashLogsDir, workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher } from "../watchdog/wb-watch.js";
 import { probeDialogs } from "../watchdog/probe.js";
 import { dialogKind, formatDialogs, type DialogProbe } from "../watchdog/signals.js";
@@ -768,7 +768,7 @@ export class WorkbenchClient {
       try {
         startWatcher({
           pid: proc.pid, startTime: launchedAt, owned: true, logsRoot: join(workbenchProfileDir(this.config!), "logs"),
-          host: this.host, port: this.port,
+          host: this.host, port: this.port, scriptAuth: this.config!.scriptAuth ?? "rules", crashDir: crashLogsDir(this.config!),
         });
       } catch (e) {
         logger.warn(`Could not start the watchdog for Workbench PID ${proc.pid}: ${e}`);

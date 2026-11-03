@@ -1,18 +1,24 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { rmSync } from "node:fs";
+import { appendFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { Config } from "../config.js";
-import { workbenchProfileDir } from "../workbench/cli.js";
+import type { AuthMode, Config } from "../config.js";
+import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { isOwned } from "../utils/instances.js";
 import { isAlive, killPids, processInfo, type ProcInfo } from "../utils/process.js";
 import { WATCH_DIR, formatReport, hms, readStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
+import { answerDialog, probeDialogs } from "../watchdog/probe.js";
+import { appendLockLine, authDetails, loadSetOf, type LoadSet } from "../watchdog/auth.js";
+import { authLine, authText, dialogKind, parseAuthWindow, textHash, type AuthLog, type WinInfo } from "../watchdog/signals.js";
 
 export interface WatchArgs {
-  action: "status" | "start" | "stop";
+  action: "status" | "start" | "stop" | "answer";
   pid?: number;
   dismissLeakAssert?: "owned" | "watched" | "never";
+  authorizeScripts?: "owned" | "watched" | "never";
   autoRecover?: boolean;
+  choice?: "yes" | "no";
+  reason?: string;
 }
 
 export interface WatchToolDeps {
@@ -56,13 +62,59 @@ export function watchAction(a: WatchArgs, d: WatchToolDeps): { text: string; isE
   // Ownership only from the instance registry (D-026): nothing a caller passes can make a Workbench owned.
   const owned = d.owned(pid);
   const w = d.start({
-    ...d.base, pid, owned, startTime: proc.created, dismiss: a.dismissLeakAssert ?? "watched", autoRecover: !!a.autoRecover && owned,
+    ...d.base, pid, owned, startTime: proc.created, dismiss: a.dismissLeakAssert ?? "watched", authScope: a.authorizeScripts ?? "watched", autoRecover: !!a.autoRecover && owned,
   });
   return {
     text: `Watching Workbench PID ${pid} (${owned ? "owned" : "not owned: never closed or killed"}) with watcher PID ${w}. ` +
-      `dismissLeakAssert = ${a.dismissLeakAssert ?? "watched"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.`,
+      `dismissLeakAssert = ${a.dismissLeakAssert ?? "watched"}, authorizeScripts = ${a.authorizeScripts ?? "watched"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.`,
   };
 }
+
+export interface AnswerDeps {
+  stateDir: string;
+  alive(pid: number): boolean;
+  /** The Script Authorization dialogs open in that Workbench, with their text. */
+  dialogs(pid: number): Promise<WinInfo[]>;
+  press(pid: number, hwnd: number, choice: 1 | 2, hash: number): Promise<string>;
+  loadSet(pid: number): LoadSet | undefined;
+  mode: AuthMode;
+  lock?: string;
+  now(): number;
+}
+
+/** wb_watch answer: an explicit Yes or No on the Script Authorization dialog open in a watched Workbench, logged with the reason. */
+export async function answerAction(a: WatchArgs, d: AnswerDeps): Promise<{ text: string; isError?: boolean }> {
+  const fail = (text: string) => ({ text, isError: true });
+  if (!a.pid) return fail("pid is required for answer.");
+  if (a.choice !== "yes" && a.choice !== "no") return fail("choice must be yes or no (Yes to All and No to All are never pressed here).");
+  if (!a.reason?.trim()) return fail("reason is required: name the rule that decided the answer.");
+  if (!watcherOf(d.stateDir, a.pid, d.alive)) return fail(`Workbench PID ${a.pid} is not watched. Start a watcher first: wb_watch start pid=${a.pid}.`);
+  const w = (await d.dialogs(a.pid)).find((x) => dialogKind(x) === "script_authorization");
+  if (!w) return fail(`No Script Authorization dialog is open in Workbench PID ${a.pid}; nothing was pressed.`);
+  const parsed = parseAuthWindow(w);
+  const r = await d.press(a.pid, w.hwnd, a.choice === "yes" ? 1 : 2, textHash(authText(w)));
+  if (!r.startsWith("answered")) return fail(`Not answered: ${r}`);
+  const now = d.now();
+  const entry: AuthLog = {
+    time: hms(now), pid: a.pid, choice: a.choice, parsed, mode: d.mode, explicit: true, reason: a.reason.trim(),
+    ...authDetails(d.loadSet(a.pid), parsed, true, now),
+  };
+  const line = authLine(entry);
+  appendFileSync(join(d.stateDir, "events.jsonl"), JSON.stringify({ t: now, pid: a.pid, action: line, kind: "auth" }) + "\n");
+  const why = appendLockLine(d.lock, line);
+  return { text: `${line}${why ? `\n(lock line not written: ${why})` : ""}` };
+}
+
+const RULES =
+  "A Workbench script that asks to run a program (\"Script Authorization Required\", method Workbench.RunCmd or Workbench.RunProcess) is left open in the default mode, " +
+  "and Workbench waits until someone answers. Answer yes only when all of these hold: the script is one the current task wrote or deliberately ran " +
+  "(your own test script or plugin, in an addon you are working on); and the command line (shown from the script's source) is one the task needs, " +
+  "such as starting the game or the Arma Reforger Server executable, or a known build or conversion tool that ships with the game or the Tools. " +
+  "Answer no when any of these holds: the command line is not readable from the source, or is built at run time from values you cannot see; " +
+  "the program is not one you recognise, or runs from a mod, Workshop or temp folder; it is a shell or script host running a script file " +
+  "(cmd /c <file>.bat, powershell -File, wscript, cscript, mshta), or a network or download tool (curl, wget, bitsadmin, certutil -urlcache, Invoke-WebRequest); " +
+  "the script is in a Workshop mod, or in an addon the task did not open on purpose; you are unsure. " +
+  "Answer with action answer (yes or no only) and give the rule that decided it as reason. The answer, the dialog text, the command line and the reason are logged.";
 
 export function registerWbWatch(server: McpServer, config: Config): void {
   server.registerTool(
@@ -73,25 +125,51 @@ export function registerWbWatch(server: McpServer, config: Config): void {
         "a hang, a script reload that never finishes, or a crash, names the likely trigger, and reports it here, in every live tool's footer " +
         "and in wb_diagnose. wb_launch already watches each Workbench it starts. status lists watched Workbench copies; start attaches a " +
         "watcher to another Workbench (it never closes, kills or focuses a Workbench this MCP did not start); stop ends one. " +
-        "The only automatic click is Ignore on the \"Resources are leaking!\" assert, in any Workbench it watches; every click is reported.",
+        "Automatic clicks: Ignore on the \"Resources are leaking!\" assert, and answers to \"Script Authorization Required\" by the setting ENFUSION_SCRIPT_AUTH " +
+        "(rules, the default: Yes to a script call from an addon the Workbench loaded, No to a script that is not in one, a program run or an unreadable dialog left open; " +
+        "all: Yes to All on every request; off: report only), in any Workbench it watches, scoped per watch by authorizeScripts; every answer is reported and logged. " +
+        "When a Workbench crashes, its log files are copied to the crash logs folder and that Workbench's own CrashReporter is ended without sending a report. " +
+        `answer presses Yes or No on an open Script Authorization dialog of a watched Workbench. ${RULES}`,
       inputSchema: {
-        action: z.enum(["status", "start", "stop"]).describe("status: list watched Workbench copies; start: attach a watcher; stop: end one"),
-        pid: z.number().int().positive().optional().describe("Workbench PID (start and stop)"),
+        action: z.enum(["status", "start", "stop", "answer"]).describe("status: list watched Workbench copies; start: attach a watcher; stop: end one; answer: press Yes or No on an open Script Authorization dialog"),
+        pid: z.number().int().positive().optional().describe("Workbench PID (start, stop and answer)"),
         dismissLeakAssert: z.enum(["owned", "watched", "never"]).optional().describe("Who gets the automatic Ignore on the leak assert: watched (default, any watched Workbench), owned, or never"),
+        authorizeScripts: z.enum(["owned", "watched", "never"]).optional().describe("Who gets the automatic answer to Script Authorization Required (the mode is ENFUSION_SCRIPT_AUTH): watched (default, any watched Workbench), owned, or never"),
         autoRecover: z.boolean().optional().describe("Only for a Workbench this MCP process started: after 5 min not responding or stalled, and only while the lock names this session, exit and then kill that one Workbench"),
+        choice: z.enum(["yes", "no"]).optional().describe("answer: the button to press"),
+        reason: z.string().optional().describe("answer: the rule that decided it (required)"),
       },
     },
     async (a) => {
-      const r = watchAction(a, {
-        stateDir: WATCH_DIR,
-        proc: processInfo,
-        owned: (pid) => isOwned(pid),
-        alive: isAlive,
-        start: startWatcher,
-        // Tree kill: the watcher's finally never runs under taskkill /F, so its probe PowerShell must go with it.
-        kill: (pid) => killPids([pid], true, true),
-        base: { logsRoot: join(workbenchProfileDir(config), "logs"), host: config.workbenchHost, port: config.workbenchPort },
-      });
+      const stateDir = WATCH_DIR;
+      const r =
+        a.action === "answer"
+          ? await answerAction(a, {
+              stateDir,
+              alive: isAlive,
+              dialogs: async (pid) => {
+                const p = (await probeDialogs([pid]))[0];
+                return "dialogs" in p ? p.dialogs : [];
+              },
+              press: (pid, hwnd, choice, hash) => answerDialog(pid, hwnd, choice, hash),
+              loadSet: (pid) => loadSetOf(config, processInfo(pid)?.cmd ?? ""),
+              mode: config.scriptAuth ?? "rules",
+              lock: process.env.ENFUSION_WORKBENCH_LOCK,
+              now: Date.now,
+            })
+          : watchAction(a, {
+              stateDir,
+              proc: processInfo,
+              owned: (pid) => isOwned(pid),
+              alive: isAlive,
+              start: startWatcher,
+              // Tree kill: the watcher's finally never runs under taskkill /F, so its probe PowerShell must go with it.
+              kill: (pid) => killPids([pid], true, true),
+              base: {
+                logsRoot: join(workbenchProfileDir(config), "logs"), host: config.workbenchHost, port: config.workbenchPort,
+                scriptAuth: config.scriptAuth ?? "rules", crashDir: crashLogsDir(config),
+              },
+            });
       return { content: [{ type: "text" as const, text: r.text }], ...(r.isError ? { isError: true as const } : {}) };
     }
   );
