@@ -55,7 +55,7 @@ describe("wb_prefabs locate", () => {
     expect(calls).toEqual([{ f: "LocatePrefabsFromPath", p: { selectedProject: "MyAddon", projectPath: "$MyAddon:Prefabs", selectedFolder: "$MyAddon:Prefabs/Props" } }]);
   });
 
-  it.each(["", "   ", "/", "\\", ".", "./", "..", "Prefabs/../..", "$MyAddon:", "$MyAddon:/", "C:", "C:/", "$ArmaReforger:.", "$ArmaReforger:./", "$MyAddon:..", "C:.", "/ /", "$:", "$:Prefabs/X", "$ :", "$MyAddon:/ . /", "$MyAddon:Prefabs/ .. ", "Prefabs", "Prefabs/", " Prefabs ", "C:Prefabs"])("refuses %j before any NET API call", async (p) => {
+  it.each(["", "   ", "/", "\\", ".", "./", "..", "Prefabs/../..", "$MyAddon:", "$MyAddon:/", "C:", "C:/", "$ArmaReforger:.", "$ArmaReforger:./", "$MyAddon:..", "C:.", "/ /", "$:", "$:Prefabs/X", "$ :", "$MyAddon:/ . /", "$MyAddon:Prefabs/ .. ", "Prefabs", "Prefabs/", " Prefabs ", "C:Prefabs", "...", ". .", "Prefabs/...", "$ArmaReforger:...", "$ArmaReforger:. .", "$MyAddon:\u0000", "\u0000/\u0000", "\u0001/\u0001", "$ArmaReforger:\u200b", "\u200b/\u200b", "Prefabs/Weapons/\u200b", "D:Prefabs/X", "C:/Windows/System32", "C:\\Windows\\System32", "//server/share", "\\\\server\\share"])("refuses %j before any NET API call", async (p) => {
     expect(locateRequest(p)).toBeUndefined();
     const { calls, r } = await locate(p);
     expect(r.isError).toBe(true);
