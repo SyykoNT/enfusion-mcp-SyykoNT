@@ -109,8 +109,8 @@ Run the test suite with `npx vitest run`.
 |---|---|
 | Windows | The server drives Workbench, the game and the dedicated server, which are Windows executables. Tested on Windows 11. |
 | Node.js 20 or later | Tested with Node.js 24.22.1 and npm 11.19.1. |
-| Arma Reforger (Steam) | Read for game data, and launched for tests. 1.8 stable. |
-| Arma Reforger Tools (Steam) | Workbench (`ArmaReforgerWorkbenchSteamDiag.exe`) compiles, packs and runs the `wb_*` tools. 1.8 stable. |
+| Arma Reforger (Steam) | Read for game data, and launched for tests. 1.9 stable. |
+| Arma Reforger Tools (Steam) | Workbench (`ArmaReforgerWorkbenchSteamDiag.exe`) compiles, packs and runs the `wb_*` tools. 1.9 stable. |
 | Arma Reforger Server (optional) | The Steam install is used when present; update it from Steam (`server install` and `update` refuse a folder under `steamapps\common`). To install it with SteamCMD instead, set `ENFUSION_SERVER_PATH` to a folder of its own. |
 | Workbench NET API (for `wb_*` tools) | Enable it in Workbench: File > Options > General > Net API. |
 
