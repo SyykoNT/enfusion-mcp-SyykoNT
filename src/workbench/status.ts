@@ -14,14 +14,14 @@ export function formatConnectionStatus(client: WorkbenchClient, watchDir = WATCH
 /** Events from before this MCP process started are not repeated in its tool results. */
 let eventsSeen = Date.now();
 
-/** One footer line per Script Authorization answer or crash a watcher logged since the last call, then "". */
+/** One footer line per Script Authorization answer, crash, dialog press or automatic attach a watcher logged since the last call, then "". */
 export function watchEvents(dir = WATCH_DIR): string {
   const { lines, last } = eventLines(dir, eventsSeen);
   eventsSeen = Math.max(eventsSeen, last);
   return lines.map((l) => `\n\`Watchdog: ${l}\``).join("");
 }
 
-/** The auth and crash lines in events.jsonl (its last 256 KB) with a time after `since`, and the newest time among them. */
+/** The auth, crash, dialog and watch lines in events.jsonl (its last 256 KB) with a time after `since`, and the newest time among them. */
 export function eventLines(dir: string, since: number): { lines: string[]; last: number } {
   let text = "";
   try {
@@ -44,7 +44,7 @@ export function eventLines(dir: string, since: number): { lines: string[]; last:
   for (const raw of text.split("\n")) {
     try {
       const e = JSON.parse(raw) as { t: number; kind?: string; action?: string };
-      if ((e.kind === "auth" || e.kind === "crash") && e.action && e.t > since) {
+      if (e.kind && ["auth", "crash", "dialog", "watch"].includes(e.kind) && e.action && e.t > since) {
         lines.push(e.action);
         last = Math.max(last, e.t);
       }

@@ -47,6 +47,8 @@ export interface WatchOpts {
   authScope?: Dismiss;
   /** Where the log files of a crash of this Workbench are copied. */
   crashDir?: string;
+  /** Attached by the MCP on its own to a Workbench it did not start (adds a WATCH event; answers and crash handling are unchanged). */
+  auto?: boolean;
   host: string;
   port: number;
 }
@@ -55,6 +57,7 @@ export interface WatchState {
   pid: number;
   watcherPid: number;
   owned: boolean;
+  auto?: boolean;
   state: WatchStateName;
   since: number;
   kind?: string;
@@ -154,12 +157,12 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
   const sig: Omit<Signals, "now" | "alive"> = {};
   const mem: { t: number; ws: number; cpu: number }[] = [];
   /** Every action goes into the report and into events.jsonl. */
-  const note = (t: number, action: string, kind?: "auth" | "crash") => {
+  const note = (t: number, action: string, kind?: "auth" | "crash" | "dialog") => {
     st.actions.push(action);
     appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action, ...(kind ? { kind } : {}) }) + "\n");
   };
   const st: WatchState = {
-    pid: o.pid, watcherPid: process.pid, owned: o.owned, state: "ok", since: deps.now(),
+    pid: o.pid, watcherPid: process.pid, owned: o.owned, ...(o.auto ? { auto: true } : {}), state: "ok", since: deps.now(),
     lastLines: [], actions: [], dismiss: o.dismiss, autoRecover: o.autoRecover, updated: deps.now(),
   };
 
@@ -262,6 +265,14 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
   };
 
   return {
+    /** Right after claimWatch: the first state is readable at once, and an automatic watch is announced once (events.jsonl only, not the report). */
+    init() {
+      save();
+      if (!o.auto) return;
+      const t = deps.now();
+      const action = `WATCH ${hms(t)} PID ${o.pid} attached automatically (not started by this MCP): Ignore on the leak assert, Script Authorization by ENFUSION_SCRIPT_AUTH=${o.scriptAuth ?? "rules"}`;
+      appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action, kind: "watch" }) + "\n");
+    },
     async tick(): Promise<WatchState> {
       const now = deps.now();
       const s = deps.sample();
@@ -326,7 +337,8 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
         if (a.type === "click") {
           sig.clicked = a.hwnd;
           const r = await deps.dismiss(o.pid, a.hwnd);
-          note(now, r === "clicked" ? `Ignore clicked ${hms(now)}` : `Ignore not clicked: ${r}`);
+          const on = (st.dialog?.text || st.dialog?.title || "dialog").slice(0, 120);
+          note(now, `DIALOG ${hms(now)} PID ${o.pid} ${r === "clicked" ? `Ignore pressed on "${on}"` : `Ignore not pressed: ${r}`}`, "dialog");
           if (r === "clicked") clickAt = now;
         } else {
           recovered = true;
@@ -384,6 +396,15 @@ export function claimWatch(dir: string, pid: number, alive = isAlive): { ok: tru
 export function watcherOf(dir: string, pid: number, alive = isAlive): number | undefined {
   const by = Number(readText(join(dir, `${pid}.lock`)));
   return by && alive(by) ? by : undefined;
+}
+
+/** `wb_watch stop` writes the Workbench's start time here so no automatic watch comes back to that run. */
+export const noautoFile = (dir: string, pid: number) => join(dir, `${pid}.noauto`);
+
+/** True when the user stopped the watch of this very Workbench run (start time within 10 s; a reused PID does not match). */
+export function autoBlocked(dir: string, pid: number, startTime: number): boolean {
+  const t = Number(readText(noautoFile(dir, pid)));
+  return !!t && Math.abs(t - startTime) <= 10_000;
 }
 
 const netstat = () => {
@@ -458,6 +479,7 @@ export async function runWatcher(
     ...over,
   });
   try {
+    w.init();
     for (;;) {
       const s = await w.tick();
       if (s.state === "exited" || s.state === "crashed") return 0;
@@ -482,6 +504,7 @@ export interface StartWatcher {
   scriptAuth?: AuthMode;
   authScope?: Dismiss;
   crashDir?: string;
+  auto?: boolean;
 }
 
 /** Start a detached watcher for one Workbench. Returns the watcher PID. */
@@ -491,6 +514,7 @@ export function startWatcher(w: StartWatcher): number {
   const args = [SELF, "--pid", String(w.pid), "--state-dir", stateDir, "--host", w.host, "--port", String(w.port), "--dismiss", w.dismiss ?? "watched"];
   if (w.startTime) args.push("--start-time", String(w.startTime));
   if (w.owned) args.push("--owned");
+  if (w.auto) args.push("--auto");
   if (w.autoRecover) args.push("--auto-recover");
   if (w.logsRoot) args.push("--logs-root", w.logsRoot);
   if (w.scriptAuth) args.push("--auth", w.scriptAuth);
@@ -560,7 +584,7 @@ const LABEL: Record<WatchStateName, string> = {
 
 /** Full report for wb_watch status and wb_diagnose. */
 export function formatReport(s: WatchState, now = Date.now()): string {
-  const who = s.owned ? "owned" : "not owned";
+  const who = `${s.owned ? "owned" : "not owned"}${s.auto ? ", attached automatically" : ""}`;
   const lines = [`Workbench PID ${s.pid} (${who}): ${LABEL[s.state]}${s.kind ? ` (${s.kind})` : ""} since ${hms(s.since)} (${dur(now - s.since)})`];
   if (s.dialog) lines.push(`  dialog: "${s.dialog.title}" ${s.dialog.text ? `"${s.dialog.text}"` : ""}`.trimEnd());
   if (s.crash?.reason) lines.push(`  crash.log: ${s.crash.reason}${s.crash.line ? ` (line ${s.crash.line})` : ""}`);
@@ -602,7 +626,7 @@ async function main(argv: string[]): Promise<number> {
     args: argv,
     allowPositionals: true,
     options: {
-      pid: { type: "string" }, "start-time": { type: "string" }, owned: { type: "boolean" },
+      pid: { type: "string" }, "start-time": { type: "string" }, owned: { type: "boolean" }, auto: { type: "boolean" },
       session: { type: "string" }, lock: { type: "string" }, "state-dir": { type: "string" }, "logs-root": { type: "string" },
       dismiss: { type: "string" }, "auto-recover": { type: "boolean" }, "recover-after-min": { type: "string" },
       host: { type: "string" }, port: { type: "string" }, event: { type: "string" },
@@ -625,7 +649,7 @@ async function main(argv: string[]): Promise<number> {
   return runWatcher({
     pid, stateDir, dismiss,
     startTime: values["start-time"] ? Number(values["start-time"]) : undefined,
-    owned: !!values.owned, session: values.session, lock: values.lock, logsRoot: values["logs-root"],
+    owned: !!values.owned, auto: !!values.auto, session: values.session, lock: values.lock, logsRoot: values["logs-root"],
     autoRecover: !!values["auto-recover"], recoverAfterMin: Number(values["recover-after-min"] ?? 5),
     host: values.host ?? "127.0.0.1", port: Number(values.port ?? 5775),
     scriptAuth: parseAuthMode(values.auth).mode, authScope, crashDir: values["crash-dir"],

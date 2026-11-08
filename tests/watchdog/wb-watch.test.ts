@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eventLines } from "../../src/workbench/status.js";
 import { alerts, claimWatch, createWatcher, findLogDir, runWatcher, type WatchOpts, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
 
@@ -95,7 +96,7 @@ describe("watcher main loop", () => {
     expect(events).toEqual(["busy", "blocked_dialog", "busy", "ok"]);
   });
 
-  it("clicks Ignore after 5 s in a Workbench it did not start (D-031), logs it and reports the reload that follows", async () => {
+  it("clicks Ignore after 5 s in a Workbench it did not start (D-031), logs it as a DIALOG event and reports the reload that follows", async () => {
     const t = setup();
     const w = t.watcher();
     t.log("02:14:08.000  SCRIPT       : SCRIPT       : Reloading game scripts");
@@ -105,7 +106,8 @@ describe("watcher main loop", () => {
     t.clock.now = at("02:14:14.000");
     let s = await w.tick();
     expect(t.dismiss).toHaveBeenCalledExactlyOnceWith(19524, 7001);
-    expect(s.actions).toEqual(["Ignore clicked 02:14:14"]);
+    const press = 'DIALOG 02:14:14 PID 19524 Ignore pressed on "Reason: Resources are leaking! Check log! | &Ignore"';
+    expect(s.actions).toEqual([press]);
     t.clock.now = at("02:14:19.000");
     await w.tick();
     expect(t.dismiss).toHaveBeenCalledTimes(1);
@@ -113,10 +115,26 @@ describe("watcher main loop", () => {
     t.log("02:14:20.000 PROFILING    : Reloading game scripts took: 12000.0 ms");
     t.clock.now = at("02:14:24.000");
     s = await w.tick();
-    expect(s.actions).toEqual(["Ignore clicked 02:14:14", "reload finished 02:14:20"]);
+    expect(s.actions).toEqual([press, "reload finished 02:14:20"]);
     expect(s.state).toBe("ok");
     const logged = readFileSync(join(t.stateDir, "events.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l).action).filter(Boolean);
-    expect(logged).toEqual(["Ignore clicked 02:14:14", "reload finished 02:14:20"]);
+    expect(logged).toEqual([press, "reload finished 02:14:20"]);
+    const dialogs = readFileSync(join(t.stateDir, "events.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.kind === "dialog");
+    expect(dialogs.map((e) => e.action)).toEqual([press]);
+    expect(eventLines(t.stateDir, 0).lines.filter((l) => l.startsWith("DIALOG"))).toEqual([press]);
+  });
+
+  it("a refused Ignore press is a DIALOG event too, with the reason", async () => {
+    const t = setup();
+    t.dismiss.mockResolvedValueOnce("refused: the dialog text changed");
+    const w = t.watcher();
+    t.sample.wins = [leakBox];
+    t.clock.now = at("02:14:09.000");
+    await w.tick();
+    t.clock.now = at("02:14:14.000");
+    const s = await w.tick();
+    expect(s.actions).toEqual(["DIALOG 02:14:14 PID 19524 Ignore not pressed: refused: the dialog text changed"]);
+    expect(eventLines(t.stateDir, 0).lines).toEqual(s.actions);
   });
 
   it("reports a Qt modal (owner disabled, not a #32770 box) as blocked_dialog other with its title, and never clicks it", async () => {
@@ -183,5 +201,51 @@ describe("alerts for hooks", () => {
     expect(alerts(t.stateDir, "session-b", "PostToolUse", at("09:41:00.000"))).not.toBe("");
     writeFileSync(join(t.stateDir, "19524.json"), JSON.stringify(st("ok", at("12:01:40.000"))));
     expect(alerts(t.stateDir, "session-a", "PostToolUse", at("12:02:00.000"))).toBe("");
+  });
+});
+
+describe("automatic watch", () => {
+  const events = (dir: string) => readFileSync(join(dir, "events.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+
+  it("init saves the first state at once with auto set, and announces the watch once in events.jsonl (not in the report)", () => {
+    const t = setup();
+    const w = t.watcher({ auto: true, scriptAuth: "all" });
+    expect(existsSync(join(t.stateDir, "19524.json"))).toBe(false);
+    w.init();
+    const saved = JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")) as WatchState;
+    expect([saved.auto, saved.owned, saved.state, saved.actions]).toEqual([true, false, "ok", []]);
+    expect(events(t.stateDir)).toEqual([{
+      t: t.clock.now, pid: 19524, kind: "watch",
+      action: "WATCH 06:13:30 PID 19524 attached automatically (not started by this MCP): Ignore on the leak assert, Script Authorization by ENFUSION_SCRIPT_AUTH=all",
+    }]);
+    expect(eventLines(t.stateDir, 0).lines).toHaveLength(1);
+    expect(eventLines(t.stateDir, t.clock.now).lines).toEqual([]);
+  });
+
+  it("an explicit watch has no auto flag and no WATCH event; the mode text defaults to rules", () => {
+    const t = setup();
+    t.watcher().init();
+    expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8"))).not.toHaveProperty("auto");
+    expect(existsSync(join(t.stateDir, "events.jsonl"))).toBe(false);
+    const u = setup();
+    u.watcher({ auto: true }).init();
+    expect(events(u.stateDir)[0].action).toContain("ENFUSION_SCRIPT_AUTH=rules");
+  });
+
+  it("runWatcher writes the WATCH event after the claim: one event for a claim, none when another watcher holds the PID (exit 3)", async () => {
+    const t = setup();
+    const stop = vi.fn();
+    let alive = true;
+    expect(await runWatcher(t.opts({ auto: true, logsRoot: undefined }), { probe: () => ({ stop }), alive: () => alive, wait: async () => { alive = false; } })).toBe(0);
+    expect(events(t.stateDir).filter((e) => e.kind === "watch")).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")).auto).toBe(true);
+
+    const held = setup();
+    expect(claimWatch(held.stateDir, 19524)).toEqual({ ok: true }); // this process holds the lock
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await runWatcher(held.opts({ auto: true }), { probe: vi.fn() })).toBe(3);
+    err.mockRestore();
+    expect(existsSync(join(held.stateDir, "events.jsonl"))).toBe(false);
+    expect(existsSync(join(held.stateDir, "19524.json"))).toBe(false);
   });
 });

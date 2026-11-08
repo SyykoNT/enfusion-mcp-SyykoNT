@@ -140,6 +140,20 @@ describe("Script Authorization in the watcher", () => {
     await t.watcher({ scriptAuth: "all", authScope: "owned", owned: true }).tick();
     expect(t.answer.mock.calls.map((c) => c[2])).toEqual([3]);
   });
+  it("an automatic, not-owned watcher answers exactly as an explicit watch (authorizeScripts watched): rules gives Yes to a loaded addon, off reports", async () => {
+    const t = setup();
+    t.open(9001, FIND);
+    const s = await t.watcher({ auto: true, scriptAuth: "rules" }).tick();
+    expect(t.answer).toHaveBeenCalledExactlyOnceWith(19524, 9001, 1, textHash(FIND));
+    expect(s.actions.some((a) => a.startsWith("AUTH 06:13:30 PID 19524 YES "))).toBe(true);
+
+    const u = setup();
+    u.open(9001, FIND);
+    await u.watcher({ auto: true, scriptAuth: "off" }).tick();
+    expect(u.answer).not.toHaveBeenCalled();
+    expect(u.lockLines()[0]).toContain("LEFT OPEN");
+  });
+
   it("looks once per dialog window, and stops after 3 automatic answers for one call in 60 s", async () => {
     const t = setup();
     const w = t.watcher();
@@ -284,6 +298,19 @@ describe("a crash of a watched Workbench", () => {
     expect(t.events().filter((e) => e.kind === "crash")).toHaveLength(1);
     expect(s.actions.some((a) => a.startsWith("CRASH "))).toBe(true);
     expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")).state).toBe("crashed");
+  });
+
+  it("an automatic, not-owned watcher handles a crash as an explicit watch does: logs copied, only its own CrashReporter ended", async () => {
+    const t = crashed(["script.log", "error.log"]);
+    const kill = vi.fn();
+    const reporters = [
+      { pid: 88, ppid: 19524, cmd: "CrashReporter.exe", created: at("09:32:56.000") },
+      { pid: 89, ppid: 555, cmd: "CrashReporter.exe", created: at("09:32:56.000") },
+    ];
+    await t.watcher({ auto: true, owned: false, crashDir: crashDirOf(t) }, { alive: () => false, crashReporters: () => reporters, killProcess: kill }).tick();
+    expect(kill.mock.calls).toEqual([[88]]);
+    expect(readdirSync(join(crashDirOf(t), `${stamp(t.clock.now)}_19524`)).sort()).toEqual(["console.log", "crash.log", "error.log", "script.log"]);
+    expect(t.lockLines()[0]).toContain("CrashReporter 88 ended");
   });
 
   it("says what is missing: no error.log, no dump", async () => {

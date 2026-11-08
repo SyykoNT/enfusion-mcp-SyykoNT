@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { appendFileSync, rmSync } from "node:fs";
+import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthMode, Config } from "../config.js";
 import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { isOwned } from "../utils/instances.js";
-import { isAlive, killPids, processInfo, type ProcInfo } from "../utils/process.js";
-import { WATCH_DIR, formatReport, hms, readStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
+import { isAlive, killPids, processInfo, sleep, type ProcInfo } from "../utils/process.js";
+import { WATCH_DIR, formatReport, hms, noautoFile, readStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
 import { answerDialog, probeDialogs } from "../watchdog/probe.js";
 import { appendLockLine, authDetails, loadSetOf, type LoadSet } from "../watchdog/auth.js";
 import { authLine, authText, dialogKind, parseAuthWindow, textHash, type AuthLog, type WinInfo } from "../watchdog/signals.js";
@@ -29,10 +29,21 @@ export interface WatchToolDeps {
   start(w: StartWatcher): number;
   kill(pid: number): void;
   base: Omit<StartWatcher, "pid" | "owned">;
+  /** How long a replacing start waits for its watcher to take the lock (default 2000 ms). */
+  settleMs?: number;
 }
 
-/** wb_watch without the MCP wrapper. Returns the text and whether it is an error. */
-export function watchAction(a: WatchArgs, d: WatchToolDeps): { text: string; isError?: boolean } {
+/** Kill the watcher (its tree: the watcher's finally never runs under taskkill /F) and remove its files. */
+function endWatcher(d: WatchToolDeps, pid: number, watcher: number): void {
+  d.kill(watcher);
+  for (const f of [`${pid}.lock`, `${pid}.json`]) rmSync(join(d.stateDir, f), { force: true });
+}
+
+/**
+ * wb_watch without the MCP wrapper. Returns the text and whether it is an error.
+ * `o` is internal, never in the tool schema: the automatic attach passes `auto` and the Workbench's process info it already read.
+ */
+export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: boolean; proc?: ProcInfo } = {}): Promise<{ text: string; isError?: boolean }> {
   const fail = (text: string) => ({ text, isError: true });
   if (a.action === "status") {
     const { states, errors } = readStates(d.stateDir);
@@ -51,23 +62,43 @@ export function watchAction(a: WatchArgs, d: WatchToolDeps): { text: string; isE
   if (a.action === "stop") {
     if (!watcher) return fail(`No watcher runs for Workbench PID ${pid}.`);
     if (!d.proc(watcher)?.cmd.includes("wb-watch")) return fail(`PID ${watcher} holds the watch lock for ${pid} but is not a watcher. Not stopped.`);
-    d.kill(watcher);
-    for (const f of [`${pid}.lock`, `${pid}.json`]) rmSync(join(d.stateDir, f), { force: true });
+    // Written before the kill: the stopped Workbench run is not watched again automatically (a new run has another start time).
+    const created = d.proc(pid)?.created;
+    if (created) writeFileSync(noautoFile(d.stateDir, pid), String(created));
+    endWatcher(d, pid, watcher);
     return { text: `Stopped watcher PID ${watcher} for Workbench PID ${pid}.` };
   }
 
-  const proc = d.proc(pid);
+  const proc = o.proc ?? d.proc(pid);
   if (!proc || !/ArmaReforgerWorkbenchSteamDiag\.exe/i.test(proc.cmd)) return fail(`PID ${pid} is not a Workbench process.`);
-  if (watcher) return fail(`already watched by watcher PID ${watcher}`);
+  // An explicit start replaces an automatic watcher (only one that really is a watcher); any other watcher is kept.
+  const replace = !!watcher && !o.auto && readStates(d.stateDir).states.some((s) => s.pid === pid && s.auto) && !!d.proc(watcher)?.cmd.includes("wb-watch");
+  if (watcher && !replace) return fail(`already watched by watcher PID ${watcher}`);
+  if (replace) endWatcher(d, pid, watcher!);
+  if (!o.auto) rmSync(noautoFile(d.stateDir, pid), { force: true });
   // Ownership only from the instance registry (D-026): nothing a caller passes can make a Workbench owned.
   const owned = d.owned(pid);
   const w = d.start({
     ...d.base, pid, owned, startTime: proc.created, dismiss: a.dismissLeakAssert ?? "watched", authScope: a.authorizeScripts ?? "watched", autoRecover: !!a.autoRecover && owned,
+    ...(o.auto && !owned ? { auto: true } : {}),
   });
-  return {
-    text: `Watching Workbench PID ${pid} (${owned ? "owned" : "not owned: never closed or killed"}) with watcher PID ${w}. ` +
-      `dismissLeakAssert = ${a.dismissLeakAssert ?? "watched"}, authorizeScripts = ${a.authorizeScripts ?? "watched"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.`,
-  };
+  const text =
+    `Watching Workbench PID ${pid} (${owned ? "owned" : "not owned: never closed or killed"}) with watcher PID ${w}. ` +
+    `dismissLeakAssert = ${a.dismissLeakAssert ?? "watched"}, authorizeScripts = ${a.authorizeScripts ?? "watched"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.`;
+  if (!replace) return { text };
+  // Another MCP may start its own automatic watcher in the same moment; the lock says who got the PID.
+  const until = Date.now() + (d.settleMs ?? 2000);
+  let holder = watcherOf(d.stateDir, pid, d.alive);
+  while (holder !== w && Date.now() < until) {
+    await sleep(100);
+    holder = watcherOf(d.stateDir, pid, d.alive);
+  }
+  if (holder === w) return { text: `Replaced the automatic watcher PID ${watcher} with watcher PID ${w}. ${text}` };
+  return fail(
+    holder
+      ? `Stopped the automatic watcher PID ${watcher}, but another MCP's automatic watcher (PID ${holder}) took Workbench PID ${pid} first; the requested watcher did not start. Run wb_watch start again to replace it.`
+      : `Stopped the automatic watcher PID ${watcher}, but the new watcher PID ${w} did not take Workbench PID ${pid} within ${(d.settleMs ?? 2000) / 1000} s. Check wb_watch status.`
+  );
 }
 
 export interface AnswerDeps {
@@ -157,7 +188,7 @@ export function registerWbWatch(server: McpServer, config: Config): void {
               lock: process.env.ENFUSION_WORKBENCH_LOCK,
               now: Date.now,
             })
-          : watchAction(a, {
+          : await watchAction(a, {
               stateDir,
               proc: processInfo,
               owned: (pid) => isOwned(pid),

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { watchAction, type WatchArgs, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
 import { formatConnectionStatus, watchAlerts } from "../../src/workbench/status.js";
-import { alertLine, createWatcher, formatReport, type WatchState } from "../../src/watchdog/wb-watch.js";
+import { alertLine, autoBlocked, createWatcher, formatReport, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { WorkbenchClient } from "../../src/workbench/client.js";
 
 // Temp state dir and lock file; processes, ownership and the watcher spawn are stubs.
@@ -29,32 +29,32 @@ function deps(over: Partial<WatchToolDeps> = {}) {
 }
 
 describe("wb_watch start", () => {
-  it("attaches a watcher to a Workbench this MCP did not start: Ignore on the leak assert by default, no recovery", () => {
+  it("attaches a watcher to a Workbench this MCP did not start: Ignore on the leak assert by default, no recovery", async () => {
     const d = deps();
-    const r = watchAction({ action: "start", pid: 19524, autoRecover: true }, d);
+    const r = await watchAction({ action: "start", pid: 19524, autoRecover: true }, d);
     expect(r.isError).toBeUndefined();
     expect(r.text).toContain("not owned: never closed or killed");
     expect(d.start).toHaveBeenCalledWith(expect.objectContaining({ pid: 19524, owned: false, autoRecover: false, dismiss: "watched", startTime: at("06:12:43.000") }));
   });
 
-  it("refuses a PID that is not Workbench, and a second watcher", () => {
+  it("refuses a PID that is not Workbench, and a second watcher", async () => {
     const d = deps();
-    expect(watchAction({ action: "start", pid: 4242 }, d)).toEqual({ text: "PID 4242 is not a Workbench process.", isError: true });
+    expect(await watchAction({ action: "start", pid: 4242 }, d)).toEqual({ text: "PID 4242 is not a Workbench process.", isError: true });
     writeFileSync(join(d.stateDir, "19524.lock"), "600");
-    expect(watchAction({ action: "start", pid: 19524 }, d)).toEqual({ text: "already watched by watcher PID 600", isError: true });
+    expect(await watchAction({ action: "start", pid: 19524 }, d)).toEqual({ text: "already watched by watcher PID 600", isError: true });
     expect(d.start).not.toHaveBeenCalled();
   });
 
   it("review B1: a person's lock text never makes a Workbench owned; hung for 5 min with autoRecover, no Exit and no kill", async () => {
     const d = deps();
-    writeFileSync(lockPath, "owner: Don (AM test)\r\npid: 19524\r\nsince: 2026-10-31 06:12\r\n");
+    writeFileSync(lockPath, "owner: Alex (AM test)\r\npid: 19524\r\nsince: 2026-10-31 06:12\r\n");
     // The old adopt arguments are ignored: ownership comes only from isOwned (stubbed false here).
-    watchAction({ action: "start", pid: 19524, adopt: true, owner: "Don (AM test)", autoRecover: true } as WatchArgs, d);
+    await watchAction({ action: "start", pid: 19524, adopt: true, owner: "Alex (AM test)", autoRecover: true } as WatchArgs, d);
     const started = vi.mocked(d.start).mock.calls[0][0];
     expect(started).toMatchObject({ owned: false, autoRecover: false });
     expect(started).not.toHaveProperty("owner");
 
-    // Run those options, and also an owned watcher (as if started with --owned), against Don's lock and a window hung for 6 min.
+    // Run those options, and also an owned watcher (as if started with --owned), against a person's lock and a window hung for 6 min.
     const run = async (opts: { owned: boolean; autoRecover: boolean; session?: string }) => {
       let now = at("10:00:00.000");
       const recover = vi.fn(async () => "");
@@ -76,24 +76,24 @@ describe("wb_watch start", () => {
     expect(await run({ owned: true, autoRecover: true, session: "s1" })).toBe(1);
   });
 
-  it("passes dismissLeakAssert never through", () => {
+  it("passes dismissLeakAssert never through", async () => {
     const d = deps();
-    expect(watchAction({ action: "start", pid: 19524, dismissLeakAssert: "never" }, d).text).toContain("dismissLeakAssert = never");
+    expect((await watchAction({ action: "start", pid: 19524, dismissLeakAssert: "never" }, d)).text).toContain("dismissLeakAssert = never");
     expect(d.start).toHaveBeenCalledWith(expect.objectContaining({ dismiss: "never" }));
   });
 });
 
 describe("wb_watch stop", () => {
-  it("ends only a real watcher and clears its files", () => {
+  it("ends only a real watcher and clears its files", async () => {
     const d = deps();
     writeFileSync(join(d.stateDir, "19524.lock"), "600");
     writeFileSync(join(d.stateDir, "19524.json"), "{}");
-    expect(watchAction({ action: "stop", pid: 19524 }, d).text).toBe("Stopped watcher PID 600 for Workbench PID 19524.");
+    expect((await watchAction({ action: "stop", pid: 19524 }, d)).text).toBe("Stopped watcher PID 600 for Workbench PID 19524.");
     expect(d.kill).toHaveBeenCalledWith(600);
     expect(existsSync(join(d.stateDir, "19524.json"))).toBe(false);
     // The lock names a live process that is not a watcher (the Workbench itself): never killed.
     writeFileSync(join(d.stateDir, "19524.lock"), "19524");
-    expect(watchAction({ action: "stop", pid: 19524 }, d).isError).toBe(true);
+    expect((await watchAction({ action: "stop", pid: 19524 }, d)).isError).toBe(true);
     expect(d.kill).toHaveBeenCalledTimes(1);
   });
 });
@@ -139,13 +139,113 @@ describe("status line and reports", () => {
     expect(r).toContain("never Abort or Retry");
   });
 
-  it("status lists the reports and says when a watcher is gone", () => {
+  it("the report says an automatic watch was attached automatically; an explicit one says nothing extra", () => {
+    expect(formatReport(st("ok", { auto: true }), now)).toContain("Workbench PID 19524 (not owned, attached automatically): OK since");
+    expect(formatReport(st("ok"), now)).toContain("Workbench PID 19524 (not owned): OK since");
+  });
+
+  it("status lists the reports and says when a watcher is gone", async () => {
     const d = deps();
-    expect(watchAction({ action: "status" }, d).text).toMatch(/^No Workbench is watched/);
+    expect((await watchAction({ action: "status" }, d)).text).toMatch(/^No Workbench is watched/);
     writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify(st("busy", { watcherPid: 999999 })));
     writeFileSync(join(d.stateDir, "1.json"), "{broken");
-    const text = watchAction({ action: "status" }, d).text;
+    const text = (await watchAction({ action: "status" }, d)).text;
     expect(text).toContain("watcher not running; last report 09:32:58");
     expect(text).toMatch(/watch state unreadable: .*1\.json/);
+  });
+});
+
+describe("automatic watchers: replace, refuse, stop and noauto", () => {
+  const autoState = (d: WatchToolDeps, auto: boolean) => {
+    writeFileSync(join(d.stateDir, "19524.lock"), "600");
+    writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600, owned: false, state: "ok", ...(auto ? { auto: true } : {}) }));
+  };
+  const alive = (pid: number) => [600, 700, 800, 19524].includes(pid);
+
+  it("an explicit start replaces an automatic watcher: kills it, starts the new one, sees the new lock, writes no noauto", async () => {
+    const d = deps({ alive, settleMs: 50 });
+    d.start = vi.fn(() => {
+      writeFileSync(join(d.stateDir, "19524.lock"), "700");
+      return 700;
+    });
+    autoState(d, true);
+    const r = await watchAction({ action: "start", pid: 19524 }, d);
+    expect(r.isError).toBeUndefined();
+    expect(r.text).toContain("Replaced the automatic watcher PID 600 with watcher PID 700.");
+    expect(d.kill).toHaveBeenCalledExactlyOnceWith(600);
+    expect(d.start).toHaveBeenCalledOnce();
+    expect(vi.mocked(d.start).mock.calls[0][0]).not.toHaveProperty("auto");
+    expect(existsSync(join(d.stateDir, "19524.json"))).toBe(false);
+    expect(existsSync(join(d.stateDir, "19524.noauto"))).toBe(false);
+  });
+
+  it("a watcher that is not automatic is still refused and left alone", async () => {
+    const d = deps({ alive });
+    autoState(d, false);
+    expect(await watchAction({ action: "start", pid: 19524 }, d)).toEqual({ text: "already watched by watcher PID 600", isError: true });
+    expect(d.kill).not.toHaveBeenCalled();
+    expect(d.start).not.toHaveBeenCalled();
+  });
+
+  it("another MCP's automatic watcher took the PID first: the reply says so", async () => {
+    const d = deps({ alive, settleMs: 50 });
+    d.start = vi.fn(() => {
+      writeFileSync(join(d.stateDir, "19524.lock"), "800"); // the other MCP's watcher won the claim; ours would exit with code 3
+      return 700;
+    });
+    autoState(d, true);
+    const r = await watchAction({ action: "start", pid: 19524 }, d);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("another MCP's automatic watcher (PID 800) took Workbench PID 19524 first");
+  });
+
+  it("the automatic attach (internal flag) starts a not-owned watcher with --auto, an owned one without, and never replaces a watcher", async () => {
+    const d = deps();
+    await watchAction({ action: "start", pid: 19524 }, d, { auto: true });
+    expect(d.start).toHaveBeenLastCalledWith(expect.objectContaining({ owned: false, auto: true, dismiss: "watched", authScope: "watched", autoRecover: false }));
+    const o = deps({ owned: () => true });
+    await watchAction({ action: "start", pid: 19524 }, o, { auto: true });
+    expect(vi.mocked(o.start).mock.calls[0][0]).not.toHaveProperty("auto");
+    // A prefetched ProcInfo replaces the lookup
+    const p = deps({ proc: () => undefined });
+    const proc = { pid: 19524, ppid: 1, cmd: WB, created: at("06:12:43.000") };
+    expect((await watchAction({ action: "start", pid: 19524 }, p, { auto: true, proc })).isError).toBeUndefined();
+    // An automatic attach finds a live automatic watcher: refused, not replaced
+    const r = deps({ alive });
+    autoState(r, true);
+    expect((await watchAction({ action: "start", pid: 19524 }, r, { auto: true })).isError).toBe(true);
+    expect(r.kill).not.toHaveBeenCalled();
+  });
+
+  it("stop writes the Workbench start time to <pid>.noauto before it kills the watcher; a later start removes it", async () => {
+    const d = deps();
+    const file = join(d.stateDir, "19524.noauto");
+    const seen: string[] = [];
+    d.kill = vi.fn(() => {
+      seen.push(existsSync(file) ? readFileSync(file, "utf-8") : "no file at kill time");
+    });
+    writeFileSync(join(d.stateDir, "19524.lock"), "600");
+    await watchAction({ action: "stop", pid: 19524 }, d);
+    expect(seen).toEqual([String(at("06:12:43.000"))]);
+    expect(autoBlocked(d.stateDir, 19524, at("06:12:43.000") + 9_000)).toBe(true);
+    await watchAction({ action: "start", pid: 19524 }, d);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("autoBlocked is true only for the same Workbench run", () => {
+    const d = deps();
+    expect(autoBlocked(d.stateDir, 19524, at("06:12:43.000"))).toBe(false); // no file
+    writeFileSync(join(d.stateDir, "19524.noauto"), String(at("06:12:43.000")));
+    expect(autoBlocked(d.stateDir, 19524, at("06:12:43.000"))).toBe(true);
+    expect(autoBlocked(d.stateDir, 19524, at("06:12:43.000") - 10_000)).toBe(true);
+    expect(autoBlocked(d.stateDir, 19524, at("06:12:43.000") + 10_001)).toBe(false); // a reused PID
+    expect(autoBlocked(d.stateDir, 4242, at("06:12:43.000"))).toBe(false); // another PID
+  });
+
+  it("a stop does not write noauto when the Workbench process is already gone", async () => {
+    const d = deps({ proc: (pid) => (pid === 600 ? { pid, ppid: 1, cmd: "node wb-watch.js --pid 19524", created: 1 } : undefined) });
+    writeFileSync(join(d.stateDir, "19524.lock"), "600");
+    await watchAction({ action: "stop", pid: 19524 }, d);
+    expect(existsSync(join(d.stateDir, "19524.noauto"))).toBe(false);
   });
 });

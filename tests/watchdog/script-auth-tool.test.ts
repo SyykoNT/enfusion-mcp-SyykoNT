@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { answerAction, watchAction, type AnswerDeps, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
 import { endCrashReporters, gitReport, loadSetOf } from "../../src/watchdog/auth.js";
 import { textHash, type WinInfo } from "../../src/watchdog/signals.js";
-import { formatConnectionStatus, watchEvents } from "../../src/workbench/status.js";
+import { eventLines, formatConnectionStatus, watchEvents } from "../../src/workbench/status.js";
 import type { Config } from "../../src/config.js";
 import type { WorkbenchClient } from "../../src/workbench/client.js";
 
@@ -82,11 +82,11 @@ describe("wb_watch start with authorizeScripts", () => {
     return d;
   };
 
-  it("passes the scope and the base settings to the watcher; the scope defaults to watched", () => {
+  it("passes the scope and the base settings to the watcher; the scope defaults to watched", async () => {
     const d = deps();
-    expect(watchAction({ action: "start", pid: 19524 }, d).text).toContain("authorizeScripts = watched");
+    expect((await watchAction({ action: "start", pid: 19524 }, d)).text).toContain("authorizeScripts = watched");
     expect(d.start).toHaveBeenLastCalledWith(expect.objectContaining({ authScope: "watched", scriptAuth: "all", crashDir: "C:\\crash" }));
-    watchAction({ action: "start", pid: 19524, authorizeScripts: "never" }, d);
+    await watchAction({ action: "start", pid: 19524, authorizeScripts: "never" }, d);
     expect(d.start).toHaveBeenLastCalledWith(expect.objectContaining({ authScope: "never" }));
   });
 });
@@ -108,6 +108,16 @@ describe("the next live tool result", () => {
     expect(formatConnectionStatus(client, dir)).toBe("\n\n---\n`Workbench: edit mode`");
     appendFileSync(join(dir, "events.jsonl"), ev("auth", "AUTH 10:02:00 PID 1 NO script 'b.c:2' (B) method 'M.N' mode rules reason r", 3));
     expect(watchEvents(dir)).toBe("\n`Watchdog: AUTH 10:02:00 PID 1 NO script 'b.c:2' (B) method 'M.N' mode rules reason r`");
+  });
+
+  it("also carries dialog and watch lines, each once, and nothing older than `since`", () => {
+    const dir = mkdtempSync(join(tmpdir(), "emcp-ev-"));
+    const ev = (kind: string, action: string, t: number) => JSON.stringify({ t, pid: 1, action, kind }) + "\n";
+    writeFileSync(join(dir, "events.jsonl"), ev("watch", "WATCH 10:00:00 PID 1 attached automatically (not started by this MCP): x", 100) + ev("dialog", 'DIALOG 10:00:10 PID 1 Ignore pressed on "leak"', 200) + ev("dialog", "DIALOG 10:00:20 PID 1 Ignore not pressed: r", 300));
+    const first = eventLines(dir, 100);
+    expect(first.lines).toEqual(['DIALOG 10:00:10 PID 1 Ignore pressed on "leak"', "DIALOG 10:00:20 PID 1 Ignore not pressed: r"]);
+    expect(eventLines(dir, 0).lines).toHaveLength(3);
+    expect(eventLines(dir, first.last).lines).toEqual([]);
   });
 });
 
