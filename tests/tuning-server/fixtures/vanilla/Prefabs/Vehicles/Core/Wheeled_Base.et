@@ -1,0 +1,6 @@
+Vehicle {
+ components {
+  VehicleWheeledSimulation "{731B26FCA2F19855}" : "{A25CB790B888B786}Prefabs/Vehicles/Core/Components/VehicleWheeledSimulation_Base.ct" {
+  }
+ }
+}

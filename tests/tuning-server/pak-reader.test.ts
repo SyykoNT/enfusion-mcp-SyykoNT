@@ -14,15 +14,15 @@ const et = (engine: string, extra = "") =>
 
 const VANILLA_ET = et(
   `    Engine Engine Engine : "{AAAA1111AAAA1111}Cfg/Engine_X.conf" {\n     MaxPower 99\n    }\n`,
-  `    Pacejka Pacejka "{5}" : "{BBBB2222BBBB2222}Cfg/Pacejka_X.conf" {\n    }`
+  `    TyreModel Pacejka2002 "{5}" : "{BBBB2222BBBB2222}Cfg/Pacejka_X.conf" {\n    }`
 );
 const ENGINE_CONF = `Engine {
  MaxTorque 250
  RpmIdle 700
 }
 `;
-const PACEJKA_CONF = `Pacejka : "{DDDD4444DDDD4444}Cfg/Pacejka_Base.conf" {\n Longitudinal PacejkaLongitudinal "{9}" {\n  b0 0.8\n }\n}\n`;
-const PACEJKA_BASE_CONF = `Pacejka {\n Longitudinal PacejkaLongitudinal "{9}" {\n  b0 1.6\n  b3 20\n }\n}\n`;
+const PACEJKA_CONF = `Pacejka2002 : "{DDDD4444DDDD4444}Cfg/Pacejka_Base.conf" {\n Longitudinal Pacejka2002Longitudinal "{9}" {\n  PCX1 0.8\n }\n}\n`;
+const PACEJKA_BASE_CONF = `Pacejka2002 {\n Longitudinal Pacejka2002Longitudinal "{9}" {\n  PCX1 1.6\n  PDX2 20\n }\n}\n`;
 
 // What the installed paks would hold: addon-relative path -> text.
 const PAKS: Record<string, string> = {
@@ -63,24 +63,57 @@ describe("makeReader", () => {
     expect(paks).not.toHaveBeenCalled();
   });
 
-  it("treats a pak read that throws as a missing file", () => {
-    const r = makeReader({ readBase: () => { throw new Error("File not found in pak"); } });
-    expect(r.base("Cfg/A.conf")).toBeNull();
+  it("treats a pak read that throws as a missing file and logs the error once per path", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = makeReader({ readBase: () => { throw new Error("pak went away"); } });
+    expect(r.base("Cfg/Logged.conf")).toBeNull();
+    expect(r.base("Cfg/Logged.conf")).toBeNull();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(String(log.mock.calls[0][0])).toContain("Cfg/Logged.conf");
+    expect(String(log.mock.calls[0][0])).toContain("pak went away");
+    expect(r.base("Cfg/LoggedToo.conf")).toBeNull();
+    expect(log).toHaveBeenCalledTimes(2);
+    log.mockRestore();
+  });
+
+  it("refuses a reference that escapes the data root before reading anything, logging it once", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const readFile = vi.fn(() => "text");
+    const readBase = vi.fn(() => "text");
+    const r = makeReader({ addonPath: "/addon", extractedPath: "/vanilla", readFile, readBase });
+    const bad = [
+      "{AAAA1111AAAA1111}../../secret.conf",
+      "{AAAA1111AAAA1111}Cfg/../../secret.conf",
+      "{AAAA1111AAAA1111}Cfg\\..\\x.conf",
+      "{AAAA1111AAAA1111}C:/Windows/x.conf",
+      "{AAAA1111AAAA1111}/etc/x.conf",
+      "..",
+    ];
+    for (const ref of bad) {
+      expect(r.ref(ref)).toBeNull();
+      expect(r.copies(ref)).toEqual([]);
+    }
+    expect(readFile).not.toHaveBeenCalled();
+    expect(readBase).not.toHaveBeenCalled();
+    // One line per distinct bad path, however often it is asked for.
+    expect(log).toHaveBeenCalledTimes(bad.length);
+    expect(r.ref("{AAAA1111AAAA1111}Cfg/A.conf")).toBe("text");
+    log.mockRestore();
   });
 });
 
 describe("tuning values from the paks", () => {
   it("resolves engine values through the vanilla prefab and its conf chain", () => {
     const r = resolveEngineFields({ modText: MOD_ET, relPath: REL, readFile: noFiles, readBase });
-    expect(r.MaxPower).toEqual({ value: 120, source: "overridden" });
-    expect(r.MaxTorque).toEqual({ value: 250, source: "inherited" });
-    expect(r.RpmIdle).toEqual({ value: 700, source: "inherited" });
+    expect(r.MaxPower).toMatchObject({ value: 120, source: "own" });
+    expect(r.MaxTorque).toMatchObject({ value: 250, source: "inherited", file: "Cfg/Engine_X.conf" });
+    expect(r.RpmIdle).toMatchObject({ value: 700, source: "inherited" });
   });
 
   it("resolves tyre coefficients through the vanilla prefab and its conf chain", () => {
-    const r = resolveChassis({ modText: et(""), relPath: REL, readFile: noFiles, readBase });
-    expect(r.longitudinal.b0).toEqual({ value: 0.8, source: "inherited" });
-    expect(r.longitudinal.b3).toEqual({ value: 20, source: "inherited" });
+    const g = resolveChassis({ modText: et(""), relPath: REL, readFile: noFiles, readBase }).tyreModel!.groups;
+    expect(g.Longitudinal.PCX1).toMatchObject({ value: 0.8, source: "inherited" });
+    expect(g.Longitudinal.PDX2).toMatchObject({ value: 20, source: "inherited" });
   });
 
   it("leaves values unresolved when neither source has the file", () => {
@@ -101,7 +134,7 @@ describe("tuning values from the paks", () => {
       readFile: fromMap(extracted),
       readBase: paks,
     });
-    expect(r.MaxTorque).toEqual({ value: 777, source: "inherited" });
+    expect(r.MaxTorque).toMatchObject({ value: 777, source: "inherited" });
     expect(paks).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,43 @@
+VehicleWheeledSimulation {
+ Simulation Wheeled "{4D8B26DEA5F25978}" {
+  Engine Engine Engine {
+   RpmIdle 850
+   RpmRedline 6000
+   RpmMax 7000
+   Output "Clutch"
+  }
+  Gearbox Gearbox Gearbox {
+   Forward {
+    4
+   }
+   Reverse 4
+  }
+  Axles {
+   Axle "{4D8B26DF957A8E1C}" {
+    Suspension Suspension "{4D8B26DFF8859A7B}" {
+     MaxSteeringAngle 25
+     MaxTravelUp 0.2
+     MaxTravelDown 0.2
+    }
+    Wheel Wheel "{4D8B26DFFE211745}" {
+     Radius 0.4
+     BrakeTorque 5000
+    }
+   }
+   Axle "{4D8B26DF8CF2F3D8}" {
+    HasHandbrake 1
+    Suspension Suspension "{4D8B26DF2B10AE05}" {
+     MaxTravelUp 0.2
+     MaxTravelDown 0.2
+    }
+    Wheel Wheel "{4D8B26DF30A4E4D7}" {
+     Radius 0.4
+     BrakeTorque 5000
+    }
+   }
+  }
+  Aerodynamics Aerodynamics "{5562A623B55A4C07}" {
+   ReferenceArea 3
+  }
+ }
+}

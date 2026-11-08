@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import { createTuningServer } from "../../src/tuning-server/server.js";
 import { VEHICLES_SUBPATH } from "../../src/tuning-server/discover.js";
@@ -82,8 +83,33 @@ describe("tuning server", () => {
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");
-    expect(body.fields.MaxPower).toEqual({ value: 53, source: "overridden" });
-    expect(body.fields.Steepness).toEqual({ value: 15, source: "overridden" });
+    expect(body.fields.MaxPower).toMatchObject({ value: 53, source: "own", file: REL });
+    expect(body.fields.Steepness).toMatchObject({ value: 15, source: "own" });
+    expect(body.fields.RpmRedline.value).toBe(4200);
+    // No TyreModel, axles or differentials anywhere in this fixture: empty, not an error.
+    expect(body.chassis).toMatchObject({ tyreModel: null, axles: [], differentials: [] });
+  });
+
+  it("GET /api/vehicles/<rel> carries the 1.9 chassis: tyreModel, axles and differentials with sources", async () => {
+    const vanilla = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "vanilla");
+    const own = createTuningServer(addonDir, vanilla);
+    await new Promise<void>((resolve) => own.listen(0, "127.0.0.1", resolve));
+    try {
+      const rel = "Prefabs/Vehicles/Wheeled/Fix/Fix.et";
+      const dir = join(addonDir, ...VEHICLES_SUBPATH.split("/"), "Wheeled", "Fix");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "Fix.et"), `Vehicle : "{ABCD0000AAAA0001}Prefabs/Vehicles/Wheeled/Fix/Fix_base.et" {\n}\n`);
+      const res = await fetch(`http://127.0.0.1:${(own.address() as AddressInfo).port}/api/vehicles/${rel}`);
+      const { chassis, fields } = await res.json();
+      expect(chassis.tyreModel).toMatchObject({ class: "Pacejka2002", id: "6A38CB253C2D7203" });
+      expect(chassis.tyreModel.groups.top.NominalLoad).toMatchObject({ value: 5000, source: "inherited" });
+      expect(chassis.axles.map((a: { id: string }) => a.id)).toEqual(["4D8B26DF957A8E1C", "4D8B26DF8CF2F3D8"]);
+      expect(chassis.axles[0].tyre.fields.LongitudinalFriction.value).toBe(1.1);
+      expect(chassis.differentials.map((d: { name: string }) => d.name)).toEqual(["Diff_C", "Diff_01", "Diff_02"]);
+      expect(fields.RpmMax).toMatchObject({ value: 7000, source: "template" });
+    } finally {
+      await new Promise<void>((resolve) => own.close(() => resolve()));
+    }
   });
 
   it("GET /api/vehicles/<rel> 404s for an unknown vehicle", async () => {
@@ -97,11 +123,11 @@ describe("tuning server", () => {
     // reach isSafeVehicleRelPath at all: per the WHATWG URL spec, Node's own
     // `new URL()` treats "%2e"/"%2E" as equivalent to a literal "." for
     // dot-segment removal, so ANY attempt to traverse via ".." is eliminated
-    // by URL parsing itself before routing ever sees the request — confirmed
+    // by URL parsing itself before routing ever sees the request, confirmed
     // by inspecting `new URL(...).pathname` directly for both forms. The
-    // guard's own `..`-rejection branch is still real and correct — it's
+    // guard's own `..`-rejection branch is still real and correct, it's
     // exhaustively unit-tested directly against isSafeVehicleRelPath in
-    // tests/tuning-server/discover.test.ts — it's just unreachable through
+    // tests/tuning-server/discover.test.ts, it's just unreachable through
     // this specific HTTP route, which is a property of the routing, not a gap.
     // What we CAN and must prove at the HTTP layer is that the guard actually
     // runs before any filesystem access: a wrong-prefix path is guaranteed to
@@ -274,7 +300,7 @@ describe("tuning server, Workbench notification after write", () => {
     };
     const res = await post();
     const body = await res.json();
-    // The bytes are on disk either way — an unreachable editor must not turn a
+    // The bytes are on disk either way, an unreachable editor must not turn a
     // completed write into a failed request.
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");

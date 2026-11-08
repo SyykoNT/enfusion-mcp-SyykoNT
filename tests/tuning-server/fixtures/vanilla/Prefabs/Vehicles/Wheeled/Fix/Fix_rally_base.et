@@ -1,0 +1,24 @@
+Vehicle : "{11110000AAAA000A}Prefabs/Vehicles/Wheeled/Fix/Fix_base.et" {
+ components {
+  VehicleWheeledSimulation "{731B26FCA2F19855}" {
+   Simulation Wheeled "{4D8B26DEA5F25978}" {
+    Axles {
+     Axle "{4D8B26DF8CF2F3D8}" {
+      Steering Steering "{BBBB000000000002}" {
+       SteeringRatio 20
+      }
+      Tyre Tyre "{4D8B26DF33F76974}" : "{11110000AAAA000C}Prefabs/Vehicles/Core/Configs/Tyre/Tyre_Rally.conf" {
+       LateralFriction 1.4
+      }
+     }
+    }
+    TyreModel Pacejka2002 "{6A36E2190A2E41D5}" : "{11110000AAAA000D}Prefabs/Vehicles/Core/Configs/Pacejka/Pacejka2002_Rally.conf" {
+     NominalLoad 4600
+     Longitudinal Pacejka2002Longitudinal "{69E0A8514AD63F2E}" {
+      PDX1 0.885
+     }
+    }
+   }
+  }
+ }
+}

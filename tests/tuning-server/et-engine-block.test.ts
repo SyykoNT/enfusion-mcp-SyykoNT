@@ -132,7 +132,7 @@ describe("findEngineBlock", () => {
 });
 
 describe("readEngineFieldsFromBlock", () => {
-  it("reads all present fields from an inline block, ignoring RpmRedline", () => {
+  it("reads all present fields from an inline block, RpmRedline included", () => {
     const loc = findEngineBlock(INLINE_ENGINE)!;
     const fields = readEngineFieldsFromBlock(INLINE_ENGINE, loc);
     expect(fields).toEqual({
@@ -144,9 +144,9 @@ describe("readEngineFieldsFromBlock", () => {
       Steepness: 15,
       Friction: 41,
       RpmIdle: 840,
+      RpmRedline: 8500,
       RpmMax: 9000,
     });
-    expect("RpmRedline" in fields).toBe(false);
   });
 
   it("returns an empty object for a block that only overrides Output", () => {
@@ -168,7 +168,7 @@ describe("writeEngineFields", () => {
     expect(differing).toEqual(["     MaxPower 175"]);
   });
 
-  it("preserves the RpmRedline line it does not manage", () => {
+  it("leaves the RpmRedline line alone when only another field changes", () => {
     const loc = findEngineBlock(INLINE_ENGINE)!;
     const out = writeEngineFields(INLINE_ENGINE, loc, { MaxPower: 175 });
     expect(out).toContain("RpmRedline 8500");

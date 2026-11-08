@@ -48,17 +48,17 @@ other.AddChild(owner, -1, EAddChildFlags.AUTO_TRANSFORM);
 
 ---
 
-## Runtime Wheel Radius Swap — Confirmed Working (4WD Toggle Technique)
+## Runtime Wheel Radius Swap: Confirmed Working (4WD Toggle Technique)
 
 `WheelSetRadiusState(idx, value)` is fully functional at runtime. Confirmed behaviour:
 
-- Setting radius to `0.001` is accepted — `WheelGetRadiusState` returns `0.001`
-- `WheelHasContact` returns `false` after ~100ms (one physics tick) — engine stops detecting ground contact
+- Setting radius to `0.001` is accepted, `WheelGetRadiusState` returns `0.001`
+- `WheelHasContact` returns `false` after ~100ms (one physics tick), engine stops detecting ground contact
 - No crash, no physics instability at 0.001 radius
-- `WheelSetRadiusState` returns `0` on success (not the set value) — this is normal
-- `WheelGetRadius(idx)` always returns the **initial design radius** — use this to restore
+- `WheelSetRadiusState` returns `0` on success (not the set value), this is normal
+- `WheelGetRadius(idx)` always returns the **initial design radius**, use this to restore
 - Restore works cleanly: set back to `WheelGetRadius(idx)`, contact resumes immediately
-- Visual: front suspension extends fully when front wheels lose contact (body tilts to rear) — expected, not a bug
+- Visual: front suspension extends fully when front wheels lose contact (body tilts to rear), expected, not a bug
 
 **Use case: scripted 2WD↔4WD toggle via dual physics axles**
 - Physics asset needs two colocated wheel sets: "2WD" (rear driven) + "4WD" (all driven)
@@ -75,12 +75,12 @@ sim.WheelSetRadiusState(idx, sim.WheelGetRadius(idx)); // WheelGetRadius = initi
 
 ---
 
-## VehicleWheeledSimulation — Full Wheel API Reference
+## VehicleWheeledSimulation: Full Wheel API Reference
 
 ### Read-only
 | Method | Returns | Notes |
 |---|---|---|
-| `WheelGetRadius(idx)` | float | Initial/design radius — never changes |
+| `WheelGetRadius(idx)` | float | Initial/design radius, never changes |
 | `WheelGetRadiusState(idx)` | float | Current runtime radius |
 | `WheelGetRollingDrag(idx)` | float | Rolling drag % |
 | `WheelGetMass(idx)` | float | Initial mass |
@@ -102,33 +102,38 @@ sim.WheelSetRadiusState(idx, sim.WheelGetRadius(idx)); // WheelGetRadius = initi
 | Method | Notes |
 |---|---|
 | `WheelSetRadiusState(idx, radius)` | Runtime radius |
-| `WheelSetRollingDrag(idx, drag)` | Rolling resistance only — does NOT fight driven torque |
+| `WheelSetRollingDrag(idx, drag)` | Rolling resistance only, does NOT fight driven torque |
 | `WheelSetMassState(idx, mass)` | Runtime wheel mass |
 
 ### Key pitfalls
-- **No torque/RPM setter exists** — cannot stop a driven wheel from spinning via script
+- **No torque/RPM setter exists**, cannot stop a driven wheel from spinning via script
 - **`WheelSetRollingDrag`** stops a wheel at standstill but is ineffective while throttle is applied
-- **`WheelGetPosition(idx, 0)`** returns position at maximum suspension droop, ~0.7-0.8m below the visual wheel child entity's rest position — do NOT use 0.5m threshold for proximity matching, use 1.5m
-- **`WheelGetRadius`** always returns the design radius, never the runtime state — safe to store once at init
-- **No pivot/bone redirect API** — cannot change which bone a wheel slot tracks at runtime
-- **No component enable/disable API** — `GameComponent` has no `SetEnabled(false)` in script
+- **`WheelGetPosition(idx, 0)`** returns position at maximum suspension droop, ~0.7-0.8m below the visual wheel child entity's rest position, do NOT use 0.5m threshold for proximity matching, use 1.5m
+- **`WheelGetRadius`** always returns the design radius, never the runtime state, safe to store once at init
+- **No pivot/bone redirect API**, cannot change which bone a wheel slot tracks at runtime
+- **No component enable/disable API**, `GameComponent` has no `SetEnabled(false)` in script
 
 ---
 
-## Ghost Axle 4WD/2WD Toggle — Confirmed Working Pattern
+## Ghost Axle 4WD/2WD Toggle: Confirmed Working Pattern
 
 Two colocated axle pairs in the physics asset. Ghost pair has `TorqueShare 0` and starts at radius `0.001`.
+
+`TorqueShare` in Reforger 1.9 vanilla data (checked offline against the 1.9.0.37 paks, not in any script API page):
+- It is a number on the `Axle` block, 30 axle lines in 14 vehicle prefabs, and vanilla never sets it to 0: `UAZ469_base.et` lines 855 and 892 (0.5 and 0.5), `BTR70_Base.et` lines 1245, 1288, 1332 and 1365 (0.25 each), `Ural4320.et` lines 874, 911 and 938 (0.3, 0.35, 0.35), `S105_base.et` line 1018 (1, a 2WD rear axle).
+- It sits next to a centre differential (`Differentials` > `Differential Diff_C`, `UAZ469_base.et` lines 845 to 851) in 9 prefabs and with no centre differential in 5 (S105, S1203, T601, V2101, Z7211). Ural4320 and BTR70 chain several centre differentials (`Parent "Diff_C"`).
+- Whether the simulation still reads `TorqueShare` next to a differential tree is unverified; the tuning server shows it read-only for that reason.
 
 **In 4WD:** real axles at full radius, ghost at 0.001 (no contact).
 **In 2WD (RWD):** front real wheels shrunk to 0.001, rear real wheels stay full. Ghost front wheels grown to full radius to bear front load (prevents nose-dive). Ghost rear stays at 0.001.
 
 **Front wheel visual spinning in 2WD:** W0/W1 receive drivetrain torque even at radius 0.001 (contact=0). RPM reaches ~68-140 while driving. No API to stop this. Rolling drag=1.0 reduces but does not eliminate spin. Only solution is hiding the wheel mesh child entity.
 
-**Child entity visibility:** `EntityFlags.VISIBLE` on child `IEntity` works — confirmed hides mesh. But:
+**Child entity visibility:** `EntityFlags.VISIBLE` on child `IEntity` works, confirmed hides mesh. But:
 - Vehicle child entities do NOT have names (`GetName()` returns `''`)
 - Child[0] at runtime is the seated player character, not a wheel
 - Total children: ~29 for M151A2 including particles, lights, wheel meshes, driver seat etc.
-- `WheelGetPosition` returns maximum-droop local coords — must convert with `owner.CoordToParent()` and use 1.5m threshold (not 0.5m) for proximity matching
+- `WheelGetPosition` returns maximum-droop local coords, must convert with `owner.CoordToParent()` and use 1.5m threshold (not 0.5m) for proximity matching
 
 ---
 

@@ -1,284 +1,86 @@
-// tests/tuning-server/resolve-engine.test.ts
 import { describe, it, expect } from "vitest";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveEngineFields } from "../../src/tuning-server/resolve-engine.js";
+import { ENGINE_FIELD_KEYS } from "../../src/tuning-server/engine-conf.js";
 
-const MOD_ET_WITH_REF = `Vehicle : "{BBBB}Base.et" {
- components {
-  VehicleWheeledSimulation "{731B26FCA2F19855}" {
-   Simulation Wheeled "{4D8B26DEA5F25978}" {
-    Engine Engine Engine : "{CEA5458AC6B97274}Prefabs/Vehicles/Core/Configs/Engines/Engine_M151.conf" {
-     MaxPower 75
-    }
-   }
-  }
- }
-}
-`;
+const VANILLA = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "vanilla");
+const P = "Prefabs/Vehicles/";
+const CFG = `${P}Core/Configs/Engines/`;
+const MOD = `${P}Wheeled/Mod/Mod.et`;
 
-const ENGINE_M151_CONF = `Engine {
- Inertia 0.3
- MaxPower 53
- MaxTorque 176
- RpmMaxPower 4000
- RpmMaxTorque 1800
- Steepness 15
- Friction 53
- RpmIdle 840
- RpmMax 6000
-}
-`;
-
-const MOD_ET_NO_REF = `Vehicle : "{CCCC}Base.et" {
- components {
-  VehicleWheeledSimulation "{731B26FCA2F19855}" {
-   Simulation Wheeled "{4D8B26DEA5F25978}" {
-    Engine Engine Engine {
-     MaxPower 120
-    }
-   }
-  }
- }
-}
-`;
-
-const VANILLA_ET_INLINE = `Vehicle : "{DDDD}Base.et" {
- components {
-  VehicleWheeledSimulation "{731B26FCA2F19855}" {
-   Simulation Wheeled "{4D8B26DEA5F25978}" {
-    Engine Engine Engine {
-     Inertia 1.3
-     MaxPower 103
-     MaxTorque 383
-     RpmMaxPower 3300
-     RpmMaxTorque 2500
-     Steepness 12
-     Friction 140
-     RpmIdle 600
-     RpmMax 4000
-    }
-   }
-  }
- }
-}
-`;
-
-const MOD_ET_M998_NO_REF = `Vehicle : "{EEEE}Base.et" {
- components {
-  VehicleWheeledSimulation "{731B26FCA2F19855}" {
-   Simulation Wheeled "{4D8B26DEA5F25978}" {
-    Engine Engine Engine {
-     MaxPower 150
-    }
-   }
-  }
- }
-}
-`;
-
-const VANILLA_ET_M998_WITH_REF = `Vehicle : "{FFFF}Base.et" {
- components {
-  VehicleWheeledSimulation "{731B26FCA2F19855}" {
-   Simulation Wheeled "{4D8B26DEA5F25978}" {
-    Engine Engine Engine : "{9A9A9A9A9A9A9A9A}Prefabs/Vehicles/Core/Configs/Engines/Engine_M998.conf" {
-    }
-   }
-  }
- }
-}
-`;
-
-const ENGINE_M998_CONF = `Engine {
- Inertia 0.5
- MaxPower 135
- MaxTorque 305
- RpmMaxPower 3400
- RpmMaxTorque 2000
- Steepness 14
- Friction 90
- RpmIdle 700
- RpmMax 4200
-}
-`;
-
-const MOD_ET_M35_NO_REF = `Vehicle : "{1111}Base.et" {
- components {
-  VehicleWheeledSimulation "{731B26FCA2F19855}" {
-   Simulation Wheeled "{4D8B26DEA5F25978}" {
-    Engine Engine Engine {
-     MaxPower 200
-    }
-   }
-  }
- }
-}
-`;
-
-const VANILLA_ET_M35_WITH_REF_AND_INLINE = `Vehicle : "{2222}Base.et" {
- components {
-  VehicleWheeledSimulation "{731B26FCA2F19855}" {
-   Simulation Wheeled "{4D8B26DEA5F25978}" {
-    Engine Engine Engine : "{3333333333333333}Prefabs/Vehicles/Core/Configs/Engines/Engine_M35.conf" {
-     Steepness 25
-    }
-   }
-  }
- }
-}
-`;
-
-const ENGINE_M35_CONF = `Engine {
- Inertia 0.7
- MaxPower 130
- MaxTorque 420
- RpmMaxPower 2800
- RpmMaxTorque 1400
- Steepness 18
- Friction 110
- RpmIdle 650
- RpmMax 3200
-}
-`;
+const engine = (fields: string) =>
+  ` components {\n  VehicleWheeledSimulation "{731B26FCA2F19855}" {\n   Simulation Wheeled "{4D8B26DEA5F25978}" {\n    Engine Engine Engine {\n${fields}    }\n   }\n  }\n }\n`;
+const leaf = (parent: string, body = "") => `Vehicle : "{ABCD0000AAAA0001}${P}${parent}" {\n${body}}\n`;
 
 describe("resolveEngineFields", () => {
-  it("marks a field written in the mod .et as overridden and the rest as inherited", () => {
-    const r = resolveEngineFields({
-      modText: MOD_ET_WITH_REF,
-      relPath: "Prefabs/Vehicles/Wheeled/M151A2/M151A2.et",
-      extractedPath: "E:/mirror",
-      readFile: (p) => (p.includes("Engine_M151.conf") ? ENGINE_M151_CONF : null),
-    });
-    expect(r.MaxPower).toEqual({ value: 75, source: "overridden" });
-    expect(r.MaxTorque).toEqual({ value: 176, source: "inherited" });
-    expect(r.RpmIdle).toEqual({ value: 840, source: "inherited" });
+  const resolve = (modText: string, relPath = MOD) => resolveEngineFields({ modText, relPath, extractedPath: VANILLA });
+
+  it("returns the 1.9 key set: RpmRedline and InertiaCoupled added, Inertia and Friction kept", () => {
+    expect(ENGINE_FIELD_KEYS).toEqual([
+      "MaxPower", "MaxTorque", "RpmMaxPower", "RpmMaxTorque", "Steepness", "RpmIdle",
+      "RpmRedline", "RpmMax", "Inertia", "InertiaCoupled", "Friction",
+    ]);
+    expect(Object.keys(resolve(leaf("Core/Wheeled_Base.et")))).toEqual(ENGINE_FIELD_KEYS);
   });
 
-  it("falls back to the same-path vanilla .et when the block has no conf reference", () => {
-    const r = resolveEngineFields({
-      modText: MOD_ET_NO_REF,
-      relPath: "Prefabs/Vehicles/Wheeled/BRDM2/BRDM2_base.et",
-      extractedPath: "E:/mirror",
-      readFile: (p) => (p.includes("BRDM2_base.et") ? VANILLA_ET_INLINE : null),
-    });
-    expect(r.MaxPower).toEqual({ value: 120, source: "overridden" });
-    expect(r.Steepness).toEqual({ value: 12, source: "inherited" });
-    expect(r.Friction).toEqual({ value: 140, source: "inherited" });
+  it("marks an inline value own, conf and parent values inherited, and component defaults template", () => {
+    const r = resolve(leaf("Wheeled/Fix/Fix.et", engine("     MaxPower 75\n")));
+    expect(r.MaxPower).toEqual({ value: 75, source: "own", file: MOD });
+    expect(r.MaxTorque).toEqual({ value: 190, source: "inherited", file: `${CFG}Engine_Fix.conf` });
+    expect(r.InertiaCoupled.value).toBe(0.3);
+    // Two confs up, and nearer than the template's own default (6000).
+    expect(r.RpmRedline).toEqual({ value: 5800, source: "inherited", file: `${CFG}Engine_Base.conf` });
+    expect(r.RpmIdle.value).toBe(800);
+    expect(r.Inertia.value).toBe(0.4);
+    expect(r.Friction.value).toBe(70);
+    // In no prefab or conf: only the component template has it.
+    expect(r.RpmMax).toEqual({ value: 7000, source: "template", file: `${P}Core/Components/VehicleWheeledSimulation_Base.ct` });
   });
 
-  it("marks fields unresolved when no baseline can be read", () => {
-    const r = resolveEngineFields({
-      modText: MOD_ET_NO_REF,
-      relPath: "Prefabs/Vehicles/Wheeled/BRDM2/BRDM2_base.et",
-      extractedPath: undefined,
-      readFile: () => null,
-    });
-    expect(r.MaxPower).toEqual({ value: 120, source: "overridden" });
-    expect(r.Steepness).toEqual({ value: null, source: "unresolved" });
+  it("falls back to the same-path vanilla prefab for a mod prefab that shadows it", () => {
+    // The overlay names a different parent; the vanilla Fix.et at the same path is still consulted.
+    const r = resolve(leaf("Core/Wheeled_Base.et"), `${P}Wheeled/Fix/Fix.et`);
+    expect(r.MaxPower).toEqual({ value: 60, source: "inherited", file: `${CFG}Engine_Fix.conf` });
   });
 
-  it("falls back through a vanilla .et that itself only references a conf", () => {
-    const r = resolveEngineFields({
-      modText: MOD_ET_M998_NO_REF,
-      relPath: "Prefabs/Vehicles/Wheeled/M998/M998_base.et",
-      extractedPath: "E:/mirror",
-      readFile: (p) =>
-        p.includes("M998_base.et")
-          ? VANILLA_ET_M998_WITH_REF
-          : p.includes("Engine_M998.conf")
-            ? ENGINE_M998_CONF
-            : null,
-    });
-    expect(r.MaxPower).toEqual({ value: 150, source: "overridden" });
-    expect(r.MaxTorque).toEqual({ value: 305, source: "inherited" });
-    expect(r.RpmIdle).toEqual({ value: 700, source: "inherited" });
-  });
-
-  it("reads the vanilla conf baseline even when the vanilla block also has an inline override", () => {
-    const r = resolveEngineFields({
-      modText: MOD_ET_M35_NO_REF,
-      relPath: "Prefabs/Vehicles/Wheeled/M35/M35_base.et",
-      extractedPath: "E:/mirror",
-      readFile: (p) =>
-        p.includes("M35_base.et")
-          ? VANILLA_ET_M35_WITH_REF_AND_INLINE
-          : p.includes("Engine_M35.conf")
-            ? ENGINE_M35_CONF
-            : null,
-    });
-    expect(r.MaxPower).toEqual({ value: 200, source: "overridden" });
-    // Steepness is overridden inline in the vanilla block (25), which must win
-    // over the conf's own Steepness (18).
-    expect(r.Steepness).toEqual({ value: 25, source: "inherited" });
-    // MaxTorque is only in the referenced conf, not inline in the vanilla block,
-    // so it must still resolve via confFromRef even though the vanilla block
-    // also has an inline field on another key.
-    expect(r.MaxTorque).toEqual({ value: 420, source: "inherited" });
-    expect(r.RpmIdle).toEqual({ value: 650, source: "inherited" });
-  });
-
-  it("returns all nine keys regardless of what resolved", () => {
-    const r = resolveEngineFields({
-      modText: MOD_ET_NO_REF,
-      relPath: "Prefabs/Vehicles/Wheeled/X/X.et",
-      readFile: () => null,
-    });
-    expect(Object.keys(r).sort()).toEqual(
-      ["Friction", "Inertia", "MaxPower", "MaxTorque", "RpmIdle", "RpmMax", "RpmMaxPower", "RpmMaxTorque", "Steepness"].sort()
-    );
+  it("leaves values unresolved when no baseline can be read", () => {
+    const r = resolveEngineFields({ modText: leaf("Wheeled/Fix/Fix.et", engine("     MaxPower 75\n")), relPath: MOD, readFile: () => null });
+    expect(r.MaxPower).toEqual({ value: 75, source: "own", file: MOD });
+    expect(r.MaxTorque).toEqual({ value: null, source: "unresolved" });
   });
 });
 
 describe("resolveEngineFields, parent chain", () => {
   // join() gives OS-native separators; normalise back to the map's posix keys.
   const norm = (p: string) => p.split("\\").join("/").replace("/addon/", "");
-
   const et = (parent: string | null, fields: string) =>
-    `Vehicle${parent ? ` : "${parent}"` : ""} {\n components {\n  VehicleWheeledSimulation "{7}" {\n   Simulation Wheeled "{4}" {\n    Engine Engine Engine {\n${fields}\n    }\n   }\n  }\n }\n}\n`;
+    `Vehicle${parent ? ` : "${parent}"` : ""} {\n${engine(fields)}}\n`;
+  const resolve = (files: Record<string, string>, child: string) =>
+    resolveEngineFields({ modText: child, relPath: "A/Child.et", addonPath: "/addon", readFile: (p) => files[norm(p)] ?? null });
 
   it("takes a field deleted from the child from its nearest ancestor", () => {
-    // The child overrides only MaxPower; RpmMax was set back to default and so is
-    // absent from the file entirely, exactly what Workbench writes.
-    const files: Record<string, string> = {
-      "A/Base.et": et(null, "     RpmMax 6000\n     MaxPower 50"),
-      "A/Mid.et": et("{BBBB2222}A/Base.et", "     MaxPower 60"),
-    };
-    const child = et("{AAAA1111}A/Mid.et", "     MaxPower 75");
-
-    const r = resolveEngineFields({
-      modText: child,
-      relPath: "A/Child.et",
-      addonPath: "/addon",
-      readFile: (p) => files[norm(p)] ?? null,
-    });
-
-    expect(r.MaxPower).toEqual({ value: 75, source: "overridden" });
-    expect(r.RpmMax).toEqual({ value: 6000, source: "inherited" });
+    const r = resolve(
+      { "A/Base.et": et(null, "     RpmMax 6000\n     MaxPower 50\n"), "A/Mid.et": et("{BBBB2222}A/Base.et", "     MaxPower 60\n") },
+      et("{AAAA1111}A/Mid.et", "     MaxPower 75\n")
+    );
+    expect(r.MaxPower).toEqual({ value: 75, source: "own", file: "A/Child.et" });
+    expect(r.RpmMax).toEqual({ value: 6000, source: "inherited", file: "A/Base.et" });
   });
 
   it("prefers the nearest ancestor when several define the same field", () => {
-    const files: Record<string, string> = {
-      "A/Base.et": et(null, "     RpmMax 6000"),
-      "A/Mid.et": et("{BBBB2222}A/Base.et", "     RpmMax 7000"),
-    };
-    const r = resolveEngineFields({
-      modText: et("{AAAA1111}A/Mid.et", "     MaxPower 75"),
-      relPath: "A/Child.et",
-      addonPath: "/addon",
-      readFile: (p) => files[norm(p)] ?? null,
-    });
-    expect(r.RpmMax).toEqual({ value: 7000, source: "inherited" });
+    const r = resolve(
+      { "A/Base.et": et(null, "     RpmMax 6000\n"), "A/Mid.et": et("{BBBB2222}A/Base.et", "     RpmMax 7000\n") },
+      et("{AAAA1111}A/Mid.et", "     MaxPower 75\n")
+    );
+    expect(r.RpmMax.value).toBe(7000);
   });
 
   it("survives a cyclic parent reference instead of hanging", () => {
-    const files: Record<string, string> = {
-      "A/X.et": et("{CCCC3333}A/Y.et", "     RpmMax 6000"),
-      "A/Y.et": et("{CCCC3333}A/X.et", "     MaxPower 10"),
-    };
-    const r = resolveEngineFields({
-      modText: et("{CCCC3333}A/X.et", ""),
-      relPath: "A/Child.et",
-      addonPath: "/addon",
-      readFile: (p) => files[norm(p)] ?? null,
-    });
+    const r = resolve(
+      { "A/X.et": et("{CCCC3333}A/Y.et", "     RpmMax 6000\n"), "A/Y.et": et("{CCCC3333}A/X.et", "     MaxPower 10\n") },
+      et("{CCCC3333}A/X.et", "")
+    );
     expect(r.RpmMax.value).toBe(6000);
   });
 });

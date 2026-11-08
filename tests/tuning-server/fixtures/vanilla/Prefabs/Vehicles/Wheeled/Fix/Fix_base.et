@@ -1,0 +1,74 @@
+Vehicle : "{11110000AAAA0001}Prefabs/Vehicles/Core/Wheeled_Base.et" {
+ components {
+  VehicleWheeledSimulation "{731B26FCA2F19855}" {
+   Simulation Wheeled "{4D8B26DEA5F25978}" {
+    Engine Engine Engine : "{11110000AAAA0002}Prefabs/Vehicles/Core/Configs/Engines/Engine_Fix.conf" {
+     Output "Clutch"
+    }
+    Clutch Clutch Clutch {
+     MaxClutchTorque 200
+    }
+    Gearbox Gearbox Gearbox : "{11110000AAAA0003}Prefabs/Vehicles/Core/Configs/Transmissions/Transmission_Fix.conf" {
+     Reverse 4.5
+     Output "Diff_C"
+    }
+    Differentials {
+     Differential Diff_C {
+      Parent "Gearbox"
+      Type Locked
+      Output0 "Diff_01"
+      Output1 "Diff_02"
+     }
+    }
+    Axles {
+     Axle "{4D8B26DF957A8E1C}" {
+      TorqueShare 0.5
+      Differential Differential Diff_01 : "{11110000AAAA0004}Prefabs/Vehicles/Core/Configs/Differentials/Diff_Fix.conf" {
+       Parent "Diff_C"
+       Output0 "Wheel_L01"
+       Output1 "Wheel_R01"
+      }
+      Steering Steering "{AAAA000000000001}" : "{11110000AAAA0005}Prefabs/Vehicles/Core/Configs/Steering/Steering_Fix.conf" {
+       SteeringRatio 15
+       ScrubRadius -0.02
+      }
+      Suspension Suspension "{4D8B26DFF8859A7B}" : "{11110000AAAA0006}Prefabs/Vehicles/Core/Configs/Suspension/Suspension_Fix.conf" {
+       MaxSteeringAngle 28
+      }
+      Wheel Wheel "{4D8B26DFFE211745}" {
+       Parent "Diff_01"
+       Radius 0.37
+      }
+      Tyre Tyre "{4D8B26DFFD85E58F}" : "{11110000AAAA0007}Prefabs/Vehicles/Core/Configs/Tyre/Tyre_Fix.conf" {
+      }
+      Swaybar Swaybar "{66A2C7C16642557A}" {
+       Stiffness 2500
+      }
+     }
+     Axle "{4D8B26DF8CF2F3D8}" {
+      TorqueShare 0.5
+      Differential Differential Diff_02 {
+       Parent "Diff_C"
+       Ratio 5.1
+       Output0 "Wheel_L02"
+       Output1 "Wheel_R02"
+      }
+      Steering Steering "{AAAA000000000002}" : "{11110000AAAA0008}Prefabs/Vehicles/Core/Configs/Steering/Steering_Fixed.conf" {
+      }
+      Suspension Suspension "{4D8B26DF2B10AE05}" : "{11110000AAAA0006}Prefabs/Vehicles/Core/Configs/Suspension/Suspension_Fix.conf" {
+      }
+      Tyre Tyre "{4D8B26DF33F76974}" : "{11110000AAAA0007}Prefabs/Vehicles/Core/Configs/Tyre/Tyre_Fix.conf" {
+      }
+     }
+    }
+    Aerodynamics Aerodynamics "{5562A623B55A4C07}" {
+     DragCoefficient 0.4
+    }
+    TyreModel Pacejka2002 "{6A38CB253C2D7203}" : "{11110000AAAA0009}Prefabs/Vehicles/Core/Configs/Pacejka/Pacejka2002_Fix.conf" {
+     NominalLoad 5000
+     NominalRadius 0.37
+    }
+   }
+  }
+ }
+}
