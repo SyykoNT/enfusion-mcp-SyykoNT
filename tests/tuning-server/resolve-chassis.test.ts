@@ -118,6 +118,13 @@ describe("axles", () => {
     expect(fix.aerodynamics.DragCoefficient.value).toBe(0.4);
   });
 
+  it("lets an override copy see the vanilla leaf at its path before the leaf's parents", () => {
+    const shadow = `${P}Wheeled/Fix/Fix_shadow.et`;
+    const r = resolveChassis({ modText: leaf("Wheeled/Fix/Fix_base.et"), relPath: shadow, extractedPath: VANILLA });
+    // Fix_shadow.et says 0.55; its parent Fix_base.et says 0.4.
+    expect(r.aerodynamics.DragCoefficient).toEqual({ value: 0.55, source: "inherited", file: shadow });
+  });
+
   it("shows TorqueShare read-only with a note, and Swaybar only where one exists", () => {
     const [front, rear] = fix.axles;
     expect(front.torqueShare.value).toBe(0.5);

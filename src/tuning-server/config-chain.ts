@@ -54,7 +54,7 @@ function warnOnce(key: string, message: string): void {
 
 /** A reference comes from file content, so it must stay inside the data root it is joined to. */
 function isSafeRel(rel: string): boolean {
-  return !(rel.includes("..") || rel.includes("\\") || rel.startsWith("/") || /^[A-Za-z]:/.test(rel));
+  return !(rel.includes("..") || rel.includes("\\") || rel.includes(":") || rel.startsWith("/"));
 }
 
 export interface ReadSources {
@@ -82,7 +82,7 @@ export function makeReader(src: ReadSources): Reader {
   const read = src.readFile ?? defaultReadFile;
   const safe = (rel: string): boolean => {
     if (isSafeRel(rel)) return true;
-    warnOnce(`unsafe:${rel}`, `tuning-server: ignoring unsafe reference "${rel}"`);
+    warnOnce(`unsafe:${rel}`, `tuning-server: ignoring unsafe reference ${JSON.stringify(rel)}`);
     return false;
   };
   const fromFolder = (root: string, rel: string) => read(join(root, ...rel.split("/")));
@@ -284,8 +284,8 @@ const CT_SIM_PATH = ["Simulation"];
 
 /**
  * Every file the vehicle's simulation values can come from, nearest first:
- * the mod .et, its parent chain (mod copy then base-game copy at each step),
- * the same-path vanilla .et and its parent chain, then the component template
+ * the mod .et, the same-path vanilla .et (an override sits on top of its original),
+ * then the parent chain (mod copy then base-game copy at each step), then the component template
  * (`.ct`) the VehicleWheeledSimulation component references, which holds the
  * root defaults (Wheeled_Base.et points it at VehicleWheeledSimulation_Base.ct).
  * Depth-capped and cycle-guarded so a malformed graph cannot hang a request.
@@ -311,15 +311,13 @@ export function collectSources(reader: Reader, modText: string, relPath: string)
     }
   };
 
-  climb(modText);
-  // A mod prefab that shadows a vanilla one of the same path inherits from it without
-  // naming it as a parent, so it is not reachable by the climb above. Like the engine
-  // resolver always did, it ranks after the explicit parent chain.
+  // A Workbench override copy holds only the addon's changes, applied on top of the original,
+  // and carries the original's own parent line. So the same-path vanilla file ranks right
+  // after the mod .et, before any parent; the parent chain is climbed from both afterwards.
   const vanilla = reader.base(relPath);
-  if (vanilla) {
-    out.push(et("inherited", relPath, vanilla));
-    climb(vanilla);
-  }
+  if (vanilla) out.push(et("inherited", relPath, vanilla));
+  climb(modText);
+  if (vanilla) climb(vanilla);
 
   const templates: string[] = [];
   for (const s of out) {

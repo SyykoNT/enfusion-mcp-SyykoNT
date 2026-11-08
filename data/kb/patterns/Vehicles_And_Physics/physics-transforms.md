@@ -53,12 +53,12 @@ other.AddChild(owner, -1, EAddChildFlags.AUTO_TRANSFORM);
 `WheelSetRadiusState(idx, value)` is fully functional at runtime. Confirmed behaviour:
 
 - Setting radius to `0.001` is accepted, `WheelGetRadiusState` returns `0.001`
-- `WheelHasContact` returns `false` after ~100ms (one physics tick), engine stops detecting ground contact
+- `WheelHasContact` returns `false` after ~100ms (one physics tick): the engine stops detecting ground contact
 - No crash, no physics instability at 0.001 radius
-- `WheelSetRadiusState` returns `0` on success (not the set value), this is normal
-- `WheelGetRadius(idx)` always returns the **initial design radius**, use this to restore
+- `WheelSetRadiusState` returns `0` on success (not the set value). This is normal
+- `WheelGetRadius(idx)` always returns the **initial design radius**: use this to restore
 - Restore works cleanly: set back to `WheelGetRadius(idx)`, contact resumes immediately
-- Visual: front suspension extends fully when front wheels lose contact (body tilts to rear), expected, not a bug
+- Visual: front suspension extends fully when front wheels lose contact (body tilts to rear). This is expected, not a bug
 
 **Use case: scripted 2WD↔4WD toggle via dual physics axles**
 - Physics asset needs two colocated wheel sets: "2WD" (rear driven) + "4WD" (all driven)
@@ -106,12 +106,12 @@ sim.WheelSetRadiusState(idx, sim.WheelGetRadius(idx)); // WheelGetRadius = initi
 | `WheelSetMassState(idx, mass)` | Runtime wheel mass |
 
 ### Key pitfalls
-- **No torque/RPM setter exists**, cannot stop a driven wheel from spinning via script
+- **No torque/RPM setter exists**: cannot stop a driven wheel from spinning via script
 - **`WheelSetRollingDrag`** stops a wheel at standstill but is ineffective while throttle is applied
-- **`WheelGetPosition(idx, 0)`** returns position at maximum suspension droop, ~0.7-0.8m below the visual wheel child entity's rest position, do NOT use 0.5m threshold for proximity matching, use 1.5m
-- **`WheelGetRadius`** always returns the design radius, never the runtime state, safe to store once at init
-- **No pivot/bone redirect API**, cannot change which bone a wheel slot tracks at runtime
-- **No component enable/disable API**, `GameComponent` has no `SetEnabled(false)` in script
+- **`WheelGetPosition(idx, 0)`** returns position at maximum suspension droop, ~0.7-0.8m below the visual wheel child entity's rest position. Do NOT use a 0.5m threshold for proximity matching, use 1.5m
+- **`WheelGetRadius`** always returns the design radius, never the runtime state. It is safe to store once at init
+- **No pivot/bone redirect API**: cannot change which bone a wheel slot tracks at runtime
+- **No component enable/disable API**: `GameComponent` has no `SetEnabled(false)` in script
 
 ---
 
@@ -133,7 +133,7 @@ Two colocated axle pairs in the physics asset. Ghost pair has `TorqueShare 0` an
 - Vehicle child entities do NOT have names (`GetName()` returns `''`)
 - Child[0] at runtime is the seated player character, not a wheel
 - Total children: ~29 for M151A2 including particles, lights, wheel meshes, driver seat etc.
-- `WheelGetPosition` returns maximum-droop local coords, must convert with `owner.CoordToParent()` and use 1.5m threshold (not 0.5m) for proximity matching
+- `WheelGetPosition` returns maximum-droop local coords: convert with `owner.CoordToParent()` and use 1.5m threshold (not 0.5m) for proximity matching
 
 ---
 

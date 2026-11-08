@@ -38,10 +38,13 @@ describe("resolveEngineFields", () => {
     expect(r.RpmMax).toEqual({ value: 7000, source: "template", file: `${P}Core/Components/VehicleWheeledSimulation_Base.ct` });
   });
 
-  it("falls back to the same-path vanilla prefab for a mod prefab that shadows it", () => {
-    // The overlay names a different parent; the vanilla Fix.et at the same path is still consulted.
-    const r = resolve(leaf("Core/Wheeled_Base.et"), `${P}Wheeled/Fix/Fix.et`);
-    expect(r.MaxPower).toEqual({ value: 60, source: "inherited", file: `${CFG}Engine_Fix.conf` });
+  it("ranks the same-path vanilla prefab right after the override, before its own parents", () => {
+    // Workbench writes the original's own parent line into the override copy, which holds no values.
+    const shadow = `${P}Wheeled/Fix/Fix_shadow.et`;
+    const r = resolve(leaf("Wheeled/Fix/Fix_base.et"), shadow);
+    // Fix_shadow.et says 90; its parent Fix_base.et would give 60 from Engine_Fix.conf.
+    expect(r.MaxPower).toEqual({ value: 90, source: "inherited", file: shadow });
+    expect(r.MaxTorque).toEqual({ value: 190, source: "inherited", file: `${CFG}Engine_Fix.conf` });
   });
 
   it("leaves values unresolved when no baseline can be read", () => {

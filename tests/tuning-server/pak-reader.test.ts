@@ -87,6 +87,9 @@ describe("makeReader", () => {
       "{AAAA1111AAAA1111}Cfg\\..\\x.conf",
       "{AAAA1111AAAA1111}C:/Windows/x.conf",
       "{AAAA1111AAAA1111}/etc/x.conf",
+      "{AAAA1111AAAA1111}Cfg/a.conf:stream",
+      "{AAAA1111AAAA1111}Cfg/C:/x.conf",
+      "{AAAA1111AAAA1111}../x\nforged log line",
       "..",
     ];
     for (const ref of bad) {
@@ -98,6 +101,8 @@ describe("makeReader", () => {
     // One line per distinct bad path, however often it is asked for.
     expect(log).toHaveBeenCalledTimes(bad.length);
     expect(r.ref("{AAAA1111AAAA1111}Cfg/A.conf")).toBe("text");
+    // A hostile ref cannot split the log line.
+    for (const [msg] of log.mock.calls) expect(String(msg)).not.toMatch(/[\r\n]/);
     log.mockRestore();
   });
 });
