@@ -49,6 +49,7 @@ class EMCP_WB_LayersResponse : JsonApiStruct
 	// Layer data collected for list
 	ref array<int> m_aLayerIDs;
 	ref array<int> m_aEntityCounts;
+	ref array<string> m_aLayerPaths;
 
 	void EMCP_WB_LayersResponse()
 	{
@@ -66,6 +67,7 @@ class EMCP_WB_LayersResponse : JsonApiStruct
 
 		m_aLayerIDs = {};
 		m_aEntityCounts = {};
+		m_aLayerPaths = {};
 	}
 
 	override void OnPack()
@@ -77,6 +79,7 @@ class EMCP_WB_LayersResponse : JsonApiStruct
 			{
 				StartObject("");
 				StoreInteger("layerID", m_aLayerIDs[i]);
+				StoreString("path", m_aLayerPaths[i]);
 				StoreInteger("entityCount", m_aEntityCounts[i]);
 				EndObject();
 			}
@@ -165,39 +168,44 @@ class EMCP_WB_Layers : NetApiHandler
 
 		if (req.action == "list")
 		{
-			// Enumerate layers by scanning all entities and collecting unique layer IDs
-			int entityCount = api.GetEditorEntityCount();
-			map<int, int> layerCounts = new map<int, int>();
+			// Layers named by the sub-scene's own list first, so empty ones show. A folder that is not a layer fails the
+			// path -> id -> path round trip and is skipped.
+			array<string> folders = {};
+			api.GetSubsceneFolders(sub, folders);
+			foreach (string folder : folders)
+			{
+				int folderID = api.GetSubsceneLayerId(sub, folder);
+				if (api.GetSubsceneLayerPath(sub, folderID) != folder || resp.m_aLayerIDs.Contains(folderID))
+					continue;
+				resp.m_aLayerIDs.Insert(folderID);
+				resp.m_aLayerPaths.Insert(folder);
+				resp.m_aEntityCounts.Insert(0);
+			}
 
+			// Count the entities of this sub-scene only: the editor also holds the parent scenes' entities, whose layer IDs mean other layers
+			int entityCount = api.GetEditorEntityCount();
+			int counted = 0;
 			for (int i = 0; i < entityCount; i++)
 			{
 				IEntitySource entSrc = api.GetEditorEntity(i);
-				if (!entSrc)
+				if (!entSrc || entSrc.GetSubScene() != sub)
 					continue;
 
+				counted++;
 				int lid = entSrc.GetLayerID();
-				if (layerCounts.Contains(lid))
+				int at = resp.m_aLayerIDs.Find(lid);
+				if (at < 0)
 				{
-					int current = layerCounts.Get(lid);
-					layerCounts.Set(lid, current + 1);
+					at = resp.m_aLayerIDs.Count();
+					resp.m_aLayerIDs.Insert(lid);
+					resp.m_aLayerPaths.Insert(api.GetSubsceneLayerPath(sub, lid));
+					resp.m_aEntityCounts.Insert(0);
 				}
-				else
-				{
-					layerCounts.Set(lid, 1);
-				}
-			}
-
-			// Output collected layers
-			for (int k = 0; k < layerCounts.Count(); k++)
-			{
-				int layerKey = layerCounts.GetKey(k);
-				int layerCount = layerCounts.GetElement(k);
-				resp.m_aLayerIDs.Insert(layerKey);
-				resp.m_aEntityCounts.Insert(layerCount);
+				resp.m_aEntityCounts[at] = resp.m_aEntityCounts[at] + 1;
 			}
 
 			resp.status = "ok";
-			resp.message = "Found " + layerCounts.Count().ToString() + " layers across " + entityCount.ToString() + " entities";
+			resp.message = "Found " + resp.m_aLayerIDs.Count().ToString() + " layers in sub-scene " + sub.ToString() + ". Entity counts cover the " + counted.ToString() + " entities of that sub-scene only (the editor holds " + entityCount.ToString() + " across all sub-scenes)";
 		}
 		else if (req.action == "getActive")
 		{

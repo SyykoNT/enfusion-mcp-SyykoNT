@@ -142,6 +142,55 @@ class EMCP_WB_ModifyEntity : NetApiHandler
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! "" when setProperty may go ahead. An enum property (INTEGER with enum names) given a name or number not in its list is
+	//! refused with the valid names; a path or property this cannot resolve is left to the engine, as before.
+	static string EnumRefusal(IEntitySource entSrc, string propertyPath, string key, string value)
+	{
+		BaseContainer cont = entSrc;
+		if (propertyPath != "")
+		{
+			// ReadProps.Navigate takes "@Component/Object[i]"; setProperty takes "Component.Object[i]"
+			string navPath = "@" + propertyPath;
+			navPath.Replace(".", "/");
+			string failedAt;
+			cont = EMCP_WB_ReadProps.Navigate(entSrc, navPath, failedAt);
+			if (!cont)
+				return "";
+		}
+
+		int numVars = cont.GetNumVars();
+		for (int v = 0; v < numVars; v++)
+		{
+			if (cont.GetVarName(v) != key)
+				continue;
+
+			if (cont.GetDataVarType(v) != DataVarType.INTEGER)
+				return "";
+
+			array<string> names = {};
+			array<int> values = {};
+			cont.GetEnumValues(v, names, values);
+			if (names.Count() == 0 || names.Contains(value))
+				return "";
+
+			// shortcut: the engine may take a member's number as text; allowing it is unverified, so it is not refused
+			int number = value.ToInt();
+			if (number.ToString() == value && values.Contains(number))
+				return "";
+
+			string list;
+			foreach (string enumName : names)
+			{
+				if (list != "")
+					list += ", ";
+				list += enumName;
+			}
+			return "'" + value + "' is not a value of enum property '" + key + "'. Valid: " + list + ". Nothing was changed.";
+		}
+		return "";
+	}
+
+	//------------------------------------------------------------------------------------------------
 	override JsonApiStruct GetRequest()
 	{
 		return new EMCP_WB_ModifyEntityRequest();
@@ -293,6 +342,14 @@ class EMCP_WB_ModifyEntity : NetApiHandler
 				return resp;
 			}
 
+			string enumRefusal = EnumRefusal(entSrc, req.propertyPath, req.propertyKey, req.value);
+			if (enumRefusal != "")
+			{
+				resp.status = "error";
+				resp.message = enumRefusal;
+				return resp;
+			}
+
 			array<ref ContainerIdPathEntry> pathEntries = BuildPathEntries(req.propertyPath);
 
 			api.BeginEntityAction("Set property via NetAPI");
@@ -399,29 +456,19 @@ class EMCP_WB_ModifyEntity : NetApiHandler
 				}
 			}
 
-			int numVars;
+			BaseContainer listCont = entSrc;
 			if (compSrc)
-				numVars = compSrc.GetNumVars();
-			else
-				numVars = entSrc.GetNumVars();
+				listCont = compSrc;
 
+			int numVars = listCont.GetNumVars();
 			for (int v = 0; v < numVars; v++)
 			{
-				string varName;
-				if (compSrc)
-					varName = compSrc.GetVarName(v);
-				else
-					varName = entSrc.GetVarName(v);
-				string varValue = "";
-				if (compSrc)
-					compSrc.Get(varName, varValue);
-				else
-					entSrc.Get(varName, varValue);
+				string varName = listCont.GetVarName(v);
 
 				EMCP_WB_EntityProperty prop = new EMCP_WB_EntityProperty();
 				prop.m_sName = varName;
 				prop.m_sType = "";  // type info not available via script API — leave empty
-				prop.m_sValue = varValue;
+				prop.m_sValue = EMCP_WB_GetEntity.HeldValueText(listCont, v, varName);
 				resp.m_aProperties.Insert(prop);
 			}
 

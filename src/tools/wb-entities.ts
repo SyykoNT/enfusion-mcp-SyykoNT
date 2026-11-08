@@ -3,6 +3,11 @@ import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
+// 1.9 packs an extra empty object before each real array row; a real property row has a name
+function namedRows(rows: unknown): Record<string, unknown>[] {
+  return (Array.isArray(rows) ? rows : []).filter((r) => r?.name);
+}
+
 function formatEntityDetails(data: Record<string, unknown>): string {
   const lines: string[] = [];
 
@@ -20,6 +25,14 @@ function formatEntityDetails(data: Record<string, unknown>): string {
       const comp = data.components[i] as Record<string, unknown>;
       lines.push(`${i}. ${comp.className || comp.type || "Unknown"}`);
     }
+  }
+
+  // Values the entity holds (the handler marks a type it cannot read instead of printing a class default); entity-level properties only, capped by the handler
+  const props = namedRows(data.properties);
+  if (props.length > 0) {
+    const total = typeof data.varCount === "number" ? data.varCount : props.length;
+    lines.push(`\n### Properties (${props.length}${total > props.length ? ` of ${total}` : ""})`, "| Property | Value |", "|---|---|");
+    for (const p of props) lines.push(`| ${p.name} | ${p.value ?? ""} |`);
   }
 
   if (Array.isArray(data.children) && data.children.length > 0) {
@@ -257,7 +270,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
     "wb_entity_modify",
     {
       description:
-        "Modify an entity in the World Editor. Supports moving, rotating, renaming, reparenting, and setting or clearing component properties. Only works in edit mode. Enum properties: verify a setProperty with getProperty (known silent failure).",
+        "Modify an entity in the World Editor. Supports moving, rotating, renaming, reparenting, and setting or clearing component properties. Only works in edit mode. Enum properties: setProperty refuses a name that is not in the property's enum list (names are listed in the refusal); still verify a setProperty with getProperty.",
       inputSchema: {
         name: z.string().describe("Name of the entity to modify"),
         action: z
@@ -344,7 +357,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
 
         // Enhanced output for listProperties
         if (action === "listProperties") {
-          const props = Array.isArray(result.properties) ? result.properties : [];
+          const props = namedRows(result.properties);
           if (props.length === 0) {
             return { content: [{ type: "text" as const, text: `**No properties found.**${formatConnectionStatus(client)}` }] };
           }
@@ -355,7 +368,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
           ];
           for (const p of props) {
             const prop = p as Record<string, unknown>;
-            lines.push(`| ${prop.name ?? "(unnamed)"} | ${prop.value || ""} |`);
+            lines.push(`| ${prop.name} | ${prop.value || ""} |`);
           }
           return { content: [{ type: "text" as const, text: lines.join("\n") + formatConnectionStatus(client) }] };
         }

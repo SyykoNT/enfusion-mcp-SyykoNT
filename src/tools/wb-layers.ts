@@ -69,7 +69,8 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         const result = await client.call<Record<string, unknown>>("EMCP_WB_Layers", params);
 
         if (action === "list") {
-          const layers = Array.isArray(result.layers) ? result.layers : [];
+          // 1.9 packs an extra empty object before each real row; a real row always carries entityCount
+          const layers = (Array.isArray(result.layers) ? result.layers : []).filter((l) => typeof (l as Record<string, unknown>).entityCount === "number");
           if (layers.length === 0) {
             return {
               content: [{ type: "text" as const, text: `**No layers found.**${formatConnectionStatus(client)}` }],
@@ -79,18 +80,22 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
           const lines = [`**Layers** (SubScene ${result.currentSubScene ?? subScene ?? "current"})\n`];
           for (const layer of layers) {
             const l = layer as Record<string, unknown>;
-            const path = l.path || l.name || "(unnamed)";
+            // An old handler sends no path; a layer the handler could not name is shown by its ID
+            const path = l.path || `(layer id ${l.layerID})`;
             const flags: string[] = [];
-            if (l.active) flags.push("ACTIVE");
+            if (l.path && l.path === result.activeLayer) flags.push("ACTIVE");
             if (l.locked) flags.push("LOCKED");
             if (l.visible === false) flags.push("HIDDEN");
             const flagStr = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
-            const entityCount = l.entityCount !== undefined ? ` (${l.entityCount} entities)` : "";
-            lines.push(`- ${path}${flagStr}${entityCount}`);
+            lines.push(`- ${path}${flagStr} (${l.entityCount} entities)`);
           }
 
           if (result.activeLayer) {
             lines.push(`\nActive layer: **${result.activeLayer}**`);
+          }
+          // What the entity counts cover, as the handler states it
+          if (typeof result.message === "string" && result.message) {
+            lines.push(`\n${result.message}`);
           }
 
           return { content: [{ type: "text" as const, text: lines.join("\n") + formatConnectionStatus(client) }] };

@@ -82,6 +82,24 @@ class EMCP_WB_GetEntityResponse : JsonApiStruct
 
 class EMCP_WB_GetEntity : NetApiHandler
 {
+	//! The value the container holds, read by EMCP_WB_ReadProps.ReadHeldValue (also used by EMCP_WB_ModifyEntity listProperties).
+	//! A type ReadHeldValue has no typed read for would only give the class default, so it is marked, not printed as the value.
+	// shortcut: this type list repeats ReadHeldValue's, keep the two in step; add a type to both when a user needs one.
+	static string HeldValueText(BaseContainer cont, int varIndex, string varName)
+	{
+		DataVarType varType = cont.GetDataVarType(varIndex);
+		if (varType == DataVarType.SCALAR || varType == DataVarType.INTEGER || varType == DataVarType.FLAGS || varType == DataVarType.BOOLEAN
+			|| varType == DataVarType.STRING || varType == DataVarType.RESOURCE_NAME || varType == DataVarType.VECTOR3)
+		{
+			string val;
+			if (EMCP_WB_ReadProps.ReadHeldValue(cont, varIndex, varName, val))
+				return val;
+			return "(no value)";
+		}
+
+		return "(not read: " + typename.EnumToString(DataVarType, varType) + ")";
+	}
+
 	override JsonApiStruct GetRequest()
 	{
 		return new EMCP_WB_GetEntityRequest();
@@ -189,10 +207,8 @@ class EMCP_WB_GetEntity : NetApiHandler
 		for (int v = 0; v < maxVars; v++)
 		{
 			string varName = entSrc.GetVarName(v);
-			string varVal;
-			entSrc.GetDefaultAsString(varName, varVal);
 			resp.m_aVarNames.Insert(varName);
-			resp.m_aVarValues.Insert(varVal);
+			resp.m_aVarValues.Insert(HeldValueText(entSrc, v, varName));
 		}
 
 		// Collect components

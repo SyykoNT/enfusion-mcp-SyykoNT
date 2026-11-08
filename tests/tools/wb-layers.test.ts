@@ -69,4 +69,16 @@ describe("wb_layers", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("EMCP_WB_Layers is out of date (it has no create); refresh the handlers");
   });
+
+  it("list prints each layer's name, empty layers, the active flag and what the counts cover, and drops the empty rows 1.9 packs", async () => {
+    const message = "Found 2 layers in sub-scene 2. Entity counts cover the 5 entities of that sub-scene only (the editor holds 99 across all sub-scenes)";
+    const t = layers({
+      status: "ok", currentSubScene: 2, activeLayer: "default", message,
+      layers: [{}, { layerID: 0, path: "default", entityCount: 5 }, {}, { layerID: 1, path: "OPS_A", entityCount: 0 }, {}, { layerID: 7, path: "", entityCount: 3 }],
+    });
+    const text = (await t.run({ action: "list" })).content[0].text;
+    expect(text).toContain("- default [ACTIVE] (5 entities)\n- OPS_A (0 entities)\n- (layer id 7) (3 entities)");
+    expect(text).not.toContain("(unnamed)");
+    expect(text).toContain(message);
+  });
 });
