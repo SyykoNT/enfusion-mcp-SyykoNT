@@ -12,7 +12,7 @@ const MUTATING_PREFAB_ACTIONS = new Set(["createTemplate", "save"]);
  * "Prefabs/Weapons/Rifles" -> selectedProject "ArmaReforger", projectPath "Prefabs"; addon "$MyAddon:Prefabs/X" -> selectedProject "MyAddon",
  * projectPath "$MyAddon:Prefabs" (addon form inferred, not run live).
  * Returns undefined when the folder is a data root ("", "/", ".", "..", "...", "$Addon:", "$Addon:.", "$:"), an unprefixed single segment, or not a virtual
- * game path: control or format characters, a drive prefix ("C:", "D:Prefabs/X") or UNC input ("//server/share") are refused instead of being rewritten.
+ * game path: control or format characters, a colon anywhere but the "$Addon:" prefix ("C:", "/C:/x", "D:Prefabs/X") or UNC input ("//server/share") are refused instead of being rewritten.
  * The optional "$Addon:" prefix is split off first so that it cannot hide a root behind it.
  */
 export function locateRequest(searchPath: string) {
@@ -22,7 +22,7 @@ export function locateRequest(searchPath: string) {
   if (prefix && !prefix.startsWith("$")) return undefined;
   const segs = rest.replace(/\\/g, "/").split("/").map((x) => x.trim()).filter((x) => x && x !== ".");
   const addon = prefix.startsWith("$") ? prefix.slice(1, -1).trim() : undefined;
-  if (!segs.length || segs.some((x) => /^[.\s]+$/.test(x)) || addon === "" || (addon === undefined && segs.length < 2)) return undefined;
+  if (!segs.length || segs.some((x) => /^[.\s]+$|:/.test(x)) || addon === "" || (addon === undefined && segs.length < 2)) return undefined;
   return {
     selectedProject: addon || "ArmaReforger",
     projectPath: prefix + segs[0],
@@ -107,7 +107,7 @@ export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): v
           const request = locateRequest(searchPath);
           if (!request) {
             return {
-              content: [{ type: "text" as const, text: `Error: \`searchPath\` "${searchPath}" is empty, a whole data root, a single top-level folder, a drive or network path, or contains control characters; locate needs a virtual game folder such as 'Prefabs/Weapons/Rifles'.` }],
+              content: [{ type: "text" as const, text: `Error: \`searchPath\` "${searchPath}" is empty, a whole data root, a single top-level folder, a drive or network path, or contains control or invisible characters; locate needs a virtual game folder such as 'Prefabs/Weapons/Rifles'.` }],
               isError: true,
             };
           }
