@@ -37,7 +37,7 @@ describe("generateScript", () => {
     expect(code).not.toContain("return super.OnGameStart();");
   });
 
-  it("reads the return type of 1.8 index signatures with a space before (", () => {
+  it("reads the return type of API index signatures with a space before (", () => {
     const code = generateScript({
       className: "SCR_BaseGameMode",
       scriptType: "modded",

@@ -1,15 +1,15 @@
 # enfusion-mcp-SyykoNT
 
-A maintained MCP server for Arma Reforger modding, ready for 1.8.
+A maintained MCP server for Arma Reforger modding, tested on 1.9.
 
 It gives an AI agent working access to the Arma Reforger script API, the game's packed data, Workbench and
 the dedicated server. It speaks the Model Context Protocol over stdio, so it is not tied to one assistant: any
 agent or client that can launch an MCP server can use it.
 
 - **Maintained.** Changes land on the `syyko/dev` branch after review and a full test run.
-- **Ready for 1.8.** Tested against Arma Reforger and Arma Reforger Tools 1.8.0.13 (stable).
+- **Tested on 1.9.** Tested against Arma Reforger and Arma Reforger Tools 1.9.0.37 (stable); see the 0.15.0 release notes for known issues.
 - **For new and experienced modders.** If you build mods by describing them to an AI agent, the agent works
-  from the real 1.8 API and the game's own files instead of guessing. If you write Enforce Script yourself,
+  from the real 1.9 API and the game's own files instead of guessing. If you write Enforce Script yourself,
   the repetitive Workbench steps become single tool calls.
 - **Built on enfusion-mcp-BK.** This is a direct fork of steffenbk's enfusion-mcp-BK, improved and
   optimized for 1.8, with the focus on stability: every tool call that worked under BK in real modding
@@ -501,7 +501,7 @@ tests/          vitest
 
 ## Status
 
-Version 0.14.0 (`env_check` shows the exact build). Everything described here is merged on `syyko/dev`. Checks that need a running
+`env_check` shows the exact version and build. Everything described here is merged on `syyko/dev`. Checks that need a running
 Workbench are still open for the newest work: loading files written by the new text writer, and the watchdog
 against live dialogs.
 
