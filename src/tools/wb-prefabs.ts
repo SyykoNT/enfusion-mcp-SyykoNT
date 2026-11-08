@@ -7,17 +7,22 @@ const MUTATING_PREFAB_ACTIONS = new Set(["createTemplate", "save"]);
 
 /**
  * Vanilla LocatePrefabsFromPath (AssetLibraryUtils.c) runs FindFiles(selectedFolder, ".et") when selectedFolder contains projectPath,
- * so an empty folder scans every mounted pak (about 5 min of a hung Workbench). Mapping: vanilla "Prefabs/Weapons" -> selectedProject
- * "ArmaReforger", projectPath "Prefabs"; addon "$MyAddon:Prefabs/X" -> selectedProject "MyAddon", projectPath "$MyAddon:Prefabs" (addon form inferred, not run live).
- * Returns undefined when the folder is a data root (empty, "/", ".", "..", "$Addon:", "C:") and so must not be scanned.
+ * and FindFiles searches every mounted file system. So an empty folder scans every mounted pak (about 5 min of a hung Workbench), and a
+ * single top-level folder ("Prefabs") walks that tree of vanilla plus every loaded addon (scan time unmeasured). Mapping: vanilla
+ * "Prefabs/Weapons/Rifles" -> selectedProject "ArmaReforger", projectPath "Prefabs"; addon "$MyAddon:Prefabs/X" -> selectedProject "MyAddon",
+ * projectPath "$MyAddon:Prefabs" (addon form inferred, not run live).
+ * Returns undefined when the folder is a data root ("", "/", ".", "..", "$Addon:", "$Addon:.", "C:", "C:.", "$:") or an unprefixed single segment.
+ * The optional "$Addon:" or "C:" prefix is split off first so that it cannot hide a root behind it.
  */
 export function locateRequest(searchPath: string) {
-  const folder = searchPath.trim().replace(/\\/g, "/").split("/").filter((s) => s && s !== ".").join("/");
-  if (!folder || folder.split("/").includes("..") || /^(\$[^:/]+:|[A-Za-z]:)$/.test(folder)) return undefined;
+  const [, prefix = "", rest] = /^(\$[^:/]*:|[A-Za-z]:)?([\s\S]*)$/.exec(searchPath.trim())!;
+  const segs = rest.replace(/\\/g, "/").split("/").map((x) => x.trim()).filter((x) => x && x !== ".");
+  const addon = prefix.startsWith("$") ? prefix.slice(1, -1).trim() : undefined;
+  if (!segs.length || segs.includes("..") || addon === "" || (addon === undefined && segs.length < 2)) return undefined;
   return {
-    selectedProject: /^\$([^:/]+):/.exec(folder)?.[1] ?? "ArmaReforger",
-    projectPath: folder.split("/")[0],
-    selectedFolder: folder,
+    selectedProject: addon || "ArmaReforger",
+    projectPath: prefix + segs[0],
+    selectedFolder: prefix + segs.join("/"),
   };
 }
 
@@ -44,7 +49,7 @@ export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): v
         searchPath: z
           .string()
           .optional()
-          .describe("Folder for locate: a vanilla path ('Prefabs/Weapons/Rifles/AK74') or an addon path ('$MyAddon:Prefabs/Props'). A data root (empty, '/', '$MyAddon:') is refused"),
+          .describe("Folder for locate, at least two levels deep, e.g. 'Prefabs/Weapons/Rifles/AK74'. A data root (empty, '/', '.') or a single top-level folder ('Prefabs') is refused"),
       },
     },
     async ({ action, entityName, templatePath, searchPath }) => {
@@ -98,7 +103,7 @@ export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): v
           const request = locateRequest(searchPath);
           if (!request) {
             return {
-              content: [{ type: "text" as const, text: `Error: \`searchPath\` "${searchPath}" is empty or a whole data root; locate would scan every mounted file. Give a folder such as 'Prefabs/Weapons' or '$MyAddon:Prefabs'.` }],
+              content: [{ type: "text" as const, text: `Error: \`searchPath\` "${searchPath}" is empty, a whole data root or a single top-level folder; locate would scan every mounted file. Pass a deeper folder such as 'Prefabs/Weapons/Rifles'.` }],
               isError: true,
             };
           }

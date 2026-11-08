@@ -55,12 +55,17 @@ describe("wb_prefabs locate", () => {
     expect(calls).toEqual([{ f: "LocatePrefabsFromPath", p: { selectedProject: "MyAddon", projectPath: "$MyAddon:Prefabs", selectedFolder: "$MyAddon:Prefabs/Props" } }]);
   });
 
-  it.each(["", "   ", "/", "\\", ".", "./", "..", "Prefabs/../..", "$MyAddon:", "$MyAddon:/", "C:", "C:/"])("refuses %j before any NET API call", async (p) => {
+  it.each(["", "   ", "/", "\\", ".", "./", "..", "Prefabs/../..", "$MyAddon:", "$MyAddon:/", "C:", "C:/", "$ArmaReforger:.", "$ArmaReforger:./", "$MyAddon:..", "C:.", "/ /", "$:", "$:Prefabs/X", "$ :", "$MyAddon:/ . /", "$MyAddon:Prefabs/ .. ", "Prefabs", "Prefabs/", " Prefabs ", "C:Prefabs"])("refuses %j before any NET API call", async (p) => {
     expect(locateRequest(p)).toBeUndefined();
     const { calls, r } = await locate(p);
     expect(r.isError).toBe(true);
     expect(calls).toEqual([]);
     if (p.trim()) expect(r.content[0].text).toContain(`"${p}"`);
+  });
+
+  it("allows a single segment under an addon prefix", async () => {
+    const { calls } = await locate("$MyAddon:Prefabs");
+    expect(calls).toEqual([{ f: "LocatePrefabsFromPath", p: { selectedProject: "MyAddon", projectPath: "$MyAddon:Prefabs", selectedFolder: "$MyAddon:Prefabs" } }]);
   });
 
   it("lists prefabsPaths from an OK reply", async () => {
