@@ -74,7 +74,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
 
         const actionLabels: Record<string, string> = {
           register: `Registered resource: ${path}`,
-          rebuild: `Rebuilt resource database for: ${path}`,
+          rebuild: `Rebuild requested for: ${path}. Workbench reports the result only in console.log.`,
           open: `Opened resource: ${path}`,
         };
 
@@ -82,7 +82,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
           content: [
             {
               type: "text" as const,
-              text: `**${actionLabels[action]}**${result.message ? `\n\n${result.message}` : ""}${formatConnectionStatus(client)}`,
+              text: `**${actionLabels[action]}**${result.message && action !== "rebuild" ? `\n\n${result.message}` : ""}${formatConnectionStatus(client)}`,
             },
           ],
         };

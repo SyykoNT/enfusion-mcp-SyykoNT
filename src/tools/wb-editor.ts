@@ -168,10 +168,12 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
           : reply("Save() returned false and no file changed. Workbench may have had nothing to save (unverified meaning of false).");
       }
       return reply(
-        `**World ${saved ? "saved" : "save returned false"}** (Save() returned ${saved})\nWorld: ${worldPath}\n` +
+        `**World saved**\nWorld: ${worldPath}\n` +
           `Written (${w.files.length}) under ${folder}: ${w.files.join(", ")}\n` +
           (w.removed.length ? `Removed (${w.removed.length}): ${w.removed.join(", ")}\n` : "") +
-          `Not changed: ${w.unchanged} other files`
+          `Not changed: ${w.unchanged} other files\n` +
+          // The files are the proof; on 1.9.0.37 Save() returns false although it writes them.
+          `Save() returned ${saved}${saved ? "" : "; on 1.9.0.37 it also returns false when files are written"}`
       );
     }
   );

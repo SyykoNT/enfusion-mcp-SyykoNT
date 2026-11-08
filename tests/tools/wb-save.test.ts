@@ -113,9 +113,21 @@ describe("wb_save", () => {
     });
     const r = await t.save();
     expect(r.isError).toBeUndefined();
-    expect(r.content[0].text).toContain("**World saved** (Save() returned true)\nWorld: $Test:Worlds/W.ent\n");
-    expect(r.content[0].text).toContain(`Written (2) under ${t.folder}: W.ent, W_Layers/default.layer\nNot changed: 2 other files`);
+    expect(r.content[0].text).toContain("**World saved**\nWorld: $Test:Worlds/W.ent\n");
+    expect(r.content[0].text).toContain(`Written (2) under ${t.folder}: W.ent, W_Layers/default.layer\nNot changed: 2 other files\nSave() returned true`);
     expect(t.actions).toEqual(["worldInfo", "save"]);
+  });
+
+  it("files written but Save() false still leads with World saved, and Save() is a secondary line", async () => {
+    const t = setup({}, (folder) => {
+      later(folder, "W.ent");
+      return { status: "ok", saved: false };
+    });
+    const r = await t.save();
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text.startsWith("**World saved**\n")).toBe(true);
+    expect(r.content[0].text).toContain("Written (1) under");
+    expect(r.content[0].text).toContain("\nSave() returned false; on 1.9.0.37 it also returns false when files are written");
   });
 
   it("false with no change is not an error; true with no change is", async () => {
