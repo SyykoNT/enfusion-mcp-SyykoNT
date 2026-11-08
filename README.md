@@ -449,8 +449,9 @@ only read (apart from those git refs), so they are not affected. To write, name 
 
 ## Known limitations
 
-- `wb_reload` does not reload scripts on 1.8; not re-checked on 1.9. On 1.8 the menu paths it tries do not exist. It says so
-  ("Reload not confirmed") instead of reporting success. Workbench's built-in NET API call `ReloadScripts` does
+- `wb_reload` does not reload scripts on 1.8 or on 1.9.0.37. On 1.8 the menu paths it tries do not exist; on 1.9.0.37 every
+  one of them returns false. It says so ("Reload not confirmed") instead of reporting success. Workbench's built-in NET API
+  call `ReloadScripts` does
   reload, but no tool sends it yet. Saving a `.c` file of the loaded project also makes Workbench reload game
   scripts. `mod compile` refuses while a Workbench is open (`force=true` runs it anyway).
 - The console server ignores the close request, so `server stop` kills it after `graceSec` (default 10 seconds).
