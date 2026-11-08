@@ -92,7 +92,7 @@ export function makeReader(src: ReadSources): Reader {
     try {
       return src.readBase?.(rel) ?? null;
     } catch (e) {
-      warnOnce(`pak:${rel}`, `tuning-server: pak read failed for "${rel}": ${e instanceof Error ? e.message : String(e)}`);
+      warnOnce(`pak:${rel}`, `tuning-server: pak read failed for ${JSON.stringify(rel)}:${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   };

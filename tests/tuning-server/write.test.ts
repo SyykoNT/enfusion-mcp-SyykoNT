@@ -1,13 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, cpSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import { createTuningServer } from "../../src/tuning-server/server.js";
 
 // Every path the server hands to writeFileSync, so a test can prove the vehicle .et is the only one.
-const fsWrites = vi.hoisted(() => ({ paths: [] as string[] }));
+const fsWrites = vi.hoisted(() => ({
+  paths: [] as string[],
+  renames: [] as string[][],
+  renameError: null as (Error & { code?: string }) | null,
+}));
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
   return {
@@ -15,6 +19,11 @@ vi.mock("node:fs", async (importOriginal) => {
     writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
       fsWrites.paths.push(String(args[0]));
       return fs.writeFileSync(...args);
+    },
+    renameSync: (from: string, to: string) => {
+      fsWrites.renames.push([String(from), String(to)]);
+      if (fsWrites.renameError) throw fsWrites.renameError;
+      return fs.renameSync(from, to);
     },
   };
 });
@@ -24,6 +33,9 @@ const REL = "Prefabs/Vehicles/Wheeled/Fix/Fix_base.et";
 const P94_REL = "Prefabs/Vehicles/Wheeled/P94/P94.et";
 const FRONT = "4D8B26DF957A8E1C";
 const REAR = "4D8B26DF8CF2F3D8";
+
+/** The sibling the server writes first and then renames over the target. */
+const tmpOf = (p: string) => join(dirname(p), `.${basename(p)}.tuning-tmp`);
 
 /** Every file under a folder with its bytes. */
 function snapshot(root: string): Map<string, Buffer> {
@@ -57,6 +69,8 @@ describe("tuning server POST writes the 1.9 blocks", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     fsWrites.paths.length = 0;
+    fsWrites.renames.length = 0;
+    fsWrites.renameError = null;
   });
 
   afterEach(async () => {
@@ -90,7 +104,9 @@ describe("tuning server POST writes the 1.9 blocks", () => {
     expect(res.status, body.message).toBe(200);
     expect(body.written).toContain("Differential Diff_02 in axle 4D8B26DF8CF2F3D8.Ratio");
 
-    expect(fsWrites.paths).toEqual([etPath]);
+    // The new text goes to a sibling temp file, then replaces the .et in one rename.
+    expect(fsWrites.paths).toEqual([tmpOf(etPath)]);
+    expect(fsWrites.renames).toEqual([[tmpOf(etPath), etPath]]);
     const after = snapshot(addonDir);
     const changed = [...after.keys()].filter((p) => !before.get(p)!.equals(after.get(p)!));
     expect(changed).toEqual([etPath]);
@@ -168,6 +184,28 @@ describe("tuning server POST writes the 1.9 blocks", () => {
     expect(res.status).toBe(409);
     expect(readFileSync(etPath).equals(bytes)).toBe(true);
     expect(fsWrites.paths).toEqual([]);
+  });
+
+  it("a failure between the temp write and the rename leaves the original bytes and no temp file", async () => {
+    const before = readFileSync(etPath);
+    fsWrites.renameError = new Error("disk full");
+    const res = await postChanges({ engine: { MaxPower: 95 } });
+    expect(res.status).toBe(500);
+    expect(fsWrites.renames).toEqual([[tmpOf(etPath), etPath]]);
+    expect(readFileSync(etPath).equals(before)).toBe(true);
+    expect(readdirSync(dirname(etPath)).filter((n) => n.endsWith(".tuning-tmp"))).toEqual([]);
+  });
+
+  it("409 saying the file is locked when the rename is refused, original untouched", async () => {
+    const before = readFileSync(etPath);
+    fsWrites.renameError = Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+    const res = await postChanges({ engine: { MaxPower: 95 } });
+    const body = await res.json();
+    expect(res.status).toBe(409);
+    expect(body.message).toContain("locked");
+    expect(body.message).toContain("Nothing was changed");
+    expect(readFileSync(etPath).equals(before)).toBe(true);
+    expect(readdirSync(dirname(etPath)).filter((n) => n.endsWith(".tuning-tmp"))).toEqual([]);
   });
 
   it("400 for a colon inside the route path (B-073)", async () => {

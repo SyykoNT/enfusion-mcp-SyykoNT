@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
-import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, rmSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { listVehicles, vehicleEtPath, isSafeVehicleRelPath } from "./discover.js";
+import { basename, dirname, join } from "node:path";
+import { listVehicles, vehicleEtPath, isSafeVehicleRelPath, isInsideAddon } from "./discover.js";
 import { resolveEngineFields } from "./resolve-engine.js";
 import { resolveChassis } from "./resolve-chassis.js";
 import { planBlockWrites } from "./et-write.js";
@@ -18,13 +18,63 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(data);
 }
 
+/** A change request is a few hundred bytes; anything near this size is not the page talking. */
+const MAX_BODY_BYTES = 1024 * 1024;
+
+class BodyTooLarge extends Error {}
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk) => (data += chunk));
-    req.on("end", () => resolve(data));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        chunks.length = 0;
+        req.removeAllListeners("data");
+        req.resume(); // drain the rest unread so the 413 can still be delivered
+        reject(new BodyTooLarge());
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     req.on("error", reject);
   });
+}
+
+/**
+ * True when a request can only have come from the tuner page this server served
+ * (or a non-browser client): the Host must be our own loopback name, which stops
+ * DNS rebinding, and an Origin, if the client sent one, must be that same
+ * origin, which stops a page on another site from posting here.
+ */
+function isOwnRequest(req: IncomingMessage): boolean {
+  const port = req.socket.localPort;
+  const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  const host = req.headers.host?.toLowerCase();
+  if (!host || !hosts.includes(host)) return false;
+  const origin = req.headers.origin?.toLowerCase();
+  return origin === undefined || hosts.some((h) => origin === `http://${h}`);
+}
+
+/**
+ * Replace the file in one step: write beside it, then rename over it, so a crash
+ * or a failed write leaves the original bytes, never a half-written prefab.
+ */
+function writeAtomic(filePath: string, text: string): void {
+  const tmp = join(dirname(filePath), `.${basename(filePath)}.tuning-tmp`);
+  try {
+    writeFileSync(tmp, text, "utf-8");
+    renameSync(tmp, filePath);
+  } catch (e) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // the original error matters more than a leftover temp file
+    }
+    throw e;
+  }
 }
 
 const RELOAD_REMINDER =
@@ -53,6 +103,11 @@ export function createTuningServer(
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
 
+      if (req.method === "POST" && !isOwnRequest(req)) {
+        sendJson(res, 403, { status: "error", message: "Cross-site or foreign-host requests cannot write." });
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/") {
         const html = readFileSync(TUNER_HTML_PATH, "utf-8");
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -67,7 +122,13 @@ export function createTuningServer(
 
       const match = /^\/api\/vehicles\/(.+)$/.exec(url.pathname);
       if (match && (req.method === "GET" || req.method === "POST")) {
-        const rel = decodeURIComponent(match[1]);
+        let rel: string;
+        try {
+          rel = decodeURIComponent(match[1]);
+        } catch {
+          sendJson(res, 400, { status: "error", message: "Invalid vehicle path" });
+          return;
+        }
         if (!isSafeVehicleRelPath(rel)) {
           sendJson(res, 400, { status: "error", message: "Invalid vehicle path" });
           return;
@@ -75,6 +136,11 @@ export function createTuningServer(
         const filePath = vehicleEtPath(addonPath, rel);
         if (!existsSync(filePath)) {
           sendJson(res, 404, { status: "error", message: `Not found: ${rel}` });
+          return;
+        }
+        // A junction or symlink under Prefabs/Vehicles could lead anywhere; refuse before any read or write.
+        if (!isInsideAddon(addonPath, filePath)) {
+          sendJson(res, 400, { status: "error", message: "Invalid vehicle path" });
           return;
         }
 
@@ -99,12 +165,28 @@ export function createTuningServer(
         }
 
         const contentType = req.headers["content-type"];
-        if (typeof contentType !== "string" || !contentType.toLowerCase().includes("application/json")) {
+        // Compare the media type itself: a substring match lets "text/plain; x=application/json" through, and that is a no-preflight form post.
+        if (typeof contentType !== "string" || contentType.split(";")[0].trim().toLowerCase() !== "application/json") {
           sendJson(res, 400, { status: "error", message: "Content-Type must be application/json" });
           return;
         }
 
-        const rawBody = await readBody(req);
+        const tooLarge = () => {
+          res.setHeader("Connection", "close");
+          sendJson(res, 413, { status: "error", message: `Request body is larger than ${MAX_BODY_BYTES} bytes` });
+        };
+        if (Number(req.headers["content-length"]) > MAX_BODY_BYTES) {
+          tooLarge();
+          return;
+        }
+        let rawBody: string;
+        try {
+          rawBody = await readBody(req);
+        } catch (e) {
+          if (!(e instanceof BodyTooLarge)) throw e;
+          tooLarge();
+          return;
+        }
         let parsedBody: unknown;
         try {
           parsedBody = JSON.parse(rawBody);
@@ -127,7 +209,19 @@ export function createTuningServer(
         }
 
         // The one write of this request, all of it at once: only the vehicle's own .et.
-        writeFileSync(filePath, plan.text, "utf-8");
+        try {
+          writeAtomic(filePath, plan.text);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === "EPERM" || code === "EACCES" || code === "EBUSY") {
+            sendJson(res, 409, {
+              status: "error",
+              message: `${rel} is locked or read-only (Workbench may have it open), so it was not replaced. Nothing was changed.`,
+            });
+            return;
+          }
+          throw e;
+        }
 
         // Best effort: ask Workbench to re-read the file so the change shows up in
         // the editor. A failure here is not a write failure (the bytes are on disk

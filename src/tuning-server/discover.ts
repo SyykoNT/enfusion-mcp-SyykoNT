@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { findEngineBlock } from "./et-engine-block.js";
 
 export const VEHICLES_SUBPATH = "Prefabs/Vehicles";
@@ -56,6 +56,16 @@ export function listVehicles(addonPath: string): DiscoveredVehicle[] {
 
 export function vehicleEtPath(addonPath: string, relPath: string): string {
   return join(addonPath, ...relPath.split("/"));
+}
+
+/** True when the file, with every junction and symlink resolved, still lies inside the addon folder. */
+export function isInsideAddon(addonPath: string, filePath: string): boolean {
+  try {
+    const rel = relative(realpathSync(addonPath), realpathSync(filePath));
+    return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  } catch {
+    return false;
+  }
 }
 
 /**
