@@ -1,12 +1,12 @@
-import { join } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
 import {
   findBlockByPath,
   findChildBlocks,
   blockReference,
   readNumericFields,
   collectFromConfChain,
+  makeReader,
   toResolved,
+  type ReadSources,
   type ResolvedGroup,
 } from "./config-chain.js";
 
@@ -18,13 +18,10 @@ export const LATERAL_KEYS =
 export const SUSPENSION_KEYS =
   ["SpringRate","CompressionDamper","RelaxationDamper","MaxTravelUp","MaxTravelDown","MaxSteeringAngle"] as const;
 
-export interface ChassisResolveOptions {
+export interface ChassisResolveOptions extends ReadSources {
   modText: string;
   /** Addon-relative path, used to find the same-path vanilla prefab. */
   relPath: string;
-  addonPath?: string;
-  extractedPath?: string;
-  readFile?: (path: string) => string | null;
 }
 
 export interface AxleSuspension {
@@ -38,15 +35,6 @@ export interface ResolvedChassis {
   axles: AxleSuspension[];
 }
 
-function defaultReadFile(path: string): string | null {
-  try {
-    if (!existsSync(path)) return null;
-    return readFileSync(path, "utf-8");
-  } catch {
-    return null;
-  }
-}
-
 /** Raw values a single prefab contributes, before overridden/inherited is decided. */
 interface RawChassis {
   lon: Record<string, number>;
@@ -54,8 +42,8 @@ interface RawChassis {
   axles: Record<string, number>[];
 }
 
-function readFromPrefab(text: string, roots: string[], readFile?: (p: string) => string | null): RawChassis {
-  const base = { roots, readFile };
+function readFromPrefab(text: string, read: (ref: string) => string | null): RawChassis {
+  const base = { read };
 
   // --- Pacejka. The block can write coefficients inline AND reference a conf;
   // inline wins and the conf chain fills the rest.
@@ -97,21 +85,18 @@ function readFromPrefab(text: string, roots: string[], readFile?: (p: string) =>
  * Tyre (Pacejka) and suspension values for a vehicle.
  *
  * A mod prefab commonly shadows a vanilla one of the same path while defining
- * none of this itself — every RoadForger vehicle does — so anything the mod
+ * none of this itself (every RoadForger vehicle does), so anything the mod
  * prefab does not carry is taken from the vanilla file at the same path and
  * reported as inherited.
  */
 export function resolveChassis(args: ChassisResolveOptions): ResolvedChassis {
-  const read = args.readFile ?? defaultReadFile;
-  const roots = [args.addonPath, args.extractedPath].filter(Boolean) as string[];
+  const reader = makeReader(args);
 
-  const own = readFromPrefab(args.modText, roots, args.readFile);
+  const own = readFromPrefab(args.modText, reader.ref);
 
   let inheritedRaw: RawChassis = { lon: {}, lat: {}, axles: [] };
-  if (args.extractedPath) {
-    const vanilla = read(join(args.extractedPath, ...args.relPath.split("/")));
-    if (vanilla) inheritedRaw = readFromPrefab(vanilla, roots, args.readFile);
-  }
+  const vanilla = reader.base(args.relPath);
+  if (vanilla) inheritedRaw = readFromPrefab(vanilla, reader.ref);
 
   const axleCount = Math.max(own.axles.length, inheritedRaw.axles.length);
   const axles: AxleSuspension[] = [];

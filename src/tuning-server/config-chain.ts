@@ -9,8 +9,8 @@ import {
 
 /**
  * Reading tyre (Pacejka) and suspension values needs the same three moves the
- * engine resolver already makes — find a nested block, follow the `.conf` it
- * references, then walk that conf's own inheritance — but against different
+ * engine resolver already makes: find a nested block, follow the `.conf` it
+ * references, then walk that conf's own inheritance, but against different
  * block paths and different field names. This module is that logic with the
  * paths and field names as parameters.
  */
@@ -39,6 +39,52 @@ function defaultReadFile(path: string): string | null {
 /** Strip a leading `{GUID}` from an Enfusion resource reference. */
 export function stripGuid(ref: string): string {
   return ref.replace(/^\{[0-9A-Fa-f]+\}/, "");
+}
+
+export interface ReadSources {
+  /** Addon root, so the mod's own files are read first. */
+  addonPath?: string;
+  /** Extracted vanilla data. When set it is the only base source (the paks are not asked). */
+  extractedPath?: string;
+  /** File reader for the two folders above; tests inject a fake. */
+  readFile?: (path: string) => string | null;
+  /** Base game by addon-relative path (the installed paks), used only when there is no extractedPath. */
+  readBase?: (rel: string) => string | null;
+}
+
+export interface Reader {
+  /** A referenced `{GUID}path`: the mod's copy, else the base-game copy. */
+  ref(ref: string): string | null;
+  /** Every copy of a referenced path, mod first then base game. */
+  copies(ref: string): string[];
+  /** The base-game copy of an addon-relative path. */
+  base(rel: string): string | null;
+}
+
+/** The one read hook both resolvers use, so a vanilla file comes from the same place everywhere. */
+export function makeReader(src: ReadSources): Reader {
+  const read = src.readFile ?? defaultReadFile;
+  const fromFolder = (root: string, rel: string) => read(join(root, ...rel.split("/")));
+  const base = (rel: string): string | null => {
+    if (src.extractedPath) return fromFolder(src.extractedPath, rel);
+    try {
+      return src.readBase?.(rel) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const mod = (rel: string) => (src.addonPath ? fromFolder(src.addonPath, rel) : null);
+  return {
+    ref: (ref) => {
+      const rel = stripGuid(ref);
+      return mod(rel) || base(rel);
+    },
+    copies: (ref) => {
+      const rel = stripGuid(ref);
+      return [mod(rel), base(rel)].filter((t): t is string => !!t);
+    },
+    base,
+  };
 }
 
 /** Whole-document range, so a config file's root block can be treated uniformly. */
@@ -71,7 +117,7 @@ export function findBlockByPath(text: string, path: string[]): BlockRange | null
   return range;
 }
 
-/** Every direct child block of `parent`, in order — used for the axle list. */
+/** Every direct child block of `parent`, in order, used for the axle list. */
 export function findChildBlocks(text: string, parent: BlockRange, firstToken: string): BlockRange[] {
   const lines = text.split(/\r?\n/);
   const out: BlockRange[] = [];
@@ -125,9 +171,8 @@ export function readNumericFields(
 }
 
 export interface ChainOptions {
-  /** Roots searched in order for a referenced file: the mod, then vanilla. */
-  roots: string[];
-  readFile?: (path: string) => string | null;
+  /** Reads a referenced `{GUID}path` (the mod's copy, else vanilla): `Reader.ref`. */
+  read: (ref: string) => string | null;
   /** Optional sub-block inside each config, e.g. "Longitudinal". */
   subBlock?: string;
   keys: readonly string[];
@@ -137,25 +182,15 @@ export interface ChainOptions {
 /**
  * Follow a `.conf` reference and every parent conf above it, taking each field
  * from the nearest definition. Enfusion configs store only what differs from
- * their parent — PacejkaTire_M151A2 defines 8 of 11 longitudinal coefficients
- * and inherits the rest — so the whole chain has to be read to fill a set.
+ * their parent (PacejkaTire_M151A2 defines 8 of 11 longitudinal coefficients
+ * and inherits the rest), so the whole chain has to be read to fill a set.
  */
 export function collectFromConfChain(
   startRef: string | undefined,
   opts: ChainOptions
 ): Record<string, number> {
-  const read = opts.readFile ?? defaultReadFile;
   const out: Record<string, number> = {};
   if (!startRef) return out;
-
-  const readRef = (ref: string): string | null => {
-    const rel = stripGuid(ref);
-    for (const root of opts.roots) {
-      const text = read(join(root, ...rel.split("/")));
-      if (text) return text;
-    }
-    return null;
-  };
 
   const seen = new Set<string>();
   let ref: string | undefined = startRef;
@@ -166,7 +201,7 @@ export function collectFromConfChain(
     if (seen.has(rel)) break;
     seen.add(rel);
 
-    const text: string | null = readRef(ref);
+    const text: string | null = opts.read(ref);
     if (!text) break;
 
     const root = rootRange(text);

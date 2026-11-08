@@ -39,7 +39,7 @@ function isValidEngineChanges(value: unknown): value is Partial<EngineFields> {
 }
 
 const RELOAD_REMINDER =
-  "Written to disk. If this vehicle prefab is open in Workbench, reload it — " +
+  "Written to disk. If this vehicle prefab is open in Workbench, reload it. " +
   "Workbench silently reverts external file edits to a prefab it has open.";
 
 /**
@@ -56,7 +56,9 @@ export function createTuningServer(
   addonPath: string,
   extractedPath?: string,
   allowWrite = false,
-  notifyWorkbench?: WorkbenchNotifier
+  notifyWorkbench?: WorkbenchNotifier,
+  /** Vanilla files from the installed paks; consulted only when extractedPath is not set. */
+  readBase?: (rel: string) => string | null
 ): Server {
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
@@ -89,8 +91,8 @@ export function createTuningServer(
 
         if (req.method === "GET") {
           const modText = readFileSync(filePath, "utf-8");
-          const fields = resolveEngineFields({ modText, relPath: rel, addonPath, extractedPath });
-          const chassis = resolveChassis({ modText, relPath: rel, addonPath, extractedPath });
+          const fields = resolveEngineFields({ modText, relPath: rel, addonPath, extractedPath, readBase });
+          const chassis = resolveChassis({ modText, relPath: rel, addonPath, extractedPath, readBase });
           // mtime lets the page poll cheaply and re-read only when Workbench saves.
           const mtimeMs = statSync(filePath).mtimeMs;
           sendJson(res, 200, { status: "ok", vehicle: rel, fields, chassis, mtimeMs });
@@ -137,7 +139,7 @@ export function createTuningServer(
           sendJson(res, 409, {
             status: "error",
             message:
-              `${rel} has no Engine block. Add the engine override in Workbench first — ` +
+              `${rel} has no Engine block. Add the engine override in Workbench first. ` +
               `this tool never creates the block structure.`,
           });
           return;
@@ -146,8 +148,8 @@ export function createTuningServer(
         writeFileSync(filePath, writeEngineFields(original, loc, changes), "utf-8");
 
         // Best effort: ask Workbench to re-read the file so the change shows up in
-        // the editor. A failure here is not a write failure — the bytes are on disk
-        // either way — so it is reported alongside the success, never instead of it.
+        // the editor. A failure here is not a write failure (the bytes are on disk
+        // either way), so it is reported alongside the success, never instead of it.
         let workbench: string | null = null;
         if (notifyWorkbench) {
           try {

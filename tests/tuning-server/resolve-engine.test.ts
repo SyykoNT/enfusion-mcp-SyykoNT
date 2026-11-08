@@ -236,7 +236,7 @@ describe("resolveEngineFields, parent chain", () => {
 
   it("takes a field deleted from the child from its nearest ancestor", () => {
     // The child overrides only MaxPower; RpmMax was set back to default and so is
-    // absent from the file entirely — exactly what Workbench writes.
+    // absent from the file entirely, exactly what Workbench writes.
     const files: Record<string, string> = {
       "A/Base.et": et(null, "     RpmMax 6000\n     MaxPower 50"),
       "A/Mid.et": et("{BBBB2222}A/Base.et", "     MaxPower 60"),

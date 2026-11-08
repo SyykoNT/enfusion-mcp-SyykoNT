@@ -2,6 +2,8 @@ import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { createTuningServer } from "./server.js";
 import { WorkbenchClient } from "../workbench/client.js";
+import { PakVirtualFS } from "../pak/vfs.js";
+import { baseReader } from "../tools/config-override.js";
 
 const config = loadConfig();
 const addonName = process.env.ENFUSION_TUNING_ADDON || "RoadForger";
@@ -20,8 +22,8 @@ const allowWrite = process.env.ENFUSION_TUNING_READONLY !== "1";
 //   menu:A,B       run an exact menu path against WorldEditor, e.g. menu:Plugins,Reload Scripts
 //   none           write only
 //
-// WARNING on `scripts`: a full script compile is documented to kill the NET API bridge —
-// after it fires, further calls here fail until Workbench is restarted. `rebuild` does not
+// WARNING on `scripts`: a full script compile is documented to kill the NET API bridge.
+// After it fires, further calls here fail until Workbench is restarted. `rebuild` does not
 // do this. The write itself always lands regardless of postWrite, and the banner reports
 // what happened.
 const postWrite = process.env.ENFUSION_TUNING_POST_WRITE || "rebuild";
@@ -54,13 +56,21 @@ async function notifyWorkbench(relPath: string): Promise<string | null> {
   }
 }
 
-const server = createTuningServer(addonPath, config.extractedPath, allowWrite, notifyWorkbench);
+// An extracted folder wins; otherwise vanilla files are read from the installed game paks.
+const usePaks = !config.extractedPath && PakVirtualFS.get(config.gamePath) !== null;
+const baseData = config.extractedPath
+  ? `extracted ${config.extractedPath}`
+  : usePaks
+    ? `paks ${config.gamePath}`
+    : "(neither an extracted folder nor game paks found, so inherited values will show as unresolved)";
+
+const server = createTuningServer(addonPath, config.extractedPath, allowWrite, notifyWorkbench, usePaks ? baseReader(config) : undefined);
 server.listen(port, "127.0.0.1", () => {
   console.log(`Vehicle tuning server: http://127.0.0.1:${port}`);
   console.log(`  addon:      ${addonName}`);
   console.log(`  path:       ${addonPath}`);
-  console.log(`  mode:       ${allowWrite ? "read-write — close the prefab's Prefab Edit tab before applying" : "READ-ONLY (ENFUSION_TUNING_READONLY=1)"}`);
+  console.log(`  mode:       ${allowWrite ? "read-write, close the prefab's Prefab Edit tab before applying" : "READ-ONLY (ENFUSION_TUNING_READONLY=1)"}`);
   console.log(`  after write: ${postWrite}${postWrite === "scripts" ? " (script compile can drop the NET API bridge until restart)" : ""}`);
-  console.log(`  base data:  ${config.extractedPath ?? "(not configured — inherited values will show as unresolved)"}`);
+  console.log(`  base data:  ${baseData}`);
   console.log(`  Set ENFUSION_TUNING_ADDON to point at a different addon, ENFUSION_TUNING_PORT to change the port.`);
 });
