@@ -199,7 +199,8 @@ export function blockClass(text: string, range: BlockRange): string {
 
 // A key with a number, a quoted string or a bare word (`Type LSD`) as its value. A header such as
 // `Forward +{` ends in a brace and never matches, so append arrays cannot pass for a field.
-const FIELD_LINE_RE = /^\s*([A-Za-z][A-Za-z0-9_]*)\s+(?:(-?\d+(?:\.\d+)?)|"([^"]*)"|([A-Za-z][A-Za-z0-9_]*))\s*$/;
+// A trailing `// comment` after the value is allowed.
+const FIELD_LINE_RE = /^\s*([A-Za-z][A-Za-z0-9_]*)\s+(?:(-?\d+(?:\.\d+)?)|"([^"]*)"|([A-Za-z][A-Za-z0-9_]*))\s*(?:\/\/.*)?$/;
 
 /** Read the named fields written directly at this block's top level (nested blocks and arrays are skipped). */
 export function readFields(text: string, range: BlockRange, keys: readonly string[]): Record<string, FieldValue> {

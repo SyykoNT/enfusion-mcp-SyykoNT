@@ -162,6 +162,61 @@ class EMCP_WB_ReadProps : NetApiHandler
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! The value the container holds, as text. Get() with a variable of the property's type
+	//! (per GetDataVarType) gives the held value; GetDefaultAsString gave the class default
+	//! on 1.9, so it is used only for types not handled below.
+	// shortcut: types other than scalar, int, flags, bool, string, resource name and vector3 still
+	// report the class default, add a case when a user needs one.
+	static bool ReadHeldValue(BaseContainer cont, int varIndex, string varName, out string val)
+	{
+		DataVarType varType = cont.GetDataVarType(varIndex);
+
+		if (varType == DataVarType.SCALAR)
+		{
+			float fVal;
+			if (!cont.Get(varName, fVal))
+				return false;
+			val = fVal.ToString();
+			return true;
+		}
+
+		if (varType == DataVarType.INTEGER || varType == DataVarType.FLAGS)
+		{
+			int nVal;
+			if (!cont.Get(varName, nVal))
+				return false;
+			val = nVal.ToString();
+			return true;
+		}
+
+		if (varType == DataVarType.BOOLEAN)
+		{
+			bool bVal;
+			if (!cont.Get(varName, bVal))
+				return false;
+			if (bVal)
+				val = "true";
+			else
+				val = "false";
+			return true;
+		}
+
+		if (varType == DataVarType.STRING || varType == DataVarType.RESOURCE_NAME)
+			return cont.Get(varName, val);
+
+		if (varType == DataVarType.VECTOR3)
+		{
+			vector vVal;
+			if (!cont.Get(varName, vVal))
+				return false;
+			val = vVal[0].ToString() + " " + vVal[1].ToString() + " " + vVal[2].ToString();
+			return true;
+		}
+
+		return cont.GetDefaultAsString(varName, val);
+	}
+
+	//------------------------------------------------------------------------------------------------
 	override JsonApiStruct GetRequest()
 	{
 		return new EMCP_WB_ReadPropsRequest();
@@ -217,10 +272,7 @@ class EMCP_WB_ReadProps : NetApiHandler
 		{
 			string varName = target.GetVarName(v);
 			string val;
-			// GetDefaultAsString returns the inherited value when this file does
-			// not set the variable, which is exactly what makes the .pak
-			// extraction unnecessary.
-			if (!target.GetDefaultAsString(varName, val))
+			if (!ReadHeldValue(target, v, varName, val))
 				continue;
 
 			resp.m_aNames.Insert(varName);

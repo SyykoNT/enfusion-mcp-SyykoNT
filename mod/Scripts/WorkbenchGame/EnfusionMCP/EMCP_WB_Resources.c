@@ -105,9 +105,11 @@ class EMCP_WB_Resources : NetApiHandler
 		}
 		else if (req.action == "rebuild")
 		{
-			resMgr.RebuildResourceFile(req.path, "", false);
+			// RebuildResourceFile returns void: the call is a request, and Workbench
+			// reports whether the build worked only in console.log. The docs show "PC".
+			resMgr.RebuildResourceFile(req.path, "PC", false);
 			resp.status = "ok";
-			resp.message = "Rebuild initiated for: " + req.path;
+			resp.message = "Rebuild requested for: " + req.path + ". Workbench reports the result only in console.log.";
 		}
 		else if (req.action == "open")
 		{

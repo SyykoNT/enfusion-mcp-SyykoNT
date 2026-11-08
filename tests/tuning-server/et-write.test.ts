@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { planBlockWrites, formatNumber, type WritePlan } from "../../src/tuning-server/et-write.js";
 import { resolveChassis } from "../../src/tuning-server/resolve-chassis.js";
+import { resolveEngineFields } from "../../src/tuning-server/resolve-engine.js";
 
 const FRONT = "4D8B26DF957A8E1C";
 const REAR = "4D8B26DF8CF2F3D8";
@@ -228,6 +229,27 @@ describe("planBlockWrites: numbers", () => {
   it("writes negative zero as 0", () => {
     const out = written(planBlockWrites(VEHICLE, { engine: { MaxPower: -0 } }));
     expect(out).toContain("     MaxPower 0\n");
+  });
+});
+
+describe("planBlockWrites: a key line with a trailing // comment", () => {
+  const COMMENTED = VEHICLE.replace("     MaxPower 90\n", "     MaxPower 90\n     MaxTorque 172 // peak torque, Nm\n");
+  const engineOf = (text: string) =>
+    resolveEngineFields({ modText: text, relPath: "Prefabs/Vehicles/Wheeled/Fix/Fix.et", readFile: () => null });
+
+  it("reads the value as the prefab's own", () => {
+    expect(engineOf(COMMENTED).MaxTorque).toMatchObject({ value: 172, source: "own" });
+  });
+
+  it("writes the new value and keeps the comment", () => {
+    const out = written(planBlockWrites(COMMENTED, { engine: { MaxTorque: 180 } }));
+    expect(out).toBe(COMMENTED.replace("MaxTorque 172 //", "MaxTorque 180 //"));
+    expect(out).toContain("     MaxTorque 180 // peak torque, Nm\n");
+  });
+
+  it("still reads and writes a line without a comment as before", () => {
+    expect(engineOf(VEHICLE).MaxPower).toMatchObject({ value: 90, source: "own" });
+    expect(written(planBlockWrites(VEHICLE, { engine: { MaxPower: 95 } }))).toBe(VEHICLE.replace("MaxPower 90", "MaxPower 95"));
   });
 });
 

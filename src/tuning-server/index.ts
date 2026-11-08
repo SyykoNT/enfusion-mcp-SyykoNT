@@ -16,7 +16,7 @@ const port = process.env.ENFUSION_TUNING_PORT ? parseInt(process.env.ENFUSION_TU
 const allowWrite = process.env.ENFUSION_TUNING_READONLY !== "1";
 
 // What to do in Workbench after a successful write, via ENFUSION_TUNING_POST_WRITE:
-//   rebuild        (default) re-import the changed .et file (ResourceManager.RebuildResourceFile)
+//   rebuild        (default) ask Workbench to rebuild the changed .et file (ResourceManager.RebuildResourceFile); the reply only says it was requested, the result is in console.log
 //   scripts        EMCP_WB_Reload target=scripts (Script>Compile / Build>Compile All /
 //                  Script>Compile All / Plugins>Reload Scripts fallback chain)
 //   menu:A,B       run an exact menu path against WorldEditor, e.g. menu:Plugins,Reload Scripts

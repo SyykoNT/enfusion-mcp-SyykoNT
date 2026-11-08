@@ -238,9 +238,10 @@ function applyWrites(text: string, writes: BlockWrite[]): string {
     let depth = 0;
     for (let i = w.range.openLine + 1; i < w.range.closeLine; i++) {
       const line = body(i);
-      const m = depth === 0 ? /^(\s*)([A-Za-z][A-Za-z0-9_]*)\s+[^{}]*$/.exec(line) : null;
+      // Group 3 keeps a trailing `// comment` (with its leading space) after the new value.
+      const m = depth === 0 ? /^(\s*)([A-Za-z][A-Za-z0-9_]*)\s+[^{}]*?(\s*\/\/.*)?$/.exec(line) : null;
       if (m && want.has(m[2])) {
-        lines[i] = `${m[1]}${m[2]} ${formatNumber(want.get(m[2])!)}${ending(i)}`;
+        lines[i] = `${m[1]}${m[2]} ${formatNumber(want.get(m[2])!)}${m[3] ?? ""}${ending(i)}`;
         remaining.delete(m[2]);
       }
       depth += countUnquotedBraces(line);
