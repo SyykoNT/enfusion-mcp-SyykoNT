@@ -122,9 +122,24 @@ describe("tuning server write path, hostile requests", () => {
       expect((await post({})).status).toBe(200);
     });
 
-    it("does not gate GET: the page and its data load with or without an Origin", async () => {
+    it("GET ignores Origin: the page and its data load with or without one", async () => {
       expect((await send("GET", "/", {})).status).toBe(200);
       expect((await send("GET", "/api/vehicles", { Origin: "http://example.com" })).status).toBe(200);
+    });
+
+    it.each(["/", "/mf2002.js", "/api/vehicles", `/api/vehicles/${REL}`])("403 for GET %s with a foreign Host (DNS rebinding)", async (path) => {
+      for (const host of [`evil.example:${port}`, "127.0.0.1", `127.0.0.1:${port + 1}`]) {
+        const res = await send("GET", path, { Host: host });
+        expect(res.status, host).toBe(403);
+        expect(res.body, host).not.toContain("M151A2");
+        expect(res.body, host).not.toContain("<title>");
+      }
+    });
+
+    it.each(["127.0.0.1", "localhost"])("serves GET to the server's own Host %s:<port>", async (name) => {
+      for (const path of ["/", "/mf2002.js", `/api/vehicles/${REL}`]) {
+        expect((await send("GET", path, { Host: `${name}:${port}` })).status, path).toBe(200);
+      }
     });
   });
 

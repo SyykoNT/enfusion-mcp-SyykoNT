@@ -11,11 +11,21 @@ const fsWrites = vi.hoisted(() => ({
   paths: [] as string[],
   renames: [] as string[][],
   renameError: null as (Error & { code?: string }) | null,
+  /** Thrown once by the next read of this exact path. */
+  readError: null as { path: string; error: Error & { code?: string } } | null,
 }));
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
   return {
     ...fs,
+    readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => {
+      const fail = fsWrites.readError;
+      if (fail && String(args[0]) === fail.path) {
+        fsWrites.readError = null;
+        throw fail.error;
+      }
+      return fs.readFileSync(...args);
+    }) as typeof fs.readFileSync,
     writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
       fsWrites.paths.push(String(args[0]));
       return fs.writeFileSync(...args);
@@ -118,6 +128,30 @@ describe("tuning server POST writes the 1.9 blocks", () => {
     expect(text).not.toMatch(/^\s*[A-Za-z]\w*\s+-?[\d.]+[eE][+-]?\d+\s*$/m);
   });
 
+  // Bodies the tuner page sent, captured in the browser against a temp copy of this fixture.
+  it("accepts a body captured from the tuner page, and the page's missing-block body gets the 409 text", async () => {
+    const captured =
+      '{"changes":{"tyreModel":{"top":{"NominalLoad":5100}},"engine":{"MaxPower":95},"axles":[{"axle":"4D8B26DF957A8E1C","tyre":{"Roughness":0.2},' +
+      '"steering":{"SteeringRatio":16}},{"axle":"4D8B26DF8CF2F3D8","suspension":{"SpringRate":32000}}],"differentials":[{"name":"Diff_C","fields":{"Ratio":1.2}},' +
+      '{"name":"Diff_02","axle":"4D8B26DF8CF2F3D8","fields":{"Ratio":5.3}}]}}';
+    const res = await post(REL, captured);
+    const body = await res.json();
+    expect(res.status, body.message).toBe(200);
+    expect(body.written).toHaveLength(7);
+    const text = readFileSync(etPath, "utf-8");
+    for (const line of ["     MaxPower 95\n", "      Ratio 1.2\n", "       SteeringRatio 16\n", "       Roughness 0.2\n", "       Ratio 5.3\n", "       SpringRate 32000\n", "     NominalLoad 5100\n"]) {
+      expect(text).toContain(line);
+    }
+
+    const before = readFileSync(etPath);
+    const missing = await post(REL, '{"changes":{"tyreModel":{"Longitudinal":{"PCX1":1.7}},"engine":{"MaxPower":96}}}');
+    expect(missing.status).toBe(409);
+    expect((await missing.json()).message).toBe(
+      `${REL}: TyreModel Longitudinal is not in this .et. Add the override in Workbench first; this tool never creates blocks. Nothing was written.`
+    );
+    expect(readFileSync(etPath).equals(before)).toBe(true);
+  });
+
   it("409 for a block the .et lacks, names it, and leaves the file's bytes alone (all or nothing)", async () => {
     const before = readFileSync(etPath);
     // The Engine block exists; the TyreModel Longitudinal sub-block is only in the conf.
@@ -206,6 +240,24 @@ describe("tuning server POST writes the 1.9 blocks", () => {
     expect(body.message).toContain("Nothing was changed");
     expect(readFileSync(etPath).equals(before)).toBe(true);
     expect(readdirSync(dirname(etPath)).filter((n) => n.endsWith(".tuning-tmp"))).toEqual([]);
+  });
+
+  it.each(["EBUSY", "EPERM", "EACCES"])("409 saying the file is locked when the read before the write fails with %s", async (code) => {
+    const before = readFileSync(etPath);
+    fsWrites.readError = { path: etPath, error: Object.assign(new Error(`${code}: resource busy or locked, open '${etPath}'`), { code }) };
+    const res = await postChanges({ engine: { MaxPower: 95 } });
+    const body = await res.json();
+    expect(res.status).toBe(409);
+    expect(body.message).toContain("locked");
+    expect(body.message).not.toContain(etPath);
+    expect(fsWrites.readError).toBeNull();
+    expect(fsWrites.paths).toEqual([]);
+    expect(readFileSync(etPath).equals(before)).toBe(true);
+  });
+
+  it("still 500 for a read failure that is not a lock", async () => {
+    fsWrites.readError = { path: etPath, error: Object.assign(new Error("EIO: i/o error"), { code: "EIO" }) };
+    expect((await postChanges({ engine: { MaxPower: 95 } })).status).toBe(500);
   });
 
   it("400 for a colon inside the route path (B-073)", async () => {

@@ -7,7 +7,9 @@ import { resolveEngineFields } from "./resolve-engine.js";
 import { resolveChassis } from "./resolve-chassis.js";
 import { planBlockWrites } from "./et-write.js";
 
-const TUNER_HTML_PATH = join(dirname(fileURLToPath(import.meta.url)), "public", "tuner.html");
+const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "public");
+const TUNER_HTML_PATH = join(PUBLIC_DIR, "tuner.html");
+const MF2002_JS_PATH = join(PUBLIC_DIR, "mf2002.js");
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const data = JSON.stringify(body);
@@ -43,20 +45,28 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+const ownHosts = (req: IncomingMessage) => [`127.0.0.1:${req.socket.localPort}`, `localhost:${req.socket.localPort}`];
+
 /**
- * True when a request can only have come from the tuner page this server served
- * (or a non-browser client): the Host must be our own loopback name, which stops
- * DNS rebinding, and an Origin, if the client sent one, must be that same
- * origin, which stops a page on another site from posting here.
+ * The Host must be our own loopback name and port, for every request: that stops a
+ * DNS-rebinding page from reading the user's vehicle data or writing to it.
  */
-function isOwnRequest(req: IncomingMessage): boolean {
-  const port = req.socket.localPort;
-  const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+function isOwnHost(req: IncomingMessage): boolean {
   const host = req.headers.host?.toLowerCase();
-  if (!host || !hosts.includes(host)) return false;
-  const origin = req.headers.origin?.toLowerCase();
-  return origin === undefined || hosts.some((h) => origin === `http://${h}`);
+  return !!host && ownHosts(req).includes(host);
 }
+
+/**
+ * An Origin, if the client sent one, must be this server's own, which stops a page
+ * on another site from posting here. A non-browser client sends none.
+ */
+function isOwnOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin?.toLowerCase();
+  return origin === undefined || ownHosts(req).some((h) => origin === `http://${h}`);
+}
+
+/** A file another program holds open or locked; Windows reports these three codes. */
+const isLocked = (e: unknown) => ["EPERM", "EACCES", "EBUSY"].includes((e as NodeJS.ErrnoException).code ?? "");
 
 /**
  * Replace the file in one step: write beside it, then rename over it, so a crash
@@ -103,8 +113,11 @@ export function createTuningServer(
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
 
-      if (req.method === "POST" && !isOwnRequest(req)) {
-        sendJson(res, 403, { status: "error", message: "Cross-site or foreign-host requests cannot write." });
+      if (!isOwnHost(req) || (req.method === "POST" && !isOwnOrigin(req))) {
+        sendJson(res, 403, {
+          status: "error",
+          message: `Cross-site or foreign-host requests are refused. Open the page at http://127.0.0.1:${req.socket.localPort}/.`,
+        });
         return;
       }
 
@@ -112,6 +125,12 @@ export function createTuningServer(
         const html = readFileSync(TUNER_HTML_PATH, "utf-8");
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(html);
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/mf2002.js") {
+        res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
+        res.end(readFileSync(MF2002_JS_PATH, "utf-8"));
         return;
       }
 
@@ -195,32 +214,31 @@ export function createTuningServer(
           return;
         }
 
-        const raw = readFileSync(filePath);
-        const original = raw.toString("utf-8");
-        // Bytes that are not UTF-8 would come back changed on every line, so refuse instead.
-        if (!Buffer.from(original, "utf-8").equals(raw)) {
-          sendJson(res, 409, { status: "error", message: `${rel} is not valid UTF-8, so it cannot be edited byte-safely. Nothing was written.` });
-          return;
-        }
-        const plan = planBlockWrites(original, (parsedBody as { changes?: unknown } | null)?.changes);
-        if (!plan.ok) {
-          sendJson(res, plan.status, { status: "error", message: `${rel}: ${plan.message}`, errors: plan.errors });
-          return;
-        }
-
-        // The one write of this request, all of it at once: only the vehicle's own .et.
+        let written: string[];
+        // A file held open by another program can fail at the read as well as at the replace.
         try {
-          writeAtomic(filePath, plan.text);
-        } catch (e) {
-          const code = (e as NodeJS.ErrnoException).code;
-          if (code === "EPERM" || code === "EACCES" || code === "EBUSY") {
-            sendJson(res, 409, {
-              status: "error",
-              message: `${rel} is locked or read-only (Workbench may have it open), so it was not replaced. Nothing was changed.`,
-            });
+          const raw = readFileSync(filePath);
+          const original = raw.toString("utf-8");
+          // Bytes that are not UTF-8 would come back changed on every line, so refuse instead.
+          if (!Buffer.from(original, "utf-8").equals(raw)) {
+            sendJson(res, 409, { status: "error", message: `${rel} is not valid UTF-8, so it cannot be edited byte-safely. Nothing was written.` });
             return;
           }
-          throw e;
+          const plan = planBlockWrites(original, (parsedBody as { changes?: unknown } | null)?.changes);
+          if (!plan.ok) {
+            sendJson(res, plan.status, { status: "error", message: `${rel}: ${plan.message}`, errors: plan.errors });
+            return;
+          }
+          // The one write of this request, all of it at once: only the vehicle's own .et.
+          writeAtomic(filePath, plan.text);
+          written = plan.written;
+        } catch (e) {
+          if (!isLocked(e)) throw e;
+          sendJson(res, 409, {
+            status: "error",
+            message: `${rel} is locked or read-only (Workbench may have it open), so it was not replaced. Nothing was changed.`,
+          });
+          return;
         }
 
         // Best effort: ask Workbench to re-read the file so the change shows up in
@@ -238,7 +256,7 @@ export function createTuningServer(
         sendJson(res, 200, {
           status: "ok",
           vehicle: rel,
-          written: plan.written,
+          written,
           message: RELOAD_REMINDER,
           workbench,
         });

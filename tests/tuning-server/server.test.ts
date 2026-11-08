@@ -68,6 +68,18 @@ describe("tuning server", () => {
     expect(await res.text()).toContain("<title>");
   });
 
+  it("GET /mf2002.js serves the tyre maths as a JavaScript module the page imports", async () => {
+    const res = await fetch(`${baseUrl}/mf2002.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/javascript");
+    expect(await res.text()).toContain("export function fx0");
+    const page = await (await fetch(`${baseUrl}/`)).text();
+    expect(page).toContain('from "/mf2002.js"');
+    // Only that one file: no general static handler next to it.
+    expect((await fetch(`${baseUrl}/tuner.html`)).status).toBe(404);
+    expect((await fetch(`${baseUrl}/mf2002.d.ts`)).status).toBe(404);
+  });
+
   it("GET /api/vehicles lists vehicles with their Engine-block flag", async () => {
     const res = await fetch(`${baseUrl}/api/vehicles`);
     const body = await res.json();
