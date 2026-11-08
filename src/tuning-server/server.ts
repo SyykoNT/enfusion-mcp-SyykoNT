@@ -2,11 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { ENGINE_FIELD_KEYS, type EngineFields } from "./engine-conf.js";
 import { listVehicles, vehicleEtPath, isSafeVehicleRelPath } from "./discover.js";
 import { resolveEngineFields } from "./resolve-engine.js";
 import { resolveChassis } from "./resolve-chassis.js";
-import { findEngineBlock, writeEngineFields } from "./et-engine-block.js";
+import { planBlockWrites } from "./et-write.js";
 
 const TUNER_HTML_PATH = join(dirname(fileURLToPath(import.meta.url)), "public", "tuner.html");
 
@@ -26,16 +25,6 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("end", () => resolve(data));
     req.on("error", reject);
   });
-}
-
-/** A partial set of engine changes: at least one known key, all finite numbers. */
-function isValidEngineChanges(value: unknown): value is Partial<EngineFields> {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  const keys = Object.keys(v);
-  if (keys.length === 0) return false;
-  if (!keys.every((k) => (ENGINE_FIELD_KEYS as string[]).includes(k))) return false;
-  return keys.every((k) => typeof v[k] === "number" && Number.isFinite(v[k]));
 }
 
 const RELOAD_REMINDER =
@@ -104,7 +93,7 @@ export function createTuningServer(
             status: "error",
             message:
               "This server is read-only. Edit the prefab in Workbench; the page picks the change up automatically. " +
-              "Set ENFUSION_TUNING_ALLOW_WRITE=1 to re-enable writing.",
+              "Start it without ENFUSION_TUNING_READONLY=1 to allow writing.",
           });
           return;
         }
@@ -124,28 +113,21 @@ export function createTuningServer(
           return;
         }
 
-        const changes = (parsedBody as { changes?: unknown }).changes;
-        if (!isValidEngineChanges(changes)) {
-          sendJson(res, 400, {
-            status: "error",
-            message: `Body must include a "changes" object with at least one numeric field from: ${ENGINE_FIELD_KEYS.join(", ")}`,
-          });
+        const raw = readFileSync(filePath);
+        const original = raw.toString("utf-8");
+        // Bytes that are not UTF-8 would come back changed on every line, so refuse instead.
+        if (!Buffer.from(original, "utf-8").equals(raw)) {
+          sendJson(res, 409, { status: "error", message: `${rel} is not valid UTF-8, so it cannot be edited byte-safely. Nothing was written.` });
+          return;
+        }
+        const plan = planBlockWrites(original, (parsedBody as { changes?: unknown } | null)?.changes);
+        if (!plan.ok) {
+          sendJson(res, plan.status, { status: "error", message: `${rel}: ${plan.message}`, errors: plan.errors });
           return;
         }
 
-        const original = readFileSync(filePath, "utf-8");
-        const loc = findEngineBlock(original);
-        if (!loc) {
-          sendJson(res, 409, {
-            status: "error",
-            message:
-              `${rel} has no Engine block. Add the engine override in Workbench first. ` +
-              `this tool never creates the block structure.`,
-          });
-          return;
-        }
-
-        writeFileSync(filePath, writeEngineFields(original, loc, changes), "utf-8");
+        // The one write of this request, all of it at once: only the vehicle's own .et.
+        writeFileSync(filePath, plan.text, "utf-8");
 
         // Best effort: ask Workbench to re-read the file so the change shows up in
         // the editor. A failure here is not a write failure (the bytes are on disk
@@ -162,7 +144,7 @@ export function createTuningServer(
         sendJson(res, 200, {
           status: "ok",
           vehicle: rel,
-          written: Object.keys(changes),
+          written: plan.written,
           message: RELOAD_REMINDER,
           workbench,
         });

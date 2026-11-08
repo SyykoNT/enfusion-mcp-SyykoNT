@@ -90,6 +90,10 @@ describe("isSafeVehicleRelPath", () => {
     expect(isSafeVehicleRelPath("C:/Windows/system.ini")).toBe(false);
   });
 
+  it("rejects a colon in any segment (NTFS stream names, B-073)", () => {
+    expect(isSafeVehicleRelPath("Prefabs/Vehicles/Wheeled/X/X.et:hidden.et")).toBe(false);
+    expect(isSafeVehicleRelPath("Prefabs/Vehicles/Wheeled:x/X/X.et")).toBe(false);  });
+
   it("rejects paths outside Prefabs/Vehicles", () => {
     expect(isSafeVehicleRelPath("Scripts/Game/Thing.et")).toBe(false);
   });

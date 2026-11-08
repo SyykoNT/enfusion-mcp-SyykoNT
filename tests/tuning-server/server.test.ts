@@ -143,12 +143,12 @@ describe("tuning server", () => {
     const res = await fetch(`${baseUrl}/api/vehicles/${REL}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ changes: { MaxPower: 75 } }),
+      body: JSON.stringify({ changes: { engine: { MaxPower: 75 } } }),
     });
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");
-    expect(body.written).toEqual(["MaxPower"]);
+    expect(body.written).toEqual(["Engine.MaxPower"]);
     expect(body.message).toMatch(/reload/i);
 
     const after = readFileSync(etPath, "utf-8");
@@ -165,7 +165,7 @@ describe("tuning server", () => {
     const res = await fetch(`${baseUrl}/api/vehicles/Scripts/Game/Escape.et`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ changes: { MaxPower: 75 } }),
+      body: JSON.stringify({ changes: { engine: { MaxPower: 75 } } }),
     });
     expect(res.status).toBe(400);
     expect((await res.json()).message).toContain("Invalid");
@@ -175,7 +175,7 @@ describe("tuning server", () => {
     const res = await fetch(`${baseUrl}/api/vehicles/${REL}`, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify({ changes: { MaxPower: 75 } }),
+      body: JSON.stringify({ changes: { engine: { MaxPower: 75 } } }),
     });
     expect(res.status).toBe(400);
     expect((await res.json()).message).toContain("Content-Type");
@@ -203,7 +203,7 @@ describe("tuning server", () => {
     const bogus = await fetch(`${baseUrl}/api/vehicles/${REL}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ changes: { NotAField: 1 } }),
+      body: JSON.stringify({ changes: { engine: { NotAField: 1 } } }),
     });
     expect(bogus.status).toBe(400);
   });
@@ -243,10 +243,14 @@ describe("tuning server, read-only by default", () => {
     const res = await fetch(`${baseUrl}/api/vehicles/${REL}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ changes: { MaxPower: 75 } }),
+      body: JSON.stringify({ changes: { engine: { MaxPower: 75 } } }),
     });
     expect(res.status).toBe(403);
-    expect((await res.json()).message).toContain("read-only");
+    const { message } = await res.json();
+    expect(message).toContain("read-only");
+    // The real switch (index.ts), not the retired ENFUSION_TUNING_ALLOW_WRITE.
+    expect(message).toContain("ENFUSION_TUNING_READONLY");
+    expect(message).not.toContain("ALLOW_WRITE");
     expect(readFileSync(etPath, "utf-8")).toBe(before);
   });
 });
@@ -284,7 +288,7 @@ describe("tuning server, Workbench notification after write", () => {
     fetch(`${baseUrl}/api/vehicles/${REL}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ changes: { MaxPower: 75 } }),
+      body: JSON.stringify({ changes: { engine: { MaxPower: 75 } } }),
     });
 
   it("passes the written vehicle to the notifier and reports its result", async () => {
@@ -304,7 +308,7 @@ describe("tuning server, Workbench notification after write", () => {
     // completed write into a failed request.
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");
-    expect(body.written).toEqual(["MaxPower"]);
+    expect(body.written).toEqual(["Engine.MaxPower"]);
     expect(body.workbench).toContain("ECONNREFUSED");
     expect(readFileSync(etPath, "utf-8")).toContain("MaxPower 75");
   });

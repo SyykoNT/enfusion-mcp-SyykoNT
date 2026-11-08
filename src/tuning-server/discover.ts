@@ -21,8 +21,8 @@ export interface DiscoveredVehicle {
   /** Addon-relative posix path, e.g. "Prefabs/Vehicles/Wheeled/M151A2/M151A2.et". */
   path: string;
   /**
-   * Whether the prefab already overrides Engine. False is normal — a clean prefab
-   * inherits everything — but Apply cannot write until the block exists.
+   * Whether the prefab already overrides Engine. False is normal: a clean prefab
+   * inherits everything, but Apply cannot write until the block exists.
    */
   hasEngineBlock: boolean;
 }
@@ -67,7 +67,8 @@ export function isSafeVehicleRelPath(relPath: string): boolean {
   if (relPath.includes("\\")) return false;
   if (relPath.includes("..")) return false;
   if (relPath.startsWith("/")) return false;
-  if (/^[A-Za-z]:/.test(relPath)) return false;
+  // A drive letter, or an NTFS stream such as `X.et:hidden.et` (backlog B-073).
+  if (relPath.includes(":")) return false;
   if (!relPath.startsWith(`${VEHICLES_SUBPATH}/`)) return false;
   return relPath.endsWith(".et");
 }

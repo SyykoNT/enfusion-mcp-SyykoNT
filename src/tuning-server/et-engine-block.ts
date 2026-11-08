@@ -74,7 +74,7 @@ export function findChildBlock(
 
 /**
  * Locate `components -> VehicleWheeledSimulation -> Simulation -> Engine`.
- * Returns null if any level is absent — callers must never create the structure.
+ * Returns null if any level is absent: callers must never create the structure.
  */
 export function findEngineBlock(text: string): EngineBlockLocation | null {
   const lines = text.split(/\r?\n/);
@@ -121,7 +121,7 @@ export function findEngineBlock(text: string): EngineBlockLocation | null {
   };
 }
 
-/** Matches `  MaxPower 53` — a bare key followed by a single numeric value. */
+/** Matches `  MaxPower 53`: a bare key followed by a single numeric value. */
 const FIELD_LINE_RE = /^(\s*)([A-Za-z][A-Za-z0-9_]*)\s+(-?\d+(?:\.\d+)?)\s*$/;
 
 /** Read whichever of the 9 known fields are written directly inside the block. */
@@ -143,51 +143,6 @@ export function readEngineFieldsFromBlock(
     depth += countUnquotedBraces(line);
   }
   return found;
-}
-
-/**
- * Return `text` with only the given fields changed inside the located Engine block.
- * A field already present is replaced in place (its original indentation is kept);
- * a field that is absent is inserted just before the block's closing line using
- * `loc.fieldIndent`. Every other byte of the document is left exactly as it was —
- * the file is never re-serialized.
- */
-export function writeEngineFields(
-  text: string,
-  loc: EngineBlockLocation,
-  changes: Partial<EngineFields>
-): string {
-  const changedKeys = ENGINE_FIELD_KEYS.filter((k) => changes[k] !== undefined);
-  if (changedKeys.length === 0) return text;
-
-  const usesCrlf = text.includes("\r\n");
-  const lines = text.split(/\r?\n/);
-  const remaining = new Set<string>(changedKeys);
-
-  // Pass 1: replace fields already present at the block's top level.
-  let depth = 0;
-  for (let i = loc.openLine + 1; i < loc.closeLine; i++) {
-    const line = lines[i];
-    if (depth === 0) {
-      const m = FIELD_LINE_RE.exec(line);
-      if (m && remaining.has(m[2])) {
-        const key = m[2] as keyof EngineFields;
-        lines[i] = `${m[1]}${m[2]} ${changes[key]}`;
-        remaining.delete(m[2]);
-      }
-    }
-    depth += countUnquotedBraces(line);
-  }
-
-  // Pass 2: insert whatever is still missing, just before the closing line.
-  if (remaining.size > 0) {
-    const inserted = ENGINE_FIELD_KEYS.filter((k) => remaining.has(k)).map(
-      (k) => `${loc.fieldIndent}${k} ${changes[k]}`
-    );
-    lines.splice(loc.closeLine, 0, ...inserted);
-  }
-
-  return lines.join(usesCrlf ? "\r\n" : "\n");
 }
 
 /**
