@@ -52,11 +52,15 @@ const GEAR_LIST = "Configs/Gearscripts/GearScriptsConfigList.json";
 export function gitReport(clones: { name: string; root: string }[]): string {
   return clones
     .map(({ name, root }) => {
-      const top = gitOrNull(root, ["rev-parse", "--show-toplevel"]);
-      if (!top || realPathOf(top) !== realPathOf(root)) return `${name}: not a git clone of its own`;
-      const changed = (gitOrNull(root, ["status", "--porcelain"]) ?? "").split("\n").filter(Boolean).length;
-      const stat = (gitOrNull(root, ["diff", "--stat", "--", GEAR_LIST]) ?? "").trim().split("\n").pop()?.trim();
-      return `${name}: ${changed} changed files, GearScriptsConfigList.json ${stat || "unchanged"}`;
+      try {
+        const top = gitOrNull(root, ["rev-parse", "--show-toplevel"]);
+        if (!top || realPathOf(top) !== realPathOf(root)) return `${name}: not a git clone of its own`;
+        const changed = (gitOrNull(root, ["status", "--porcelain"]) ?? "").split("\n").filter(Boolean).length;
+        const stat = (gitOrNull(root, ["diff", "--stat", "--", GEAR_LIST]) ?? "").trim().split("\n").pop()?.trim();
+        return `${name}: ${changed} changed files, GearScriptsConfigList.json ${stat || "unchanged"}`;
+      } catch {
+        return `${name}: git not available`; // gitOrNull throws when git is not on PATH; the press must still be logged
+      }
     })
     .join("; ");
 }
@@ -151,8 +155,11 @@ export function endCrashReporters(
   kill: (pid: number) => void,
   alive: (pid: number) => boolean
 ): CrashLog["reporters"] {
-  return reporters
-    .filter((r) => r.ppid === pid && r.pid !== pid && (startTime === undefined || r.created >= startTime - 10_000))
+  const mine = reporters.filter((r) => r.ppid === pid && r.pid !== pid);
+  // Without the Workbench start time the age guard cannot hold, so nothing is ended.
+  if (startTime === undefined) return mine.map((r) => ({ pid: r.pid, ended: false, why: "start time unknown, left running" }));
+  return mine
+    .filter((r) => r.created >= startTime - 10_000)
     .map((r) => {
       kill(r.pid);
       return alive(r.pid) ? { pid: r.pid, ended: false, why: "still running after the end request" } : { pid: r.pid, ended: true };

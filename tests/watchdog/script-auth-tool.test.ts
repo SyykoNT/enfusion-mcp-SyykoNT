@@ -122,7 +122,13 @@ describe("endCrashReporters", () => {
   });
 
   it("says so when the process is still there after the request", () => {
-    expect(endCrashReporters(100, undefined, [cr(1, 100, 6000)], vi.fn(), () => true)).toEqual([{ pid: 1, ended: false, why: "still running after the end request" }]);
+    expect(endCrashReporters(100, 5000, [cr(1, 100, 6000)], vi.fn(), () => true)).toEqual([{ pid: 1, ended: false, why: "still running after the end request" }]);
+  });
+
+  it("ends no CrashReporter when the Workbench start time is unknown", () => {
+    const kill = vi.fn();
+    expect(endCrashReporters(100, undefined, [cr(1, 100, 6000), cr(2, 101, 6000)], kill, () => false)).toEqual([{ pid: 1, ended: false, why: "start time unknown, left running" }]);
+    expect(kill).not.toHaveBeenCalled();
   });
 });
 

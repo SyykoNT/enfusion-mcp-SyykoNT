@@ -212,6 +212,26 @@ describe("Script Authorization in the watcher", () => {
     expect(execFileSync("git", ["-C", clone, "status", "--porcelain"], { encoding: "utf-8" })).toContain("GearScriptsConfigList.json");
   });
 
+  it("the press is still logged in the report, events.jsonl and the lock file when git is not on PATH", async () => {
+    const t = setup();
+    const clone = join(t.root, "COALITION-Lobby");
+    mkdirSync(clone);
+    t.open(9001, FIND);
+    const path = process.env.PATH;
+    process.env.PATH = join(t.root, "no-git-here"); // git then fails with ENOENT, which gitOrNull turns into a throw
+    try {
+      await t.watcher({}, { loadSet: () => loaded({ "Scripts/Game/MCPAuthProbe/MCPAuthProbe_GameCalls.c": ["COALITION-Lobby", ""] }, { clones: [{ name: "COALITION-Lobby", root: clone }] }) }).tick();
+    } finally {
+      process.env.PATH = path;
+    }
+    expect(t.answer).toHaveBeenCalledOnce();
+    const line = t.lockLines()[0];
+    expect(line).toContain("YES");
+    expect(line).toContain("[git: COALITION-Lobby: git not available]");
+    expect(t.events().map((e) => [e.kind, e.action])).toEqual([["auth", line]]);
+    expect(eventLines(t.stateDir, 0).lines).toHaveLength(1);
+  });
+
   it("counts .edds files changed in the mounted folders in the last 5 minutes", async () => {
     const t = setup();
     const proj = join(t.root, "proj");
