@@ -44,7 +44,7 @@ agent or client that can launch an MCP server can use it.
 | Read a vanilla script, prefab or config | Extract it from a `.pak` or open it in Workbench | `game_browse` and `game_read` read inside the `.pak` archives |
 | Override a vanilla config value | "Override in addon", then edit the delta by hand | `config_override` writes the delta and a `.meta` carrying the base file's GUID |
 | Change XP rewards, rank thresholds or supply costs | Find each config and override each value | `economy` lists the current values and writes the overrides |
-| Look up an API class or method | Browse the Doxygen HTML | `api_search` on an index built from the 1.8 script API docs, inherited methods included |
+| Look up an API class or method | Browse the Doxygen HTML | `api_search` on an index built from the 1.9 script API docs, inherited methods included |
 | Run a dedicated server with your addon | Write `server.json`, build the command line | `server config` validates against the game's own `backend/DSConfigSchema.json`; `server start` loads your packed addons |
 | Join that server | Start the client with matching addons and flags | `game launch` with `connect` |
 | Place and edit entities in a world | World Editor, by hand | `wb_entity_*`, `wb_layers`, `wb_component` through Workbench's NET API |
@@ -204,7 +204,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 ### Knowledge (offline)
 | Tool | Purpose |
 |---|---|
-| `api_search` | Classes, methods and enums of the 1.8 script API, with inherited methods |
+| `api_search` | Classes, methods and enums of the 1.9 script API, with inherited methods |
 | `component_search` | Script components by category or event handler |
 | `wiki_search` / `wiki_read` | Bundled Bohemia wiki pages and tutorials; `wiki_read` takes a title or the page URL and returns long pages in parts |
 | `wb_knowledge` | Bundled modding knowledge base; long topics continue with `title` and `offset` |

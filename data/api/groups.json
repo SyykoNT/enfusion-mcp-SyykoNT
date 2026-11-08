@@ -116,6 +116,52 @@
     "source": "enfusion"
   },
   {
+    "name": "Camera",
+    "description": "",
+    "classes": [
+      "CameraCollisionSolver",
+      "CameraCollisionSolverResult",
+      "CameraCollisionSolverSimple",
+      "CameraComponent",
+      "CameraSystem",
+      "CameraComponentClass",
+      "CameraController",
+      "CameraControllerContext",
+      "CameraControllerResult",
+      "GenericCameraEntityClass",
+      "GenericCameraEntity"
+    ],
+    "enums": [
+      {
+        "name": "ECameraTransitionCurve",
+        "description": "",
+        "values": [
+          {
+            "name": "S_CURVE",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "EASE_IN",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "EASE_OUT",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "LINEAR",
+            "value": "",
+            "description": ""
+          }
+        ]
+      }
+    ],
+    "source": "enfusion"
+  },
+  {
     "name": "Character",
     "description": "",
     "classes": [],
@@ -815,8 +861,6 @@
       "DialogueTransitionRule",
       "DialogueVariableMappingObject",
       "DialogueVariableRule",
-      "DynamicAudioDialogueData",
-      "ObsoleteSentenceDialogueData",
       "SentenceDialogueData",
       "SetVariableDialogueData",
       "TextDialogueData",
@@ -2167,6 +2211,11 @@
             "description": ""
           },
           {
+            "name": "NONE",
+            "value": "",
+            "description": ""
+          },
+          {
             "name": "FULL_AXLE",
             "value": "",
             "description": ""
@@ -2479,6 +2528,7 @@
       "BackendValueFilter",
       "BanListPageParams",
       "JsonApiStruct",
+      "BanList",
       "BanServiceApi",
       "BaseWorkshopItem",
       "BlockListItem",
@@ -2820,7 +2870,7 @@
           {
             "name": "EACODE_SERVER_QUEUE_WAIT",
             "value": "",
-            "description": "Client-Side only - Client is currently waiting in queue for free slot on the server."
+            "description": "Client-Side only - Client is currently waiting in queue for a free slot, or is in UNREADY limbo state after joining with BUSY status."
           },
           {
             "name": "EACODE_SERVER_QUEUE_LEFT",
@@ -2830,12 +2880,27 @@
           {
             "name": "EACODE_ERROR_SERVER_QUEUE_EXPIRED",
             "value": "",
-            "description": "Client-Side only - Operation failed because client was not active and the slot in queue expired."
+            "description": "Client-Side only - User's queue slot expired due to polling inactivity. Promoted client-side from EACODE_ERROR_SERVER_USER_NOT_IN_QUEUE when the manager knows the player was previously in the queue."
+          },
+          {
+            "name": "EACODE_ERROR_SERVER_USER_NOT_IN_QUEUE",
+            "value": "",
+            "description": "Client-Side only - Backend reported that the user is not in the queue. The entry either expired or was never created. Promoted to EACODE_ERROR_SERVER_QUEUE_EXPIRED if the player was known to be in the queue."
           },
           {
             "name": "EACODE_ERROR_SERVER_QUEUE_NOT_FOUND",
             "value": "",
-            "description": "Client-Side only - Operation failed because client is not in the queue for the server."
+            "description": "Client-Side only - Operation failed because the join queue for this server no longer exists (server may have been unregistered). The join flow cannot continue."
+          },
+          {
+            "name": "EACODE_ERROR_SERVER_USER_UNREADY_TOO_LONG",
+            "value": "",
+            "description": "Client-Side only - Player remained in BUSY state past the allowed duration. Must call join again to re-enter."
+          },
+          {
+            "name": "EACODE_ERROR_SERVER_JOIN_UNREADY_DENIED",
+            "value": "",
+            "description": "Client-Side only - Player attempted to join a server without queue support while in BUSY (unready) state."
           },
           {
             "name": "EACODE_ERROR_MP_ROOM_NOT_FOUND",
@@ -2889,6 +2954,11 @@
           },
           {
             "name": "EACODE_ERROR_PLAYER_IS_BANNED",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "EACODE_ERROR_DUPLICATE_BAN",
             "value": "",
             "description": ""
           },
@@ -3344,6 +3414,17 @@
         ]
       },
       {
+        "name": "ECommentReportType",
+        "description": "Enum specifies report types for backend comments.",
+        "values": [
+          {
+            "name": "GAMECODE",
+            "value": "",
+            "description": ""
+          }
+        ]
+      },
+      {
         "name": "EJsonApiError",
         "description": "",
         "values": [
@@ -3530,32 +3611,6 @@
             "name": "ERA_OBSOLETE",
             "value": "",
             "description": "Revision is obsolete to this game version."
-          }
-        ]
-      },
-      {
-        "name": "EServerType",
-        "description": "Determines type of the server.",
-        "values": [
-          {
-            "name": "ST_NONE",
-            "value": "",
-            "description": "init value"
-          },
-          {
-            "name": "ST_OFFICIAL",
-            "value": "",
-            "description": "Official dedicated server."
-          },
-          {
-            "name": "ST_COMMUNITY",
-            "value": "",
-            "description": "Dedicated server self-hosted by community on their own machines."
-          },
-          {
-            "name": "ST_LISTEN",
-            "value": "",
-            "description": "Listen server hosted directly in-game by client (client + server)."
           }
         ]
       },
@@ -3863,6 +3918,202 @@
     "source": "enfusion"
   },
   {
+    "name": "Online_bans",
+    "description": "",
+    "classes": [
+      "BanEntry",
+      "BanIssuerBase",
+      "BanIssuerPublisher",
+      "BanIssuerServer",
+      "BanIssuerUnknown",
+      "BanIssuerUser",
+      "BanList",
+      "BanRemoveResult",
+      "BanRemoveResultItem",
+      "BanScope",
+      "BanTargetBase",
+      "BanTargetGroup",
+      "BanTargetServer",
+      "BanTargetUnknown",
+      "BanTargetUser",
+      "ServerBanEntryCatalogue",
+      "ServerBanEntryCatalogueFilter",
+      "ServerBanManagerApi",
+      "ServerBanManifest",
+      "UserBanManagerApi",
+      "System"
+    ],
+    "enums": [
+      {
+        "name": "EBanIssuerType",
+        "description": "Who issued the ban.",
+        "values": [
+          {
+            "name": "NONE",
+            "value": "",
+            "description": "init value"
+          },
+          {
+            "name": "UNKNOWN",
+            "value": "",
+            "description": "game could not determine who was the issuer"
+          },
+          {
+            "name": "USER",
+            "value": "",
+            "description": "Issued by a player via the client API."
+          },
+          {
+            "name": "SERVER",
+            "value": "",
+            "description": "Issued by/via a server (RCON, automatic server-side system)."
+          },
+          {
+            "name": "PUBLISHER",
+            "value": "",
+            "description": "Issued by the official publisher (moderation tools)."
+          }
+        ]
+      },
+      {
+        "name": "EBanReasonType",
+        "description": "Reason category for bans.",
+        "values": [
+          {
+            "name": "NONE",
+            "value": "",
+            "description": "No reason specified."
+          }
+        ]
+      },
+      {
+        "name": "EBanScopeAction",
+        "description": "Action a ban applies to, across all systems.",
+        "values": [
+          {
+            "name": "NONE",
+            "value": "",
+            "description": "Not set."
+          },
+          {
+            "name": "UNKNOWN",
+            "value": "",
+            "description": "Could not be resolved to a known action."
+          },
+          {
+            "name": "GLOBAL",
+            "value": "",
+            "description": "All actions."
+          },
+          {
+            "name": "JOIN",
+            "value": "",
+            "description": "Banned from joining."
+          },
+          {
+            "name": "HOST",
+            "value": "",
+            "description": "Banned from hosting."
+          },
+          {
+            "name": "PUBLISH",
+            "value": "",
+            "description": "Banned from publishing."
+          },
+          {
+            "name": "CREATE",
+            "value": "",
+            "description": "Banned from creating."
+          }
+        ]
+      },
+      {
+        "name": "EBanScopeSystem",
+        "description": "System the ban applies to.",
+        "values": [
+          {
+            "name": "UNKNOWN",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "GLOBAL",
+            "value": "",
+            "description": "Affects all systems."
+          },
+          {
+            "name": "SERVER",
+            "value": "",
+            "description": "Bans on the game server system (joining, hosting)."
+          },
+          {
+            "name": "WORKSHOP",
+            "value": "",
+            "description": "Bans on the workshop system (publishing, uploading)."
+          },
+          {
+            "name": "GROUP",
+            "value": "",
+            "description": "Bans on the group system."
+          }
+        ]
+      },
+      {
+        "name": "EBanStatus",
+        "description": "Ban lifetime filter for listing queries.",
+        "values": [
+          {
+            "name": "ACTIVE",
+            "value": "",
+            "description": "only active (non-expired) bans (default)"
+          },
+          {
+            "name": "EXPIRED",
+            "value": "",
+            "description": "only expired bans"
+          },
+          {
+            "name": "ALL",
+            "value": "",
+            "description": "both active and expired bans"
+          }
+        ]
+      },
+      {
+        "name": "EBanTargetType",
+        "description": "What kind of entity a ban targets.",
+        "values": [
+          {
+            "name": "NONE",
+            "value": "",
+            "description": "init value"
+          },
+          {
+            "name": "USER",
+            "value": "",
+            "description": "A user/player, always identified by a Game Identity (gid)."
+          },
+          {
+            "name": "GROUP",
+            "value": "",
+            "description": "A group (GroupApi)."
+          },
+          {
+            "name": "SERVER",
+            "value": "",
+            "description": "A server."
+          },
+          {
+            "name": "UNKNOWN",
+            "value": "",
+            "description": "backend could not map the target to a known kind"
+          }
+        ]
+      }
+    ],
+    "source": "enfusion"
+  },
+  {
     "name": "Online_bimage",
     "description": "",
     "classes": [
@@ -3898,6 +4149,7 @@
     "description": "",
     "classes": [
       "ExtraProduct",
+      "OfferLabel",
       "ProductOffer",
       "ProductOfferCatalogueApi",
       "ProductOfferCatalogueFilters",
@@ -4041,6 +4293,10 @@
       "GroupCatalogue",
       "GroupCatalogueFilters",
       "GroupData",
+      "GroupEvent",
+      "GroupEventCatalogue",
+      "GroupEventCatalogueFilters",
+      "GroupEventManifest",
       "GroupManifest",
       "GroupMemberCatalogue",
       "GroupMemberCatalogueFilters",
@@ -4195,6 +4451,22 @@
             "name": "INVITATION_ONLY",
             "value": "",
             "description": "Only users with an invitation from a group member can join."
+          }
+        ]
+      },
+      {
+        "name": "EGroupEventCatalogueOrderBy",
+        "description": "",
+        "values": [
+          {
+            "name": "START_TIMESTAMP",
+            "value": "",
+            "description": "Ordered by the event's scheduled start."
+          },
+          {
+            "name": "CREATED_AT",
+            "value": "",
+            "description": "Ordered by the time the event was created."
           }
         ]
       },
@@ -4362,6 +4634,8 @@
       "ServerJoinManagerApi",
       "ServerLobbyApi",
       "ServerPingSite",
+      "ServerPlayerGameDataBase",
+      "ServerPlayerInfo",
       "ServerQueueData",
       "ServerQueueInfo",
       "ServerWorkshopData"
@@ -4554,22 +4828,37 @@
       },
       {
         "name": "EServerJoinQueueType",
-        "description": "Type of server join queue. Different queue types have different processing priorities — a priority queue is processed before the regular queue.",
+        "description": "Identifies which join queue a player belongs to.",
         "values": [
           {
             "name": "UNKNOWN",
             "value": "",
-            "description": "Unknown type of queue (can be unhandled type or intentionally not specified)."
+            "description": "Queue type was not specified or is not recognized by this version of the client."
           },
           {
-            "name": "REGULAR",
+            "name": "UNREADY",
             "value": "",
-            "description": "Regular type of queue for all players."
+            "description": "Synthetic client-side state: player is BUSY and either joined while a slot was available, or reached position 0 in another queue. Has a fixed expiration timer not refreshed by polling."
+          },
+          {
+            "name": "RECONNECTING",
+            "value": "",
+            "description": "Priority 1 (highest). Player had a slot on the server, disconnected, and is rejoining within the configured reconnect threshold. The server must first free the old slot before the player can rejoin."
           },
           {
             "name": "PRIORITY",
             "value": "",
-            "description": "Priority queue which is processed before REGULAR type of queue."
+            "description": "Priority 2. Player has priority access (server admin or whitelisted)."
+          },
+          {
+            "name": "READY",
+            "value": "",
+            "description": "Priority 3. Player transitioned from BUSY (UNREADY) state to READY while waiting."
+          },
+          {
+            "name": "REGULAR",
+            "value": "",
+            "description": "Priority 4 (lowest). Standard player with no special access."
           }
         ]
       },
@@ -4638,6 +4927,58 @@
             "name": "ALL_PLATFORMS",
             "value": "",
             "description": ""
+          }
+        ]
+      },
+      {
+        "name": "EServerState",
+        "description": "Determines different states of registered server lifetime.",
+        "values": [
+          {
+            "name": "DISABLED",
+            "value": "",
+            "description": "Server registration to backend is disabled (current session is either singleplayer or unregistered multiplayer)."
+          },
+          {
+            "name": "OFFLINE",
+            "value": "",
+            "description": "Server is supposed to be registered but is currently in offline state and trying to authenticate."
+          },
+          {
+            "name": "AUTHENTICATED",
+            "value": "",
+            "description": "Server is authenticated but not yet registered."
+          },
+          {
+            "name": "RUNTIME",
+            "value": "",
+            "description": "Server is authenticated, registered and is now performing runtime heartbeats."
+          }
+        ]
+      },
+      {
+        "name": "EServerType",
+        "description": "Determines type of the server.",
+        "values": [
+          {
+            "name": "NONE",
+            "value": "",
+            "description": "init value"
+          },
+          {
+            "name": "OFFICIAL",
+            "value": "",
+            "description": "Official dedicated server."
+          },
+          {
+            "name": "COMMUNITY",
+            "value": "",
+            "description": "Dedicated server self-hosted by community on their own machines."
+          },
+          {
+            "name": "LISTEN",
+            "value": "",
+            "description": "Listen server hosted directly in-game by client (client + server)."
           }
         ]
       }
@@ -4717,6 +5058,43 @@
     "source": "enfusion"
   },
   {
+    "name": "Online_UserSessionData",
+    "description": "",
+    "classes": [
+      "UserSessionApi",
+      "UserSessionData"
+    ],
+    "enums": [
+      {
+        "name": "EUserOnlineStatus",
+        "description": "",
+        "values": [
+          {
+            "name": "UNKNOWN",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "JOIN_QUEUE",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "JOINED",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "NOT_FOUND",
+            "value": "",
+            "description": ""
+          }
+        ]
+      }
+    ],
+    "source": "enfusion"
+  },
+  {
     "name": "Online_workshop",
     "description": "",
     "classes": [
@@ -4742,6 +5120,11 @@
             "name": "NONE",
             "value": "",
             "description": "No revision is locally available/downloaded and not subscribed (cannot download until subscribed)."
+          },
+          {
+            "name": "STALE_DATA",
+            "value": "",
+            "description": "Asset is not subscribed but some data are locally present (stale - invalid state) - delete data or subscribe asset."
           },
           {
             "name": "BLOCKED",
@@ -4774,9 +5157,14 @@
             "description": "This asset has currently pending job and cannot be used until finished."
           },
           {
-            "name": "MISSING_DEPENDENCIES",
+            "name": "DEPENDENCY_ISSUE",
             "value": "",
-            "description": "Current revision is missing some dependencies and will not be allowed to be used (ENABLED and LOADED) until fixed."
+            "description": "Some dependency of the current revision is not in a usable state (missing, corrupted...)."
+          },
+          {
+            "name": "DEPENDENCY_DISABLED",
+            "value": "",
+            "description": "Some dependency of the current revision is not enabled."
           },
           {
             "name": "CORRUPTED",
@@ -4928,9 +5316,14 @@
             "description": "Some revision is already present and job is downloading older one."
           },
           {
-            "name": "VALIDATE",
+            "name": "VALIDATE_OFFLINE",
             "value": "",
-            "description": "Job is doing deep validation where it attempts to find if any fragment is corrupted."
+            "description": "Deep validation against the local manifest header - detects corrupted/missing fragments without a connection."
+          },
+          {
+            "name": "VALIDATE_ONLINE",
+            "value": "",
+            "description": "Deep validation against backend-authoritative manifest data - re-fetches manifest metadata."
           },
           {
             "name": "REPAIR",
@@ -5723,6 +6116,17 @@
         ]
       }
     ],
+    "source": "enfusion"
+  },
+  {
+    "name": "System_Time",
+    "description": "",
+    "classes": [
+      "DateTimeView",
+      "Duration",
+      "Timestamp"
+    ],
+    "enums": [],
     "source": "enfusion"
   },
   {
@@ -6657,6 +7061,7 @@
       "WidgetType",
       "CanvasWidgetCommand",
       "TextDrawCommand",
+      "CurvedTextDrawCommand",
       "LineDrawCommand",
       "PolygonDrawCommand",
       "TriMeshDrawCommand",
@@ -6884,7 +7289,6 @@
       "BehaviorEditor",
       "DialogueEditor",
       "LocalizationEditor",
-      "NavmeshGeneratorMain",
       "ParticleEditor",
       "ProcAnimEditor",
       "ResourceManager",
@@ -6907,203 +7311,6 @@
       "World"
     ],
     "enums": [],
-    "source": "enfusion"
-  },
-  {
-    "name": "WorkbenchAPI_Terrain",
-    "description": "",
-    "classes": [
-      "TerrainToolDesc",
-      "TerrainToolDesc_HeightAdd",
-      "TerrainToolDesc_HeightExact",
-      "TerrainToolDesc_HeightNoise",
-      "TerrainToolDesc_HeightSmooth",
-      "TerrainToolDesc_HeightUser",
-      "TerrainToolDesc_LayerAdd"
-    ],
-    "enums": [
-      {
-        "name": "ETerrainNoiseType",
-        "description": "",
-        "values": [
-          {
-            "name": "RANDOM",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "PERLIN",
-            "value": "",
-            "description": ""
-          }
-        ]
-      },
-      {
-        "name": "FilterMorphLerpFunc",
-        "description": "height shape of filter, how the value between outer (= 0) and inner (= 1) radius are modified",
-        "values": [
-          {
-            "name": "LINEAR",
-            "value": "",
-            "description": "linear interpolation"
-          },
-          {
-            "name": "SIN",
-            "value": "",
-            "description": "sine"
-          },
-          {
-            "name": "INV_COS",
-            "value": "",
-            "description": "inverse cosine"
-          },
-          {
-            "name": "SMOOTH",
-            "value": "",
-            "description": "hermit interpolation"
-          },
-          {
-            "name": "SPHERE",
-            "value": "",
-            "description": "sphere interpolation"
-          },
-          {
-            "name": "INV_SPHERE",
-            "value": "",
-            "description": "inverse sphere interpolation"
-          }
-        ]
-      },
-      {
-        "name": "FilterMorphOperation",
-        "description": "predefined filter operations",
-        "values": [
-          {
-            "name": "ADD",
-            "value": "",
-            "description": "add to existing"
-          },
-          {
-            "name": "NOISE",
-            "value": "",
-            "description": "add noise to existing"
-          },
-          {
-            "name": "EXACT",
-            "value": "",
-            "description": "set exact value"
-          },
-          {
-            "name": "SMOOTH",
-            "value": "",
-            "description": "smoothing"
-          },
-          {
-            "name": "COMBINE",
-            "value": "",
-            "description": "combine with other map, take map from TerrainFilterDesc.GetCombinePtr()"
-          },
-          {
-            "name": "NONCUMULATIVE",
-            "value": "",
-            "description": ""
-          }
-        ]
-      },
-      {
-        "name": "FilterMorphShape",
-        "description": "2D shape of filter",
-        "values": [
-          {
-            "name": "ROUND",
-            "value": "",
-            "description": "generate round kernel"
-          },
-          {
-            "name": "SQUARE",
-            "value": "",
-            "description": "generate square kernel"
-          },
-          {
-            "name": "USER",
-            "value": "",
-            "description": "user shape"
-          }
-        ]
-      },
-      {
-        "name": "TerrainToolType",
-        "description": "",
-        "values": [
-          {
-            "name": "NONE",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "HEIGHT_ADD",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "HEIGHT_EXACT",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "HEIGHT_SMOOTH",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "HEIGHT_NOISE",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "SURFACE_PAINT",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "HOLES_ADD_REMOVE",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "HOLES_BLOCK_ENABLE_DISABLE",
-            "value": "",
-            "description": ""
-          },
-          {
-            "name": "COUNT",
-            "value": "",
-            "description": ""
-          }
-        ]
-      },
-      {
-        "name": "UserShapeFilter",
-        "description": "Filtering type of given user shape.",
-        "values": [
-          {
-            "name": "NEAREST",
-            "value": "",
-            "description": "nearest"
-          },
-          {
-            "name": "BILINEAR",
-            "value": "",
-            "description": "bilinear"
-          },
-          {
-            "name": "BICUBIC",
-            "value": "",
-            "description": "bicubic"
-          }
-        ]
-      }
-    ],
     "source": "enfusion"
   },
   {
@@ -7220,6 +7427,32 @@
             "name": "DEFAULT",
             "value": "",
             "description": "Most common flag set."
+          }
+        ]
+      },
+      {
+        "name": "TraceVisibilityMask",
+        "description": "Spectral channel filter for visibility traces (used with TRACE_VISIBILITY).",
+        "values": [
+          {
+            "name": "VISIBLE",
+            "value": "",
+            "description": "Visible spectrum."
+          },
+          {
+            "name": "IR",
+            "value": "",
+            "description": "Infrared spectrum."
+          },
+          {
+            "name": "UV",
+            "value": "",
+            "description": "Ultraviolet spectrum."
+          },
+          {
+            "name": "ALL",
+            "value": "",
+            "description": "All spectral channels."
           }
         ]
       },
@@ -8917,6 +9150,7 @@
       "ChimeraWorldBase",
       "GameMaterial",
       "HitEffectInfo",
+      "ParticleContactComponentClass",
       "ParticleEffectInfo",
       "PrefabListClass",
       "PrefabList",
@@ -9099,6 +9333,37 @@
             "description": ""
           }
         ]
+      },
+      {
+        "name": "VehicleDustEffectType",
+        "description": "",
+        "values": [
+          {
+            "name": "Custom",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "WheelsDust",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "WheelsMud",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "RotorWash",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "RotorCollision",
+            "value": "",
+            "description": ""
+          }
+        ]
       }
     ],
     "source": "arma"
@@ -9210,6 +9475,27 @@
       "DestructionHeatmapRegion"
     ],
     "enums": [],
+    "source": "arma"
+  },
+  {
+    "name": "DLC",
+    "description": "",
+    "classes": [
+      "DlcManager"
+    ],
+    "enums": [
+      {
+        "name": "EDlc",
+        "description": "Enum flag representing one or more DLC addons.",
+        "values": [
+          {
+            "name": "RALLY",
+            "value": "",
+            "description": ""
+          }
+        ]
+      }
+    ],
     "source": "arma"
   },
   {
@@ -10751,6 +11037,7 @@
       "GadgetGamepadEffectsManagerComponentClass",
       "GadgetGamepadEffectsManagerComponent",
       "GamepadEffect",
+      "GamepadEffectCollection",
       "GamepadEffectsManagerComponent",
       "GamepadEffectsManagerComponentClass",
       "GamepadIOHandlerComponentClass",
@@ -10759,6 +11046,10 @@
       "GamepadRumbleEffect",
       "GamepadTriggerEffect",
       "GamepadVibrationEffect",
+      "JoystickCommonEffect",
+      "JoystickConditionEffect",
+      "JoystickForceEffect",
+      "JoystickPeriodicEffect",
       "VehicleGamepadEffectsManagerComponent",
       "VehicleGamepadEffectsManagerComponentClass",
       "WeaponGamepadEffectsManagerComponent"
@@ -10787,6 +11078,11 @@
             "name": "PLAYER_MANAGER",
             "value": "",
             "description": "Kick reason comes from PlayerManagerKickReason."
+          },
+          {
+            "name": "STEELSHIELD",
+            "value": "",
+            "description": "Kick reason comes from SteelShieldKickReason."
           }
         ]
       },
@@ -10813,6 +11109,17 @@
             "name": "USER_SIGNED_OUT",
             "value": "",
             "description": "User signed out of online services."
+          }
+        ]
+      },
+      {
+        "name": "SteelShieldKickReason",
+        "description": "",
+        "values": [
+          {
+            "name": "CLIENT_ACTIVATION_FAILED",
+            "value": "",
+            "description": "SteelShield client failed to become active."
           }
         ]
       }
@@ -11087,6 +11394,60 @@
       "VisualIdentity"
     ],
     "enums": [],
+    "source": "arma"
+  },
+  {
+    "name": "Inventory",
+    "description": "",
+    "classes": [],
+    "enums": [
+      {
+        "name": "EInventoryManagerOperation",
+        "description": "",
+        "values": [
+          {
+            "name": "SPAWN_PREFAB_TO_STORAGE",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "DELETE_ITEM",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "SWAP_ITEM_STORAGES",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "MOVE_ITEM_TO_STORAGE",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "REMOVE_ITEM_FROM_STORAGE",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "REPLACE_ITEM",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "INSERT_ITEM_IN_STORAGE",
+            "value": "",
+            "description": ""
+          },
+          {
+            "name": "INSERT_ITEM",
+            "value": "",
+            "description": ""
+          }
+        ]
+      }
+    ],
     "source": "arma"
   },
   {
@@ -12960,6 +13321,8 @@
       "PerceptionSystem",
       "ProcAnimSystem",
       "ProjectileSimulationSystem",
+      "RadioSpatialSystem",
+      "RadioManagerEntity",
       "RecordInactivePhysEntitiesStateSystem",
       "ReplicatedCamerasSystem",
       "RespawnSystem",
@@ -12970,6 +13333,7 @@
       "StaminaSystem",
       "TagSystem",
       "VehicleDebugDrawSystem",
+      "VehicleDustSystem",
       "VehicleLightPortalSystem",
       "VehiclePostSimulationSystem",
       "VehicleSimulationSystem",
@@ -13619,6 +13983,18 @@
         ]
       }
     ],
+    "source": "arma"
+  },
+  {
+    "name": "Vehicles",
+    "description": "",
+    "classes": [
+      "ParticleContactComponent",
+      "VehicleWheelEffectComponent",
+      "VehicleWheelEffectComponentClass",
+      "WheelSlotInfo"
+    ],
+    "enums": [],
     "source": "arma"
   },
   {
