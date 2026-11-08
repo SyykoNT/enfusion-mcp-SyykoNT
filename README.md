@@ -13,9 +13,10 @@ agent or client that can launch an MCP server can use it.
   the repetitive Workbench steps become single tool calls.
 - **Built on enfusion-mcp-BK.** This is a direct fork of steffenbk's enfusion-mcp-BK, improved and
   optimized for 1.8, with the focus on stability: every tool call that worked under BK in real modding
-  sessions, and every later addition, was re-tested on 1.8, and the failures found were fixed or documented. Version 0.15.0 was re-tested again
-  on 1.9.0.37; the [0.15.0 release notes](https://github.com/SyykoNT/enfusion-mcp-SyykoNT/releases/tag/v0.15.0)
-  list what that retest covered.
+  sessions, and every later addition, was re-tested on 1.8, and the failures found were fixed or documented.
+  Version 0.15.0 was re-tested on 1.9.0.37; the
+  [0.15.0 release notes](https://github.com/SyykoNT/enfusion-mcp-SyykoNT/releases/tag/v0.15.0)
+  list what that re-test covered.
 - **COALITION tools are optional.** One separate part of this README covers tools for missions built on COALITION's framework. If you make missions for other communities or servers you can skip it: [COALITION missions](#coalition-missions-optional).
 
 ## Contents
@@ -448,7 +449,7 @@ only read (apart from those git refs), so they are not affected. To write, name 
 
 ## Known limitations
 
-- `wb_reload` does not reload scripts on 1.8; not re-checked on 1.9: the menu paths it tries do not exist there. It says so
+- `wb_reload` does not reload scripts on 1.8; not re-checked on 1.9. On 1.8 the menu paths it tries do not exist. It says so
   ("Reload not confirmed") instead of reporting success. Workbench's built-in NET API call `ReloadScripts` does
   reload, but no tool sends it yet. Saving a `.c` file of the loaded project also makes Workbench reload game
   scripts. `mod compile` refuses while a Workbench is open (`force=true` runs it anyway).
