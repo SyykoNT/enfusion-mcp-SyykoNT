@@ -219,7 +219,9 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
     "wb_open_resource",
     {
       description:
-        "Open a resource file in the appropriate Workbench editor (e.g., a .et prefab in the Prefab Editor, a .c script in the Script Editor).",
+        "Open a resource file in the appropriate Workbench editor (e.g., a .et prefab in the Prefab Editor, a .c script in the Script Editor). " +
+        "Opening a world (.ent) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it, and the script API cannot tell whether the world has unsaved changes. " +
+        "Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
         path: z
           .string()
@@ -243,8 +245,12 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        const hint =
+          e instanceof WorkbenchError && e.code === "TIMEOUT"
+            ? "\n\nA timeout here usually means Workbench is showing the \"Loading world\" dialog (the current world has unsaved changes). Ask the user to answer it in Workbench; use wb_save before opening another world."
+            : "";
         return {
-          content: [{ type: "text" as const, text: `Error opening resource: ${msg}${formatConnectionStatus(client)}` }],
+          content: [{ type: "text" as const, text: `Error opening resource: ${msg}${hint}${formatConnectionStatus(client)}` }],
         isError: true,
         };
       }
