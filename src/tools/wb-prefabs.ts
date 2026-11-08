@@ -5,12 +5,28 @@ import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 const MUTATING_PREFAB_ACTIONS = new Set(["createTemplate", "save"]);
 
+/**
+ * Vanilla LocatePrefabsFromPath (AssetLibraryUtils.c) runs FindFiles(selectedFolder, ".et") when selectedFolder contains projectPath,
+ * so an empty folder scans every mounted pak (about 5 min of a hung Workbench). Mapping: vanilla "Prefabs/Weapons" -> selectedProject
+ * "ArmaReforger", projectPath "Prefabs"; addon "$MyAddon:Prefabs/X" -> selectedProject "MyAddon", projectPath "$MyAddon:Prefabs" (addon form inferred, not run live).
+ * Returns undefined when the folder is a data root (empty, "/", ".", "..", "$Addon:", "C:") and so must not be scanned.
+ */
+export function locateRequest(searchPath: string) {
+  const folder = searchPath.trim().replace(/\\/g, "/").split("/").filter((s) => s && s !== ".").join("/");
+  if (!folder || folder.split("/").includes("..") || /^(\$[^:/]+:|[A-Za-z]:)$/.test(folder)) return undefined;
+  return {
+    selectedProject: /^\$([^:/]+):/.exec(folder)?.[1] ?? "ArmaReforger",
+    projectPath: folder.split("/")[0],
+    selectedFolder: folder,
+  };
+}
+
 export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
     "wb_prefabs",
     {
       description:
-        "Prefab operations in the Workbench. Create entity templates, save prefab changes, look up prefab GUIDs, or locate prefabs by path. createTemplate/save only work in edit mode.",
+        "Prefab operations in the Workbench. Create entity templates, save prefab changes, look up prefab GUIDs, or locate prefabs by path. createTemplate/save only work in edit mode. locate lists the .et files under one folder (never a whole data root) and Workbench asks for Script Authorization (FileIO.FindFiles) before it answers.",
       inputSchema: {
         action: z
           .enum(["createTemplate", "save", "getGuid", "locate", "getAncestor"])
@@ -28,7 +44,7 @@ export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): v
         searchPath: z
           .string()
           .optional()
-          .describe("Directory path for locate (e.g., 'Prefabs/Weapons')"),
+          .describe("Folder for locate: a vanilla path ('Prefabs/Weapons/Rifles/AK74') or an addon path ('$MyAddon:Prefabs/Props'). A data root (empty, '/', '$MyAddon:') is refused"),
       },
     },
     async ({ action, entityName, templatePath, searchPath }) => {
@@ -79,11 +95,25 @@ export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): v
             };
           }
 
-          const result = await client.call<Record<string, unknown>>("LocatePrefabsFromPath", {
-            path: searchPath,
-          });
+          const request = locateRequest(searchPath);
+          if (!request) {
+            return {
+              content: [{ type: "text" as const, text: `Error: \`searchPath\` "${searchPath}" is empty or a whole data root; locate would scan every mounted file. Give a folder such as 'Prefabs/Weapons' or '$MyAddon:Prefabs'.` }],
+              isError: true,
+            };
+          }
 
-          const prefabs = Array.isArray(result.prefabs) ? result.prefabs : [];
+          const result = await client.call<Record<string, unknown>>("LocatePrefabsFromPath", request);
+
+          // The vanilla handler reports failure in-band as status "ERROR" (upper case, which the client does not rethrow).
+          if (String(result.status).toLowerCase() === "error") {
+            return {
+              content: [{ type: "text" as const, text: `Error locating prefabs in ${searchPath}: ${result.message || "(no message)"}${formatConnectionStatus(client)}` }],
+              isError: true,
+            };
+          }
+
+          const prefabs = Array.isArray(result.prefabsPaths) ? result.prefabsPaths : [];
           if (prefabs.length === 0) {
             return {
               content: [
