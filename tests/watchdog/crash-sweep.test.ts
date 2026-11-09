@@ -7,8 +7,12 @@ import { saveCrashFolders, sweepLine } from "../../src/watchdog/crash-sweep.js";
 import { sweepCrashes } from "../../src/watchdog/wb-watch.js";
 
 // Temp folders only: a fake Workbench logs root, a fake crash folder and a fake watch dir. Nothing reads the real ones.
-const LEAK = "------------------------------------\r\n31.10 2026 09:32:55\r\nAssertion failed\r\n\r\nLine: 1287\r\n\r\nReason: Resources are leaking! Check log!\r\n";
-const OUT_OF_WORLD = "------------------------------------\r\n31.10 2026 09:40:01\r\nAssertion failed\r\n\r\nLine: 77\r\n\r\nReason: Entity out of world bounds\r\n";
+// Every crash.log Workbench 1.9.0.37 writes starts with this header block (no Reason) before its first entry.
+const HEADER = "---------------------------------------------\r\nLog C:\\Users\\user\\Documents\\My Games\\ArmaReforgerWorkbench\\logs\\logs_2026-11-01_10-00-00\\crash.log started at 2026-11-01 10:02:00 (2026-11-01 15:02:00 UTC)\r\n\r\n\r\n\r\n";
+const LEAK_ENTRY = "------------------------------------\r\n31.10 2026 09:32:55\r\nAssertion failed\r\n\r\nLine: 1287\r\n\r\nReason: Resources are leaking! Check log!\r\n";
+const OOW_ENTRY = "------------------------------------\r\n31.10 2026 09:40:01\r\nAssertion failed\r\n\r\nLine: 77\r\n\r\nReason: Entity out of world bounds\r\n";
+const LEAK = HEADER + LEAK_ENTRY;
+const OUT_OF_WORLD = HEADER + OOW_ENTRY;
 const name = (h: number, m = 0, s = 0) => `logs_2026-11-01_${String(h).padStart(2, "0")}-${String(m).padStart(2, "0")}-${String(s).padStart(2, "0")}`;
 const startMs = (h: number) => new Date(2026, 10, 1, h, 0, 0).getTime();
 
@@ -40,7 +44,7 @@ describe("saveCrashFolders", () => {
     t.folder(name(10), { "crash_1.mdmp": "dump-a", "crash.log": LEAK, "console.log": "c", "error.log": "e", "script.log": "s" });
     t.folder(name(11), { "FREEZE_x.mdmp": "hang", "console.log": "c2" });
     t.folder(name(12), { "crash.log": LEAK, "console.log": "c3" });
-    t.folder(name(13), { "crash.log": OUT_OF_WORLD + LEAK, "console.log": "c4" }); // the real entry first: only the last entry would be the leak assert
+    t.folder(name(13), { "crash.log": HEADER + OOW_ENTRY + LEAK_ENTRY, "console.log": "c4" }); // the real entry first: only the last entry would be the leak assert
     t.folder(name(14), { "console.log": "c5" });
     const before = hashes(t.logs);
     const r = saveCrashFolders(t.logs, t.dest);
@@ -54,23 +58,37 @@ describe("saveCrashFolders", () => {
     expect(sweepLine(r, t.dest)).toBe(`Saved 3 crash folder(s) to ${t.dest}`);
   });
 
-  it("a folder already saved (a <stamp>_<pid> copy of its crash.log, or of its first dump) is not copied; a second sweep copies nothing", () => {
+  it("a folder already saved (a <stamp>_<pid> copy holding all its files) is not copied; a second sweep copies nothing", () => {
     const t = setup();
-    t.folder(name(10), { "crash.log": LEAK + OUT_OF_WORLD, "console.log": "c" });
+    t.folder(name(10), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "console.log": "c" });
     t.folder(name(11), { "a.mdmp": "first", "b.mdmp": "second" });
-    t.folder(name(12), { "crash.log": LEAK + OUT_OF_WORLD, "console.log": "c-new" });
+    t.folder(name(12), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "console.log": "c" });
     mkdirSync(join(t.dest, "20261101_100500_4242"), { recursive: true });
-    writeFileSync(join(t.dest, "20261101_100500_4242", "crash.log"), LEAK + OUT_OF_WORLD); // the watcher's copy of folder 10 (same bytes)
+    writeFileSync(join(t.dest, "20261101_100500_4242", "crash.log"), HEADER + LEAK_ENTRY + OOW_ENTRY); // the watcher's copy of folder 10 (same bytes)
+    writeFileSync(join(t.dest, "20261101_100500_4242", "console.log"), "c");
     mkdirSync(join(t.dest, "20261101_110500_77"), { recursive: true });
     writeFileSync(join(t.dest, "20261101_110500_77", "a.mdmp"), "first");
+    writeFileSync(join(t.dest, "20261101_110500_77", "b.mdmp"), "second");
     const first = saveCrashFolders(t.logs, t.dest);
-    // folder 12 has the same crash.log bytes as the saved copy of folder 10, so it counts as saved too
+    // folder 12 has the same files as the saved copy of folder 10, so it counts as saved too
     expect(first.saved).toEqual([]);
     t.folder(name(13), { "crash.log": OUT_OF_WORLD });
     const second = saveCrashFolders(t.logs, t.dest);
     expect(second.saved.map((s) => s.folder)).toEqual([name(13)]);
     expect(saveCrashFolders(t.logs, t.dest).saved).toEqual([]);
     expect(listing(t.dest)).toEqual(["20261101_100500_4242", "20261101_110500_77", name(13)]);
+  });
+
+  it("a copy folder that misses one of the files (a dump that failed to copy) does not count as saved: the folder is copied again as _2", () => {
+    const t = setup();
+    t.folder(name(10), { "a.mdmp": "first", "b.mdmp": "second", "console.log": "c" });
+    mkdirSync(join(t.dest, name(10)), { recursive: true });
+    writeFileSync(join(t.dest, name(10), "a.mdmp"), "first");
+    writeFileSync(join(t.dest, name(10), "console.log"), "c"); // b.mdmp is missing
+    const r = saveCrashFolders(t.logs, t.dest);
+    expect(r.saved.map((s) => s.dest)).toEqual([join(t.dest, `${name(10)}_2`)]);
+    expect(listing(join(t.dest, `${name(10)}_2`))).toEqual(["a.mdmp", "b.mdmp", "console.log"]);
+    expect(saveCrashFolders(t.logs, t.dest).saved).toEqual([]); // the full copy is recognised now
   });
 
   it("a name clash gets _2 and then _3, and the folder already there is not touched", () => {

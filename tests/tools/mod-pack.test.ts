@@ -112,7 +112,7 @@ describe("mod pack result", () => {
 
 describe("crash folders saved before a headless run (B-044)", () => {
   const run = (savedCrashes?: string) => ({ exitCode: 0, timedOut: false, seconds: 1, logDir: null, console: "", ...(savedCrashes ? { savedCrashes } : {}) });
-  const line = "Saved 2 crash folder(s) to C:\Crash Logs";
+  const line = "Saved 2 crash folder(s) to C:\\Crash Logs";
 
   it("compile and pack results carry the line once when something was saved, and nothing otherwise", async () => {
     vi.mocked(cli.compileAddon).mockResolvedValue({ ok: true, run: run(line), errors: [], warnings: [] });

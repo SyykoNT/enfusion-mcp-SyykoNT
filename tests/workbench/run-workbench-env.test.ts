@@ -34,7 +34,7 @@ vi.mock("../../src/watchdog/crash-sweep.js", async (orig) => ({
 }));
 vi.mock("../../src/utils/game-paths.js", async (orig) => ({
   ...(await orig<typeof import("../../src/utils/game-paths.js")>()),
-  findWorkbenchExe: () => (sys.noExe ? undefined : "C:\Tools\Workbench\ArmaReforgerWorkbenchSteamDiag.exe"),
+  findWorkbenchExe: () => (sys.noExe ? undefined : "C:\\Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe"),
 }));
 
 const { runWorkbench } = await import("../../src/workbench/cli.js");
@@ -81,6 +81,7 @@ describe("headless runs save crash folders before they start (B-044)", () => {
     try {
       const run = await runWorkbench(c, ["-wbSilent"], 5000);
       expect(run.savedCrashes).toMatch(/^Crash folders were not saved/);
+      expect(run.savedCrashes).toContain("no usable crash logs folder (env_check says why)");
       expect(sys.order).toEqual(["spawn"]);
     } finally {
       delete process.env.ENFUSION_WORKBENCH_PROFILE;

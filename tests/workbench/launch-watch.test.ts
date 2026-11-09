@@ -129,6 +129,13 @@ describe("launchWorkbench stops waiting when its Workbench has exited", () => {
     expect(Date.now() - t0).toBeLessThan(1000);
   });
 
+  it("a start that fails after saving crash folders says so in the error (B-044)", async () => {
+    const { c, gproj } = refusingClient();
+    sys.alive = false;
+    sys.saved = [{ folder: "logs_2026-11-01_10-00-00", dest: join(crashRoot, "logs_2026-11-01_10-00-00") }];
+    await expect(c.ensureRunning(gproj)).rejects.toThrow(/exited [\s\S]*Saved 1 crash folder\(s\) to /);
+  });
+
   const modal = { hwnd: 5, cls: "Qt683QWindowIcon", text: "Validating $TestAddon:Worlds/W.ent", visible: true, buttons: ["Yes", "No"], children: [{ hwnd: 0, cls: "Text", text: "The world is obsolete" }] };
 
   it("names the dialog and stops when the same one is still open at the second check (30 s, then 15 s later)", async () => {
@@ -257,6 +264,7 @@ describe("launchWorkbench saves crash folders before it starts Workbench (B-044)
       const { c, gproj } = client({ crashLogsDir: undefined });
       const note = await c.ensureRunning(gproj);
       expect(note?.split("Crash folders were not saved").length).toBe(2);
+      expect(note).toContain("no usable crash logs folder (env_check says why). Set ENFUSION_CRASH_LOGS_DIR to a folder of your own.");
       expect(sys.order).toEqual(["spawn"]);
     } finally {
       delete process.env.ENFUSION_WORKBENCH_PROFILE;

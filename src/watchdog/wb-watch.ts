@@ -496,7 +496,7 @@ export function sweepCrashes(
  */
 export function sweepForStart(config: Config): string | undefined {
   const root = crashLogsDir(config);
-  if (!root) return "Crash folders were not saved: no crash logs folder is usable (the setting and the default are both inside the game, Tools or Workshop folders). Set ENFUSION_CRASH_LOGS_DIR to a folder of your own.";
+  if (!root) return "Crash folders were not saved: no usable crash logs folder (env_check says why). Set ENFUSION_CRASH_LOGS_DIR to a folder of your own.";
   try {
     const r = sweepCrashes(join(workbenchProfileDir(config), "logs"), root);
     if (r.errors.length) logger.warn(`Crash folder sweep: ${r.errors.join("; ")}`);

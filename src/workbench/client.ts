@@ -795,6 +795,7 @@ export class WorkbenchClient {
 
     // Last step before the start, so a refused launch saves nothing: the start prunes older log folders (B-044).
     const swept = sweepForStart(this.config!);
+    const failed = (msg: string) => (swept ? `${msg}\n\n${swept}` : msg); // a start that fails still saved the folders: say so
 
     logger.info(`Launching Workbench: ${exePath}${args.length ? ` ${args.join(" ")}` : ""} (cwd: ${cwd})`);
     const launchedAt = Date.now();
@@ -849,8 +850,10 @@ export class WorkbenchClient {
       // The spawned PID is the Workbench itself (workbenchEnv() sets the Steam app id, so Steam does not relaunch it under another PID).
       if (proc.pid && !isAlive(proc.pid)) {
         throw new WorkbenchError(
-          `Workbench (PID ${proc.pid}) exited ${Math.round((Date.now() - launchedAt) / 1000)}s after launch, before its NET API answered. ` +
-          `Check its log folder (${join(workbenchProfileDir(this.config!), "logs")}) and, if it crashed, CrashReporter.`,
+          failed(
+            `Workbench (PID ${proc.pid}) exited ${Math.round((Date.now() - launchedAt) / 1000)}s after launch, before its NET API answered. ` +
+            `Check its log folder (${join(workbenchProfileDir(this.config!), "logs")}) and, if it crashed, CrashReporter.`
+          ),
           "LAUNCH_FAILED"
         );
       }
@@ -864,8 +867,10 @@ export class WorkbenchClient {
         lastDialogs = new Set(open.map((w) => w.hwnd));
         if (persisted) {
           throw new WorkbenchError(
-            `Workbench (PID ${proc.pid}) has not connected ${Math.round((Date.now() - launchedAt) / 1000)}s after launch and is showing a dialog. ` +
-              `It is still running; nothing was answered.\n${r.text}`,
+            failed(
+              `Workbench (PID ${proc.pid}) has not connected ${Math.round((Date.now() - launchedAt) / 1000)}s after launch and is showing a dialog. ` +
+                `It is still running; nothing was answered.\n${r.text}`
+            ),
             "LAUNCH_FAILED",
             r.dialogs
           );
@@ -894,7 +899,7 @@ export class WorkbenchClient {
     if (worldPath) hint += ` A dialog may be open in Workbench while the world loads; check the Workbench window.`;
 
     throw new WorkbenchError(
-      `Workbench launched but did not connect within ${timeoutMs / 1000}s.\n\n${hint}`,
+      failed(`Workbench launched but did not connect within ${timeoutMs / 1000}s.\n\n${hint}`),
       "LAUNCH_FAILED"
     );
   }
