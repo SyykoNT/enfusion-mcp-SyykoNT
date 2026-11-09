@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eventLines } from "../../src/workbench/status.js";
+import { eventLines, watchAlerts } from "../../src/workbench/status.js";
 import { alerts, claimWatch, createWatcher, findLogDir, runWatcher, type WatchOpts, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
 
@@ -247,5 +247,76 @@ describe("automatic watch", () => {
     err.mockRestore();
     expect(existsSync(join(held.stateDir, "events.jsonl"))).toBe(false);
     expect(existsSync(join(held.stateDir, "19524.json"))).toBe(false);
+  });
+});
+
+describe("watcher keeps its own lock honest (B-097) and the state after Ignore (B-098)", () => {
+  const run = (t: ReturnType<typeof setup>, over: Parameters<typeof runWatcher>[1]) => runWatcher(t.opts({ logsRoot: undefined }), { probe: () => ({ stop: vi.fn() }), ...over });
+
+  it("a lock rewritten to another PID mid-run: the watcher exits 3 and leaves that lock in place", async () => {
+    const t = setup();
+    const lock = join(t.stateDir, "19524.lock");
+    const stop = vi.fn();
+    const code = await runWatcher(t.opts({ logsRoot: undefined }), {
+      probe: () => ({ stop }), alive: () => true, wait: async () => { writeFileSync(lock, String(process.ppid)); },
+    });
+    expect(code).toBe(3);
+    expect(stop).toHaveBeenCalled();
+    expect(readFileSync(lock, "utf-8")).toBe(String(process.ppid));
+  });
+
+  it("exits with a foreign lock (taken during the last tick): the lock is left; a normal exit deletes its own", async () => {
+    const t = setup();
+    const lock = join(t.stateDir, "19524.lock");
+    expect(await run(t, { alive: () => { writeFileSync(lock, String(process.ppid)); return false; } })).toBe(0);
+    expect(readFileSync(lock, "utf-8")).toBe(String(process.ppid));
+    const u = setup();
+    expect(await run(u, { alive: () => false })).toBe(0);
+    expect(existsSync(join(u.stateDir, "19524.lock"))).toBe(false);
+  });
+
+  it("an empty lock (a claim being written) logs 'already watched (lock being written)', not 'watcher PID 0'", async () => {
+    const t = setup();
+    writeFileSync(join(t.stateDir, "19524.lock"), "");
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(await run(t, {})).toBe(3);
+    expect(err).toHaveBeenCalledWith("already watched (lock being written)\n");
+    err.mockRestore();
+  });
+
+  it("after a successful Ignore the state is ok at once and stays ok while crash.log still shows the assert: no blocked line", async () => {
+    const t = setup();
+    const w = t.watcher();
+    t.log("02:14:08.000  SCRIPT       : SCRIPT       : Reloading game scripts");
+    writeFileSync(join(t.logDir, "crash.log"), CRASH);
+    utimesSync(join(t.logDir, "crash.log"), at("02:14:08.500") / 1000, at("02:14:08.500") / 1000);
+    t.sample.wins = [leakBox];
+    t.clock.now = at("02:14:09.000");
+    expect((await w.tick()).state).toBe("blocked_dialog");
+    expect(watchAlerts(t.stateDir, t.clock.now)).toContain("blocked by leak_assert");
+    t.clock.now = at("02:14:14.000");
+    expect((await w.tick()).state).toBe("ok");
+    expect(t.dismiss).toHaveBeenCalledOnce();
+    expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")).state).toBe("ok");
+    expect(watchAlerts(t.stateDir, t.clock.now)).toBe("");
+    // The dialog is gone, the log has no new line yet: crash.log alone does not block again
+    t.sample.wins = [];
+    t.clock.now = at("02:14:19.000");
+    expect((await w.tick()).state).not.toBe("blocked_dialog");
+    expect(watchAlerts(t.stateDir, t.clock.now)).toBe("");
+  });
+
+  it("a refused Ignore leaves the state blocked", async () => {
+    const t = setup();
+    t.dismiss.mockResolvedValueOnce("refused: the dialog text changed");
+    const w = t.watcher();
+    t.log("02:14:08.000  SCRIPT       : SCRIPT       : Reloading game scripts");
+    writeFileSync(join(t.logDir, "crash.log"), CRASH);
+    utimesSync(join(t.logDir, "crash.log"), at("02:14:08.500") / 1000, at("02:14:08.500") / 1000);
+    t.sample.wins = [leakBox];
+    t.clock.now = at("02:14:09.000");
+    await w.tick();
+    t.clock.now = at("02:14:14.000");
+    expect((await w.tick()).state).toBe("blocked_dialog");
   });
 });

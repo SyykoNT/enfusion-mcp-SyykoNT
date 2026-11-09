@@ -28,7 +28,7 @@ export interface AttachDeps {
   settleMs?: number;
 }
 
-/** ok: no recheck for 60 s (attached, already watched, or a watcher was just started). text: one line for a timeout reply. */
+/** ok: no recheck for 60 s (attached, already watched, a watcher was just started, or a result that will not change: unreadable holder, stopped by the user, not a Workbench). text: one line for a timeout reply. */
 export interface AttachResult {
   ok: boolean;
   text: string;
@@ -64,26 +64,27 @@ function watchedText(dir: string, pid: number, watcher: number): string {
 
 /** The check of plan B-093 steps 1 to 5: one result line per outcome. Never kills; deletes only a watch lock a non-watcher holds. */
 export async function ensureWatched(port: number, host: string, d: AttachDeps): Promise<AttachResult> {
-  const no = (why: string): AttachResult => ({ ok: false, text: `Workbench not watched: ${why}.` });
+  const no = (why: string, ok = false): AttachResult => ({ ok, text: `Workbench not watched: ${why}.` });
   if (!LOCAL_HOSTS.includes(host.toLowerCase())) return no(`the NET API host ${host} is not this PC`);
   if (d.platform !== "win32") return no("the watcher runs only on Windows");
   const pid = portOwner(await d.netstat(), port);
   if (!pid) return no(`no process listens on port ${port}`);
   const proc = await d.proc(pid);
-  if (!proc || !WB_EXE.test(proc.cmd)) return no(`port ${port} held by PID ${pid}, not a Workbench this MCP can watch`);
+  // A process that could not be read at all may be a passing failure: check again on the next call.
+  if (!proc || !WB_EXE.test(proc.cmd)) return no(`port ${port} held by PID ${pid}, not a Workbench this MCP can watch`, !!proc);
 
   const holder = watcherOf(d.stateDir, pid, d.alive);
   if (holder) {
     const h = await d.proc(holder);
     // An empty command line is what a process of another user or an elevated MCP shows: it may be a live watcher, so leave its lock alone.
-    if (!h?.cmd) return no(`the watch lock of Workbench PID ${pid} names PID ${holder}, whose command line could not be read`);
+    if (!h?.cmd) return no(`the watch lock of Workbench PID ${pid} names PID ${holder}, whose command line could not be read`, true);
     if (isWatcherCmd(h.cmd, pid)) return { ok: true, text: watchedText(d.stateDir, pid, holder) };
     // A lock left by a watcher that died without cleanup, its PID now reused by another process: no watch.
     // Compare-and-delete: another MCP may have replaced the lock while the command line was read.
     if (watcherOf(d.stateDir, pid, d.alive) !== holder) return no(`the watch lock of Workbench PID ${pid} changed while it was checked; the next call checks again`);
     await rm(join(d.stateDir, `${pid}.lock`), { force: true });
   }
-  if (autoBlocked(d.stateDir, pid, proc.created)) return no(`watch stopped by the user for Workbench PID ${pid} (wb_watch start pid=${pid} attaches one)`);
+  if (autoBlocked(d.stateDir, pid, proc.created)) return no(`watch stopped by the user for Workbench PID ${pid} (wb_watch start pid=${pid} attaches one)`, true);
 
   let started: StartWatcher | undefined;
   let watcher = 0;

@@ -615,7 +615,7 @@ describe("automatic watch check (B-093)", () => {
       await new Promise<void>((res) => slow.close(() => res()));
     });
 
-    it("the error carries the check's line, run again despite the 60 s pause", async () => {
+    it("the error carries the check's line; the 60 s pause set by the request-start check is honoured, not rerun", async () => {
       const check = vi.fn(async () => ({ ok: true, text: "Workbench PID 19524 is watched by watcher PID 600." }));
       c.watchCheck = check;
       const err = await c.call("ReloadScripts", {}, { timeout: 200 }).catch((e) => e);
@@ -623,7 +623,34 @@ describe("automatic watch check (B-093)", () => {
       expect(err.code).toBe("TIMEOUT");
       expect(err.message).toContain("timed out after 200ms");
       expect(err.message).toContain("Watchdog: Workbench PID 19524 is watched by watcher PID 600.");
-      expect(check).toHaveBeenCalledTimes(2); // at the request start, and for the reply
+      expect(check).toHaveBeenCalledTimes(1);
+    });
+
+    it("a result that is not ok is checked again for the reply", async () => {
+      const check = vi.fn(async () => ({ ok: false, text: "Workbench not watched: no process listens on port 5775." }));
+      c.watchCheck = check;
+      const err = await c.call("ReloadScripts", {}, { timeout: 200 }).catch((e) => e);
+      expect(err.message).toContain("Watchdog: Workbench not watched: no process listens on port 5775.");
+      expect(check).toHaveBeenCalledTimes(2);
+    });
+
+    it("a watcher that never claims: five timed-out calls within 60 s start exactly one watcher (B-097 item 2)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(T);
+      const wb = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe -gproj x";
+      const start = vi.fn(() => 700); // never writes the lock
+      c.watchCheck = () =>
+        ensureWatched(5775, "127.0.0.1", {
+          stateDir: mkdtempSync(join(tmpdir(), "emcp-cw-")), platform: "win32", settleMs: 0, owned: () => false, alive: () => false, start, base: {},
+          netstat: async () => "  TCP    0.0.0.0:5775           0.0.0.0:0              LISTENING       19524\r\n",
+          proc: async (pid) => ({ pid, ppid: 1, cmd: wb, created: T }),
+        });
+      for (const s of [0, 5, 20, 40, 59]) {
+        vi.setSystemTime(T + s * 1000);
+        const err = await c.call("ReloadScripts", {}, { timeout: 100 }).catch((e) => e);
+        expect(err.message).toContain("did not take Workbench PID 19524");
+      }
+      expect(start).toHaveBeenCalledOnce();
     });
 
     it("a check that never settles adds that line after the wait, and the error still arrives", async () => {

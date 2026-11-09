@@ -319,7 +319,7 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
         st.crashReporters = s.crs;
       }
 
-      const d = decide(
+      let d = decide(
         { ...sig, now, alive },
         { owned: o.owned, dismiss: o.dismiss, autoRecover: o.autoRecover, recoverAfterMs: o.recoverAfterMin * 60_000,
           lockHeld: lockHeldBy(o.lock ? readText(o.lock) : undefined, o), badSince, recovered }
@@ -339,7 +339,12 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
           const r = await deps.dismiss(o.pid, a.hwnd);
           const on = (st.dialog?.text || st.dialog?.title || "dialog").slice(0, 120);
           note(now, `DIALOG ${hms(now)} PID ${o.pid} ${r === "clicked" ? `Ignore pressed on "${on}"` : `Ignore not pressed: ${r}`}`, "dialog");
-          if (r === "clicked") clickAt = now;
+          if (r === "clicked") {
+            clickAt = now;
+            // The assert is answered: crash.log keeps saying so until Workbench logs again, which must not keep the state blocked (B-098).
+            if (sig.crash) sig.crash.assert = false;
+            if (d.state === "blocked_dialog") d = { ...d, state: "ok", kind: undefined };
+          }
         } else {
           recovered = true;
           note(now, `autoRecover ${hms(now)}: ${await deps.recover(o, startTime)}`);
@@ -470,9 +475,12 @@ export async function runWatcher(
   mkdirSync(o.stateDir, { recursive: true });
   const claim = claimWatch(o.stateDir, o.pid);
   if (!claim.ok) {
-    process.stderr.write(`already watched by watcher PID ${claim.by}\n`);
+    process.stderr.write(claim.by ? `already watched by watcher PID ${claim.by}\n` : "already watched (lock being written)\n");
     return 3;
   }
+  const lockFile = join(o.stateDir, `${o.pid}.lock`);
+  // A rival that took our lock in the same moment wins; the claim itself cannot close that window (B-097).
+  const holdsLock = () => Number(readText(lockFile)) === process.pid;
   let latest: ProbeSample | undefined;
   let loadSet: LoadSet | undefined; // read once it succeeds: the addons a Workbench loaded do not change while it runs
   const probe = (over.probe ?? startProbe)(o.pid, o.port, (s) => (latest = s));
@@ -493,15 +501,17 @@ export async function runWatcher(
     ...over,
   });
   try {
+    if (!holdsLock()) return 3;
     w.init();
     for (;;) {
       const s = await w.tick();
       if (s.state === "exited" || s.state === "crashed") return 0;
       await (over.wait ?? sleep)(TICK_MS);
+      if (!holdsLock()) return 3;
     }
   } finally {
     probe.stop();
-    rmSync(join(o.stateDir, `${o.pid}.lock`), { force: true });
+    if (holdsLock()) rmSync(lockFile, { force: true });
   }
 }
 

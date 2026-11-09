@@ -59,8 +59,11 @@ describe("ensureWatched", () => {
 
   it("step 2: the port owner is not a Workbench, or its command line cannot be read", async () => {
     const d = deps({ netstat: async () => listening(4242) });
-    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: port 5775 held by PID 4242, not a Workbench this MCP can watch." });
-    expect((await check(deps({ netstat: async () => listening(31337) }))).text).toContain("port 5775 held by PID 31337");
+    // A non-Workbench holder is a stable result (quiet 60 s); a process that could not be read at all is checked again.
+    expect(await check(d)).toEqual({ ok: true, text: "Workbench not watched: port 5775 held by PID 4242, not a Workbench this MCP can watch." });
+    const gone = await check(deps({ netstat: async () => listening(31337) }));
+    expect(gone.text).toContain("port 5775 held by PID 31337");
+    expect(gone.ok).toBe(false);
     expect(d.start).not.toHaveBeenCalled();
   });
 
@@ -94,7 +97,8 @@ describe("ensureWatched", () => {
     for (const cmd of ["", undefined]) {
       const d = deps({ alive: () => true }, cmd === undefined ? {} : { 555: cmd });
       writeFileSync(join(d.stateDir, "19524.lock"), "555");
-      expect((await check(d)).text, String(cmd)).toBe("Workbench not watched: the watch lock of Workbench PID 19524 names PID 555, whose command line could not be read.");
+      // Stable: ok:true keeps the client from rerunning netstat and two CIM queries on every call.
+      expect(await check(d), String(cmd)).toEqual({ ok: true, text: "Workbench not watched: the watch lock of Workbench PID 19524 names PID 555, whose command line could not be read." });
       expect(existsSync(join(d.stateDir, "19524.lock"))).toBe(true);
       expect(d.start).not.toHaveBeenCalled();
     }
@@ -136,7 +140,7 @@ describe("ensureWatched", () => {
   it("step 4: the user stopped the watch of this Workbench run", async () => {
     const d = deps();
     writeFileSync(join(d.stateDir, "19524.noauto"), String(T0 + 3_000));
-    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: watch stopped by the user for Workbench PID 19524 (wb_watch start pid=19524 attaches one)." });
+    expect(await check(d)).toEqual({ ok: true, text: "Workbench not watched: watch stopped by the user for Workbench PID 19524 (wb_watch start pid=19524 attaches one)." });
     expect(d.start).not.toHaveBeenCalled();
     // A new run of a reused PID has another start time
     writeFileSync(join(d.stateDir, "19524.noauto"), String(T0 - 60_000));

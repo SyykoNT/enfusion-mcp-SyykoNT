@@ -208,6 +208,8 @@ export class WorkbenchClient {
   watchWaitMs = 5_000;
   private watchRun: Promise<AttachResult> | null = null;
   private watchQuietUntil = 0;
+  /** The line of the result that set the pause, repeated in timeout replies during it. */
+  private watchLast = "";
 
   /** Current cached connection state. Updated after every successful call. */
   get state(): Readonly<WorkbenchState> {
@@ -270,8 +272,11 @@ export class WorkbenchClient {
     return (this.watchRun ??= Promise.resolve()
       .then(() => this.watchCheck())
       .then((r) => {
-        // Attached or already watched: no new check for 60 s; any other result is checked again on the next request.
-        if (r.ok) this.watchQuietUntil = Date.now() + 60_000;
+        // ok (attached, already watched, or a result that will not change): no new check for 60 s; no listener or a failed check is checked again on the next request.
+        if (r.ok) {
+          this.watchQuietUntil = Date.now() + 60_000;
+          this.watchLast = r.text;
+        }
         return r;
       })
       .catch((e) => {
@@ -284,11 +289,12 @@ export class WorkbenchClient {
   }
 
   /**
-   * The watch line for a timeout reply, or "" when the automatic watch is off. Runs the check whatever the 60 s pause says,
-   * and waits at most watchWaitMs for it. Never throws.
+   * The watch line for a timeout reply, or "" when the automatic watch is off. During the 60 s pause it repeats the line that set it
+   * (no new check); otherwise it waits at most watchWaitMs for the check. Never throws.
    */
   async watchNote(): Promise<string> {
     if (this.config?.autoWatch !== true) return "";
+    if (!this.watchRun && Date.now() < this.watchQuietUntil) return `Watchdog: ${this.watchLast}`;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<string>((done) => {
       timer = setTimeout(() => done(`the watch check did not finish in ${this.watchWaitMs / 1000} s`), this.watchWaitMs);
