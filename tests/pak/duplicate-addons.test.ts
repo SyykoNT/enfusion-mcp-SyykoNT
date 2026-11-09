@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -71,22 +71,15 @@ function addon(parent: string, name: string, guid: string, deps: string[] = [], 
   return dir;
 }
 const gprojOf = (dir: string) => join(dir, "addon.gproj");
-/** A listed addon folder whose .gproj is a dangling link, so reading it throws. */
+/** A listed addon folder whose .gproj is a dangling directory junction, so reading it throws (a junction needs no privilege on Windows). */
 function brokenAddon(parent: string, name: string): string {
   const dir = join(parent, name);
-  mkdirSync(dir, { recursive: true });
-  symlinkSync(join(dir, "missing.gproj"), gprojOf(dir), "file");
+  const target = join(dir, "gone");
+  mkdirSync(target, { recursive: true });
+  symlinkSync(target, gprojOf(dir), "junction");
+  rmdirSync(target);
   return dir;
 }
-// File links need a privilege on some Windows PCs; without it the dangling-link tests are skipped
-const canLink = (() => {
-  try {
-    brokenAddon(tmp, "probe");
-    return true;
-  } catch {
-    return false;
-  }
-})();
 
 const G = "AAAAAAAAAAAAAAAA";
 const DEP = "BBBBBBBBBBBBBBBB";
@@ -104,6 +97,32 @@ describe("duplicateAddonError", () => {
     expect(err).toContain(opened);
     expect(err).toMatch(/set ENFUSION_ADDONS_DIR to the folder that holds only the copy you want \(for example .*mission\)/);
     expect(duplicateAddonError([gprojOf(opened)], [projects], { via: "addonsDirs" })).toMatch(/pass addonsDirs with the folder that holds only the copy/);
+  });
+
+  describe("the example folder holds exactly one of the copies", () => {
+    const example = (err: string | null) => /\(for example (.+)\)/.exec(err ?? "")?.[1];
+    it("a duplicated dependency, with the addon opened from outside every listed folder", () => {
+      const base = fresh();
+      const a = join(base, "a"), b = join(base, "b");
+      addon(a, "Dep", DEP);
+      addon(b, "Dep", DEP);
+      const opened = addon(join(base, "elsewhere"), "App", G, [DEP]);
+      const err = duplicateAddonError([gprojOf(opened)], [a, b]) ?? "";
+      expect(err).toContain(DEP);
+      expect([a, b]).toContain(example(err));
+    });
+    it("skips a parent that holds two copies, and names none when every parent does", () => {
+      const base = fresh();
+      const a = join(base, "a"), b = join(base, "b");
+      addon(a, "Dep1", DEP);
+      addon(a, "Dep2", DEP);
+      addon(b, "Dep", DEP);
+      const opened = addon(join(base, "elsewhere"), "App", G, [DEP]);
+      expect(example(duplicateAddonError([gprojOf(opened)], [a, b]))).toBe(b);
+      const err = duplicateAddonError([gprojOf(opened)], [a]) ?? "";
+      expect(err).toContain(DEP);
+      expect(err).not.toContain("for example");
+    });
   });
 
   it("refuses a dependency with two copies, also two levels down, but not an unrelated addon", () => {
@@ -132,7 +151,7 @@ describe("duplicateAddonError", () => {
   describe("folder identity (an opened addon and the same folder listed are one folder)", () => {
     const setup = () => {
       const projects = join(fresh(), "projects");
-      const opened = addon(projects, "CRF", G);
+      const opened = addon(projects, "Core", G);
       return { projects, gproj: gprojOf(opened) };
     };
 
@@ -157,13 +176,13 @@ describe("duplicateAddonError", () => {
     it("an 8.3 short spelling of the listed folder", () => {
       const parent = fresh();
       const long = join(parent, "Long Projects Folder");
-      const gproj = gprojOf(addon(long, "CRF", G));
+      const gproj = gprojOf(addon(long, "Core", G));
       const short = join(parent, "LONGPR~1");
       // Only where the PC makes 8.3 names (Windows with the default setting): the short path then names the same folder.
       if (!existsSync(short)) return;
       expect(realpathSync.native(short).toLowerCase()).toBe(realpathSync.native(long).toLowerCase());
       expect(duplicateAddonError([gproj], [short])).toBeNull();
-      expect(duplicateAddonError([gprojOf(join(short, "CRF"))], [long])).toBeNull();
+      expect(duplicateAddonError([gprojOf(join(short, "Core"))], [long])).toBeNull();
     });
     it("a listed folder given twice", () => {
       const { projects, gproj } = setup();
@@ -174,13 +193,13 @@ describe("duplicateAddonError", () => {
   it("counts a junction and its target under two listed folders as two copies (unverified Workbench behaviour, the stricter default)", () => {
     const base = fresh();
     const projects = join(base, "projects"), mission = join(base, "mission");
-    const lobby = addon(projects, "Lobby", DEP);
+    const shared = addon(projects, "Shared", DEP);
     mkdirSync(mission, { recursive: true });
-    symlinkSync(lobby, join(mission, "Lobby"), "junction");
+    symlinkSync(shared, join(mission, "Shared"), "junction");
     const opened = addon(mission, "App", G, [DEP]);
     const err = duplicateAddonError([gprojOf(opened)], [projects, mission]);
     expect(err).toContain(DEP);
-    expect(err).toContain(join(mission, "Lobby"));
+    expect(err).toContain(join(mission, "Shared"));
     expect(duplicateAddonError([gprojOf(opened)], [mission])).toBeNull(); // the intended use: the junction alone
   });
 
@@ -209,6 +228,15 @@ describe("duplicateAddonError", () => {
       expect(duplicateAddonError([gprojOf(app)], [projects, cache])).toBeNull();
     });
 
+    it("a listed folder whose .gproj has invalid content (it is read leniently, not skipped)", () => {
+      const base = fresh();
+      const projects = join(base, "projects");
+      mkdirSync(join(projects, "Junk"), { recursive: true });
+      writeFileSync(join(projects, "Junk", "addon.gproj"), "}{ \0 not a game project");
+      const opened = addon(projects, "App", G);
+      expect(duplicateAddonError([gprojOf(opened)], [projects])).toBeNull();
+    });
+
     it("an unrelated duplicate GUID in the listed folders", () => {
       const base = fresh();
       const projects = join(base, "projects");
@@ -220,7 +248,7 @@ describe("duplicateAddonError", () => {
   });
 
   describe("a listed folder whose .gproj cannot be read is skipped", () => {
-    it.skipIf(!canLink)("a dangling .gproj link", () => {
+    it("a dangling .gproj link", () => {
       const base = fresh();
       const projects = join(base, "projects");
       brokenAddon(projects, "Broken");
@@ -228,19 +256,10 @@ describe("duplicateAddonError", () => {
       expect(duplicateAddonError([gprojOf(opened)], [projects])).toBeNull();
     });
 
-    it("a .gproj with invalid content", () => {
-      const base = fresh();
-      const projects = join(base, "projects");
-      mkdirSync(join(projects, "Junk"), { recursive: true });
-      writeFileSync(join(projects, "Junk", "addon.gproj"), "}{ \0 not a game project");
-      const opened = addon(projects, "App", G);
-      expect(duplicateAddonError([gprojOf(opened)], [projects])).toBeNull();
-    });
-
-    it.skipIf(!canLink)("a second copy of the opened GUID is still refused beside an unreadable folder", () => {
+    it("a second copy of the opened GUID is still refused beside an unreadable folder", () => {
       const base = fresh();
       const projects = join(base, "projects"), mission = join(base, "mission");
-      brokenAddon(projects, "Broken");
+      brokenAddon(projects, "0Broken"); // sorts before the copy, so a scan that stops at it misses the copy
       const copy = addon(projects, "Base", G);
       const opened = addon(mission, "Base", G);
       const err = duplicateAddonError([gprojOf(opened)], [projects]);
@@ -248,7 +267,7 @@ describe("duplicateAddonError", () => {
       expect(err).toContain(copy);
     });
 
-    it.skipIf(!canLink)("an opened addon whose own .gproj cannot be read still throws", () => {
+    it("an opened addon whose own .gproj cannot be read still throws", () => {
       const base = fresh();
       const projects = join(base, "projects");
       const broken = brokenAddon(projects, "Broken");
@@ -312,7 +331,7 @@ describe("wb_launch (launchWorkbench) refuses two copies before writing or start
 });
 
 describe("an unreadable listed folder does not block a launch", () => {
-  it.skipIf(!canLink)("wb_launch reaches the spawn", async () => {
+  it("wb_launch reaches the spawn", async () => {
     const base = fresh();
     const projects = join(base, "projects");
     brokenAddon(projects, "Broken");
@@ -324,7 +343,7 @@ describe("an unreadable listed folder does not block a launch", () => {
     expect(sys.spawned.length).toBe(1);
   });
 
-  it.skipIf(!canLink)("mod compile reaches the compile stub", async () => {
+  it("mod compile reaches the compile stub", async () => {
     const base = fresh();
     const projects = join(base, "projects");
     brokenAddon(projects, "Broken");

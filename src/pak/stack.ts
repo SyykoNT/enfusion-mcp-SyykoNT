@@ -348,10 +348,12 @@ export function duplicateAddonError(
     const hits = folders.filter((f) => f.info.guid === guid);
     if (hits.length > 1) {
       const fix = opts.via === "addonsDirs" ? "pass addonsDirs with" : "set ENFUSION_ADDONS_DIR to";
+      // A parent folder that holds exactly one of the copies, so listing it loads that copy only (the opened addon may sit outside every listed folder)
+      const sole = hits.find((h) => hits.filter((o) => real(dirname(o.root)) === real(dirname(h.root))).length === 1);
       return (
         `Refused: addon GUID ${guid} (${hits[0].info.id}) is in ${hits.length} folders, so Workbench or the server would load more than one copy: ` +
-        `${hits.map((h) => h.root).join(", ")}. Nothing was started. To launch, ${fix} the folder that holds only the copy you want ` +
-        `(for example ${dirname(folders[0].root)}).`
+        `${hits.map((h) => h.root).join(", ")}. Nothing was started. To launch, ${fix} the folder that holds only the copy you want` +
+        `${sole ? ` (for example ${dirname(sole.root)})` : ""}.`
       );
     }
     for (const d of hits[0]?.info.deps ?? []) {

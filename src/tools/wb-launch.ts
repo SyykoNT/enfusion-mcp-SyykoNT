@@ -3,7 +3,8 @@ import { z } from "zod";
 import { basename, dirname, join, resolve } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import type { Config } from "../config.js";
-import { handlerGitState, type WorkbenchClient } from "../workbench/client.js";
+import { ADDONS_DIRS_NOT_APPLIED, handlerGitState, type WorkbenchClient } from "../workbench/client.js";
+import { addonsDirsError } from "../workbench/cli.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 import { findPids, killPids, sleep } from "../utils/process.js";
 import { isOwned } from "../utils/instances.js";
@@ -26,7 +27,7 @@ export function registerWbLaunch(
         "wb_launch refuses and names it (PID, project, started by this MCP or not). With the same project, or without gprojPath, " +
         "it shares that Workbench and says which one answers. If the project it has open cannot be read, it shares it and says " +
         "\"project unknown\". If one is running but not answering it refuses to start another. A launch is refused, before anything is written or started, when the " +
-        "project or one of its dependencies exists as two copies with the same GUID in the ENFUSION_ADDONS_DIR folders. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
+        "project or one of its dependencies exists as two copies with the same GUID in the -addonsDir folders (addonsDirs, else ENFUSION_ADDONS_DIR). Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
       inputSchema: {
         gprojPath: z
@@ -52,31 +53,45 @@ export function registerWbLaunch(
             "A world (.ent) of the opened project to load in the World Editor at start (-wbModule=WorldEditor -run -load). " +
             "Needs gprojPath or ENFUSION_DEFAULT_MOD. Only on a fresh start: a running Workbench does not switch worlds."
           ),
+        addonsDirs: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Folders for -addonsDir on this launch (read only), in place of ENFUSION_ADDONS_DIR; each an existing absolute folder with no quote or comma. " +
+            "Use a mission folder that holds the addon and junctions to its dependencies to load that copy and no other. " +
+            "Only on a fresh start: a running or starting Workbench keeps its own, and the reply says addonsDirs was not applied."
+          ),
       },
     },
-    async ({ gprojPath, unattended, worldPath }) => {
+    async ({ gprojPath, unattended, worldPath, addonsDirs }) => {
       try {
+        const badDirs = addonsDirs ? addonsDirsError(addonsDirs) : null;
+        if (badDirs) return { content: [{ type: "text" as const, text: badDirs }], isError: true };
         const alreadyRunning = await client.ping();
         const who = alreadyRunning ? await client.answeringWorkbench(gprojPath) : undefined;
         if (who?.refuse) {
           return { content: [{ type: "text" as const, text: `${who.refuse}${formatConnectionStatus(client)}` }], isError: true };
         }
-        const gitNote = alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath);
+        const gitNote = alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath, ...(addonsDirs ? [addonsDirs] : [])); // without addonsDirs the call keeps its three arguments
 
         // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
           config.defaultMod = basename(dirname(resolve(gprojPath)));
+          config.launchedGproj = resolve(gprojPath);
+        } else if (!who) {
+          config.launchedGproj = undefined; // a fresh launch of the default addon
         }
 
         if (who) {
           const notOpened = worldPath
             ? `\n\nworldPath was not opened: a running Workbench does not switch worlds here. Open it with **wb_open_resource**, or close Workbench and launch again.`
             : "";
+          const notApplied = addonsDirs?.length ? `\n\n${ADDONS_DIRS_NOT_APPLIED("Workbench is already running")}` : "";
           return {
             content: [
               {
                 type: "text" as const,
-                text: `**Workbench Already Running**: NET API is responding. All \`wb_*\` tools are available.\n\n${who.line}${notOpened}${formatConnectionStatus(client)}`,
+                text: `**Workbench Already Running**: NET API is responding. All \`wb_*\` tools are available.\n\n${who.line}${notOpened}${notApplied}${formatConnectionStatus(client)}`,
               },
             ],
           };

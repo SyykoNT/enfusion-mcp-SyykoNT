@@ -40,6 +40,10 @@ const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
 const WORLD_LAUNCH_TIMEOUT_MS = 300_000;
 
+/** The reply line when a Workbench is already up or starting: it keeps the -addonsDir it began with. */
+export const ADDONS_DIRS_NOT_APPLIED = (why: string) =>
+  `addonsDirs was not applied: ${why}, and a running Workbench keeps the -addonsDir it started with. Close it and launch again to use these folders.`;
+
 /**
  * Workbench command line. worldPath (a .ent of the opened project) adds the World Editor flags
  * verified with the COALITION launcher: -wbModule=WorldEditor -run -load <world>.
@@ -473,19 +477,21 @@ export class WorkbenchClient {
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
    * @param unattended Launch with -noThrow (no error dialogs).
    * @param worldPath Optional .ent to open in the World Editor at start.
+   * @param addonsDirs Optional folders for -addonsDir in place of ENFUSION_ADDONS_DIR (the caller has validated them with addonsDirsError).
    * @returns Notes for the reply (the repo's git exclude changed, handler scripts refreshed, crash folders saved before the start), else undefined.
    */
-  async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
+  async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string, addonsDirs?: string[]): Promise<string | undefined> {
     if (!this.config) {
       throw new WorkbenchError("No config provided: cannot auto-launch Workbench.", "LAUNCH_FAILED");
     }
 
-    // Deduplicate concurrent calls: all callers await the same promise
+    // Deduplicate concurrent calls: all callers await the same promise, which keeps the folders it started with
     if (this.launchPromise) {
-      return this.launchPromise;
+      const note = addonsDirs?.length ? ADDONS_DIRS_NOT_APPLIED("this call joined a launch already in flight") : undefined;
+      return this.launchPromise.then((r) => [r, note].filter(Boolean).join("\n\n") || undefined);
     }
 
-    const promise = this.launchWorkbench(gprojPath, unattended, worldPath).finally(() => {
+    const promise = this.launchWorkbench(gprojPath, unattended, worldPath, addonsDirs).finally(() => {
       // Only clear if this is still the active promise (guards against re-entrant calls)
       if (this.launchPromise === promise) {
         this.launchPromise = null;
@@ -792,13 +798,13 @@ export class WorkbenchClient {
     }
   }
 
-  private async launchWorkbench(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
+  private async launchWorkbench(gprojPath?: string, unattended = false, worldPath?: string, addonsDirs?: string[]): Promise<string | undefined> {
     // 1. Check if already running (maybe it came up between the failed call and now)
     if (await this.ping()) {
       const who = await this.answeringWorkbench(gprojPath);
       if (who.refuse) throw new WorkbenchError(who.refuse, "LAUNCH_FAILED");
       logger.info(`Workbench is already running. ${who.line}`);
-      return;
+      return addonsDirs?.length ? ADDONS_DIRS_NOT_APPLIED("Workbench is already running") : undefined;
     }
     // A running Workbench whose NET API does not answer is loading, showing a dialog or hung.
     // Starting another copy would not help and piles up instances.
@@ -834,10 +840,11 @@ export class WorkbenchClient {
     }
     let resolvedGproj = gprojPath || this.findFallbackGproj();
     // Before any handler copy: a second copy of the addon or a dependency in -addonsDir makes Workbench load both.
-    const dup = resolvedGproj ? duplicateAddonError([resolvedGproj], (this.config?.addonsDir ?? "").split(",")) : null;
+    const addonsDir = addonsDirs?.length ? addonsDirs.join(",") : this.config?.addonsDir;
+    const dup = resolvedGproj ? duplicateAddonError([resolvedGproj], (addonsDir ?? "").split(","), { via: "addonsDirs" }) : null;
     if (dup) throw new WorkbenchError(dup, "LAUNCH_FAILED");
     // Built before any handler copy, so a bad worldPath is refused with nothing written.
-    let args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir: this.config?.addonsDir, unattended, worldPath });
+    let args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir, unattended, worldPath });
     let gitNote: string | undefined;
     if (resolvedGproj && !isProtected) {
       gitNote = this.installHandlerScripts(dirname(resolvedGproj));
@@ -854,7 +861,7 @@ export class WorkbenchClient {
         const standaloneGproj = join(fallbackBase, HANDLER_FOLDER, `${HANDLER_FOLDER}.gproj`);
         if (existsSync(standaloneGproj)) {
           resolvedGproj = standaloneGproj;
-          args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir: this.config?.addonsDir, unattended });
+          args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir, unattended });
         }
       }
     }

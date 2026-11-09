@@ -83,7 +83,8 @@ export const crashLogsDir = (config: Config): string | undefined => crashLogsFol
 /** cwd is the game folder, so without these Steam counts Workbench as the game (its steam_appid.txt says 1874880). */
 export const workbenchEnv = (): NodeJS.ProcessEnv => ({ ...process.env, SteamAppId: "1874910", SteamGameId: "1874910" });
 
-export async function runWorkbench(config: Config, args: string[], timeoutMs: number): Promise<WorkbenchRun> {
+/** addonsDirs (one call's folders) replace the configured -addonsDir for that run; an empty list means the configured one. */
+export async function runWorkbench(config: Config, args: string[], timeoutMs: number, addonsDirs?: string[]): Promise<WorkbenchRun> {
   const exe = findWorkbenchExe(config.workbenchPath);
   if (!exe) throw new Error(`Workbench not found under ${config.workbenchPath} (need Workbench/ArmaReforgerWorkbenchSteamDiag.exe)`);
   const logsDir = join(workbenchProfileDir(config), "logs");
@@ -93,7 +94,8 @@ export async function runWorkbench(config: Config, args: string[], timeoutMs: nu
   return new Promise((done) => {
     // CWD = game dir so ./addons/data and ./addons/core resolve (same as wb_launch)
     const cwd = existsSync(config.gamePath) ? config.gamePath : dirname(exe);
-    const fullArgs = config.addonsDir ? [...args, "-addonsDir", config.addonsDir] : args;
+    const dirs = addonsDirs?.length ? addonsDirs.join(",") : config.addonsDir;
+    const fullArgs = dirs ? [...args, "-addonsDir", dirs] : args;
     const proc = spawn(exe, fullArgs, { cwd, windowsHide: true, stdio: "ignore", env: workbenchEnv() });
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
@@ -172,8 +174,8 @@ export interface CompileResult {
   warnings: ScriptIssue[];
 }
 
-export async function compileAddon(config: Config, gprojPath: string, timeoutMs = 10 * 60_000): Promise<CompileResult> {
-  const run = await runWorkbench(config, ["-gproj", gprojPath, "-wbSilent", "-noThrow"], timeoutMs);
+export async function compileAddon(config: Config, gprojPath: string, timeoutMs = 10 * 60_000, addonsDirs?: string[]): Promise<CompileResult> {
+  const run = await runWorkbench(config, ["-gproj", gprojPath, "-wbSilent", "-noThrow"], timeoutMs, addonsDirs);
   const addonDir = dirname(gprojPath);
   const errors = parseScriptIssues(run.console, addonDir, "E");
   const warnings = parseScriptIssues(run.console, addonDir, "W").filter((w) => w.inAddon);
@@ -190,12 +192,13 @@ export interface PackResult {
   errors: string[];
 }
 
-export async function packAddon(config: Config, gprojPath: string, outDir: string, timeoutMs = 30 * 60_000): Promise<PackResult> {
+export async function packAddon(config: Config, gprojPath: string, outDir: string, timeoutMs = 30 * 60_000, addonsDirs?: string[]): Promise<PackResult> {
   mkdirSync(outDir, { recursive: true }); // Workbench does not create missing parents
   const run = await runWorkbench(
     config,
     ["-gproj", gprojPath, "-wbModule=ResourceManager", "-packAddon", "-packAddonDir", outDir, "-noThrow"],
-    timeoutMs
+    timeoutMs,
+    addonsDirs
   );
   const files = existsSync(outDir) ? readdirSync(outDir) : [];
   const ok = !run.timedOut && !run.dialog && (run.exitCode === 0 || !!run.leakAssertEnded) && /Packaging project successful/.test(run.console) && files.includes("data.pak");
@@ -235,13 +238,13 @@ export function handlerFiles(addonDir: string): string[] {
  * uploads and what -addonsDir loads, so it must not be an install or Workshop cache, the addon
  * itself, inside an addons dir (a second addon with the same GUID), or hold someone else's files.
  */
-export function checkPackOutput(config: Config, addonDir: string, guid: string, outDir: string, cleanOutput = false): string | null {
+export function checkPackOutput(config: Config, addonDir: string, guid: string, outDir: string, cleanOutput = false, addonsDirs: string[] = []): string | null {
   const root = forbiddenRoot(config, outDir);
   if (root) return `outputPath is inside ${root} (Workshop cache / install). Choose a folder outside it.`;
   const out = realPathOf(outDir);
   if (isContained(realPathOf(addonDir), out)) return "outputPath is inside the addon itself; BI: do not pack or publish into the addon folder.";
-  const addonsDirs = [config.projectPath, ...(config.addonsDir ?? "").split(",")].map((d) => d.trim()).filter(Boolean);
-  const inAddons = addonsDirs.find((d) => isContained(realPathOf(d), out));
+  const listed = [config.projectPath, ...(config.addonsDir ?? "").split(","), ...addonsDirs].map((d) => d.trim()).filter(Boolean);
+  const inAddons = listed.find((d) => isContained(realPathOf(d), out));
   if (inAddons) return `outputPath is inside an addons dir (${inAddons}); Workbench and servers would see a second addon with GUID ${guid}.`;
   if (!existsSync(outDir)) return null;
 

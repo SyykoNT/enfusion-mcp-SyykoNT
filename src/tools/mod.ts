@@ -6,12 +6,12 @@ import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 import { generateScript } from "../templates/script.js";
 import type { PatternLibrary } from "../patterns/loader.js";
-import { forbiddenRoot, validateFilename, validateProjectPath } from "../utils/safe-path.js";
+import { forbiddenRoot, sameRealPath, validateFilename, validateProjectPath } from "../utils/safe-path.js";
 import { findGproj } from "../utils/game-paths.js";
 import type { SearchEngine } from "../index/search-engine.js";
 import { parse, getProperty } from "../formats/enfusion-text.js";
 
-import { checkPackOutput, compileAddon, handlerFiles, packAddon, pakSummary, readGproj, resolveGproj } from "../workbench/cli.js";
+import { addonsDirsError, checkPackOutput, compileAddon, handlerFiles, packAddon, pakSummary, readGproj, resolveGproj } from "../workbench/cli.js";
 import { findPids, workbenchCommandLines } from "../utils/process.js";
 import { duplicateAddonError } from "../pak/stack.js";
 
@@ -355,7 +355,7 @@ export function registerMod(
         "loadable addon (data.pak + .gproj + resourceDatabase.rdb) for the game / dedicated server; " +
         "'build' = compile then pack (stops on script errors); 'create' scaffolds a new addon; " +
         "'validate' runs static checks without Workbench. " +
-        "build, compile and pack are refused, before Workbench starts, when the addon or one of its dependencies exists as two copies with the same GUID in the ENFUSION_ADDONS_DIR folders.",
+        "build, compile and pack are refused, before Workbench starts, when the addon or one of its dependencies exists as two copies with the same GUID in the -addonsDir folders (addonsDirs, else ENFUSION_ADDONS_DIR).",
       inputSchema: {
         action: z
           .enum(["build", "compile", "pack", "create", "validate"])
@@ -391,6 +391,13 @@ export function registerMod(
           .boolean()
           .optional()
           .describe("(build/pack) List data.pak contents after packing (default true)."),
+        addonsDirs: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "(build/compile/pack) Folders for -addonsDir on this run (read only), in place of ENFUSION_ADDONS_DIR; each an existing absolute folder with no quote or comma. " +
+            "Use a mission folder that holds the addon and junctions to its dependencies to build against that copy and no other. A pack output inside any of them is refused."
+          ),
 
         // ── create params ─────────────────────────────────────────────────────
         name: z
@@ -425,10 +432,17 @@ export function registerMod(
           .describe("(validate) Specific checks to run. Runs all checks if omitted."),
       },
     },
-    async ({ action, addonName, outputPath, gprojPath, force, allowHandlers, cleanOutput, listPak, name, description, prefix, pattern: patternName, projectPath, checks }) => {
+    async ({ action, addonName, outputPath, gprojPath, force, allowHandlers, cleanOutput, listPak, name, description, prefix, pattern: patternName, projectPath, checks, addonsDirs }) => {
 
       // ── build / compile / pack ─────────────────────────────────────────────
       if (action === "build" || action === "compile" || action === "pack") {
+        const badDirs = addonsDirs ? addonsDirsError(addonsDirs) : null;
+        if (badDirs) return { content: [{ type: "text", text: badDirs }], isError: true };
+        // wb_launch of an addon outside the project path leaves ENFUSION_DEFAULT_MOD naming another copy of it
+        const opened = config.launchedGproj;
+        if (action === "compile" && !addonName && !gprojPath && opened && !sameRealPath(dirname(dirname(opened)), config.projectPath)) {
+          return { content: [{ type: "text", text: `Refused: the Workbench started by wb_launch runs ${opened}, which is not directly under the project path, so compiling the default addon would pick another copy. Pass gprojPath.` }], isError: true };
+        }
         // build and pack run a headless Workbench on the addon, so they never default to ENFUSION_DEFAULT_MOD
         const gproj = resolveGproj(config, addonName ?? (action === "compile" ? config.defaultMod : undefined), gprojPath);
         if (!gproj) {
@@ -437,7 +451,7 @@ export function registerMod(
             isError: true,
           };
         }
-        const dup = duplicateAddonError([gproj], (config.addonsDir ?? "").split(","));
+        const dup = duplicateAddonError([gproj], (addonsDirs?.length ? addonsDirs.join(",") : config.addonsDir ?? "").split(","), { via: "addonsDirs" });
         if (dup) return { content: [{ type: "text", text: dup }], isError: true };
         const addonDir = dirname(gproj);
         const project = readGproj(gproj);
@@ -455,7 +469,7 @@ export function registerMod(
               isError: true,
             };
           }
-          const outError = checkPackOutput(config, addonDir, project.guid, outDir, cleanOutput);
+          const outError = checkPackOutput(config, addonDir, project.guid, outDir, cleanOutput, addonsDirs);
           if (outError) return { content: [{ type: "text", text: outError }], isError: true };
         }
         if (!force && findPids("ArmaReforgerWorkbenchSteamDiag.exe").length > 0) {
@@ -475,7 +489,7 @@ export function registerMod(
         try {
           let compiled: { ok: boolean; errors: unknown[]; warnings: unknown[] } | undefined;
           if (action !== "pack") {
-            const c = await compileAddon(config, gproj);
+            const c = await compileAddon(config, gproj, undefined, addonsDirs);
             const own = c.errors.filter((e) => e.inAddon);
             compiled = { ok: c.ok, errors: own, warnings: c.warnings };
             lines.push(`**Scripts:** ${c.ok ? "compiled OK" : "FAILED"} (${c.run.seconds}s${c.run.timedOut ? ", timed out" : ""})`);
@@ -501,7 +515,7 @@ export function registerMod(
             lines.push("");
           }
 
-          const p = await packAddon(config, gproj, outDir);
+          const p = await packAddon(config, gproj, outDir, undefined, addonsDirs);
           lines.push(`**Pack:** ${p.ok ? "OK" : "FAILED"} (${p.run.seconds}s) → \`${outDir}\``);
           if (p.files.length) lines.push(`Files: ${p.files.join(", ")}`);
           let pak: ReturnType<typeof pakSummary> | undefined;

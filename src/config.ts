@@ -28,6 +28,8 @@ export interface Config {
    *  Automatically set at runtime when wb_launch opens a .gproj file.
    *  Can also be set via ENFUSION_DEFAULT_MOD env var as a static fallback. */
   defaultMod?: string;
+  /** Absolute .gproj of the last wb_launch (set by that tool). mod compile without a path refuses when it is not directly under the project path. */
+  launchedGproj?: string;
   /** Arma Reforger Dedicated Server install dir (contains ArmaReforgerServer.exe). */
   serverPath: string;
   /** Directory holding steamcmd.exe (downloaded on demand by `server install`). */
