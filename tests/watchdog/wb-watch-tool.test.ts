@@ -335,4 +335,19 @@ describe("an unreadable watch lock (B-099 items 1 and 4)", () => {
     expect(readFileSync(lock(other), "utf-8")).toBe("800");
     expect(existsSync(join(other.stateDir, "19524.json"))).toBe(false);
   });
+
+  it("stop removes the state file only while it still names the killed watcher (R2)", async () => {
+    const json = (d: WatchToolDeps) => join(d.stateDir, "19524.json");
+    const same = deps({ alive });
+    watched(same);
+    await watchAction({ action: "stop", pid: 19524 }, same);
+    expect(existsSync(json(same))).toBe(false);
+    // Another MCP's watcher rewrote the state file while this one was killed.
+    const other = deps({ alive });
+    watched(other);
+    const rival = JSON.stringify({ pid: 19524, watcherPid: 800, owned: false, state: "ok", auto: true });
+    other.kill = vi.fn(() => writeFileSync(json(other), rival));
+    await watchAction({ action: "stop", pid: 19524 }, other);
+    expect(readFileSync(json(other), "utf-8")).toBe(rival);
+  });
 });

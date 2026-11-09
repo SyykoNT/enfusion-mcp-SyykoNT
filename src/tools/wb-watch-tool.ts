@@ -45,8 +45,23 @@ const isOurWatcher = (d: WatchToolDeps, pid: number, watcher: number) =>
 /** Kill the watcher (its tree: the watcher's finally never runs under taskkill /F) and remove its files. */
 function endWatcher(d: WatchToolDeps, pid: number, watcher: number): void {
   d.kill(watcher);
-  rmSync(join(d.stateDir, `${pid}.json`), { force: true });
-  // Another watcher may have taken the lock while this one was killed: remove it only if it still names the killed one.
+  // A remove that fails (EBUSY/EPERM) leaves a stale file the next claim takes over; the watcher is stopped either way.
+  const drop = (file: string) => {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // see above
+    }
+  };
+  // Another watcher may have taken the state file or the lock while this one was killed: remove each only if it still names the killed one.
+  const json = join(d.stateDir, `${pid}.json`);
+  let rival = false;
+  try {
+    rival = (JSON.parse(readFileSync(json, "utf-8")) as { watcherPid?: number }).watcherPid !== watcher;
+  } catch {
+    // gone or unreadable: remove it
+  }
+  if (!rival) drop(json);
   const lock = join(d.stateDir, `${pid}.lock`);
   let by = 0;
   try {
@@ -54,7 +69,7 @@ function endWatcher(d: WatchToolDeps, pid: number, watcher: number): void {
   } catch {
     // gone, or unreadable: leave it
   }
-  if (by === watcher) rmSync(lock, { force: true });
+  if (by === watcher) drop(lock);
 }
 
 /**
@@ -82,7 +97,8 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
   if (!a.pid) return fail(`pid is required for ${a.action}.`);
   const pid = a.pid;
   const watcher = watcherOf(d.stateDir, pid, d.alive);
-  if (watcher === UNREADABLE) return fail(`Nothing changed: the watch lock for PID ${pid} cannot be read right now. Try again; wb_watch status shows what runs.`);
+  // The automatic attach shows this text as its own "Workbench not watched: ..." footer, so it carries no advice for a wb_watch caller.
+  if (watcher === UNREADABLE) return fail(o.auto ? `the watch lock for PID ${pid} cannot be read right now.` : `Nothing changed: the watch lock for PID ${pid} cannot be read right now. Try again; wb_watch status shows what runs.`);
 
   if (a.action === "stop") {
     if (!watcher) return fail(`No watcher runs for Workbench PID ${pid}.`);

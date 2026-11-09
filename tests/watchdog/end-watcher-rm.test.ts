@@ -1,0 +1,44 @@
+import { describe, it, expect, vi } from "vitest";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Only rmSync of the state and lock files is stubbed, to fail like a scanner holding them (EBUSY). No watcher, PowerShell or Workbench runs.
+const rm = vi.hoisted(() => ({ fail: false }));
+vi.mock("node:fs", async (orig) => {
+  const fs = await orig<typeof import("node:fs")>();
+  return {
+    ...fs,
+    rmSync: (p: Parameters<typeof fs.rmSync>[0], o?: Parameters<typeof fs.rmSync>[1]) => {
+      if (rm.fail && (String(p).endsWith(".json") || String(p).endsWith(".lock"))) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+      return fs.rmSync(p, o);
+    },
+  };
+});
+
+import { watchAction, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
+
+describe("endWatcher's removes (R3)", () => {
+  it("stop still replies that the watcher was stopped when the state file or the lock cannot be removed", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "emcp-ew-"));
+    const d: WatchToolDeps = {
+      stateDir,
+      proc: (pid) => ({ pid, ppid: 1, cmd: pid === 19524 ? "ArmaReforgerWorkbenchSteamDiag.exe -gproj x" : "node.exe dist/watchdog/wb-watch.js --pid 19524", created: 1 }),
+      owned: () => false,
+      alive: (pid) => pid === 600 || pid === 19524,
+      start: vi.fn(() => 700),
+      kill: vi.fn(),
+      base: { host: "127.0.0.1", port: 5775 },
+    };
+    writeFileSync(join(stateDir, "19524.lock"), "600");
+    writeFileSync(join(stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600, owned: false, state: "ok", auto: true }));
+    rm.fail = true;
+    try {
+      expect(await watchAction({ action: "stop", pid: 19524 }, d)).toEqual({ text: "Stopped watcher PID 600 for Workbench PID 19524." });
+    } finally {
+      rm.fail = false;
+    }
+    expect(d.kill).toHaveBeenCalledExactlyOnceWith(600);
+    expect(existsSync(join(stateDir, "19524.lock"))).toBe(true); // left behind; the next claim takes it over
+  });
+});

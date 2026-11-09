@@ -83,7 +83,9 @@ export async function ensureWatched(port: number, host: string, d: AttachDeps): 
     if (isWatcherCmd(h.cmd, pid)) return { ok: true, text: watchedText(d.stateDir, pid, holder) };
     // A lock left by a watcher that died without cleanup, its PID now reused by another process: no watch.
     // Compare-and-delete: another MCP may have replaced the lock while the command line was read.
-    if (watcherOf(d.stateDir, pid, d.alive) !== holder) return no(`the watch lock of Workbench PID ${pid} changed while it was checked; the next call checks again`);
+    const again = watcherOf(d.stateDir, pid, d.alive);
+    if (again === UNREADABLE) return no(`the watch lock for PID ${pid} cannot be read right now`);
+    if (again !== holder) return no(`the watch lock of Workbench PID ${pid} changed while it was checked; the next call checks again`);
     await rm(join(d.stateDir, `${pid}.lock`), { force: true });
   }
   if (autoBlocked(d.stateDir, pid, proc.created)) return no(`watch stopped by the user for Workbench PID ${pid} (wb_watch start pid=${pid} attaches one)`, true);

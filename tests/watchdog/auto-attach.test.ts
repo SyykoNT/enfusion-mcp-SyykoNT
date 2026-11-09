@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -117,6 +117,18 @@ describe("ensureWatched", () => {
     expect(d.start).not.toHaveBeenCalled();
   });
 
+  it("step 3: the lock becomes unreadable between the holder read and the delete: it says so, deletes nothing and starts nothing (R4)", async () => {
+    const d = deps();
+    const lock = join(d.stateDir, "19524.lock");
+    writeFileSync(lock, "4242");
+    const proc = d.proc;
+    // A directory in place of the lock stands in for EBUSY/EPERM from a scanner while the command line was read.
+    d.proc = async (pid) => (pid === 4242 && (rmSync(lock), mkdirSync(lock)), proc(pid));
+    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: the watch lock for PID 19524 cannot be read right now." });
+    expect(existsSync(lock)).toBe(true);
+    expect(d.start).not.toHaveBeenCalled();
+  });
+
   it("step 5: another MCP's watcher took the PID first: no 'Attached', the lock holder is named", async () => {
     const d = deps();
     d.start = vi.fn(() => (writeFileSync(join(d.stateDir, "19524.lock"), "800"), 700));
@@ -186,6 +198,17 @@ describe("an unreadable watch lock (B-099 item 1)", () => {
   it("the check names it, replies not ok and starts nothing", async () => {
     const d = deps();
     mkdirSync(join(d.stateDir, "19524.lock"));
+    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: the watch lock for PID 19524 cannot be read right now." });
+    expect(d.start).not.toHaveBeenCalled();
+  });
+
+  it("a lock that turns unreadable just before the start reads as a timeout footer, without advice for a wb_watch caller (R4)", async () => {
+    const d = deps();
+    const lock = join(d.stateDir, "19524.lock");
+    writeFileSync(lock, "4242");
+    let swapped = false;
+    // The stale holder (dead) is read free by the first check; the lock then becomes unreadable before the start reads it again.
+    d.alive = (pid) => (pid === 4242 && !swapped && ((swapped = true), rmSync(lock), mkdirSync(lock)), false);
     expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: the watch lock for PID 19524 cannot be read right now." });
     expect(d.start).not.toHaveBeenCalled();
   });

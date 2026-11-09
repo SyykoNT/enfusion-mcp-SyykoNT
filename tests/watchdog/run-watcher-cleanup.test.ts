@@ -26,7 +26,7 @@ describe("runWatcher's finally (B-099 item 2)", () => {
     try {
       const code = await runWatcher(
         { pid: 19524, owned: false, stateDir, dismiss: "watched", autoRecover: false, recoverAfterMin: 5, host: "127.0.0.1", port: 5775 },
-        { probe: () => ({ stop: vi.fn() }), alive: () => alive, wait: async () => { alive = false; } }
+        { probe: () => ({ stop: vi.fn() }), alive: () => alive, wait: () => new Promise((r) => setImmediate(() => { alive = false; r(undefined); })) }
       );
       expect(code).toBe(0);
     } finally {
