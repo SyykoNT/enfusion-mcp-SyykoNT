@@ -24,7 +24,8 @@ type Result = { content: { text: string }[]; isError?: boolean };
 const root = mkdtempSync(join(tmpdir(), "emcp-sc-"));
 const config = { ...loadConfig(), projectPath: join(root, "projects"), addonsDir: undefined, protectedAddons: [] };
 let create!: (args: Record<string, unknown>) => Promise<Result>;
-registerScenarioCreate({ registerTool: (_n: string, _d: unknown, h: typeof create) => { create = h; } } as unknown as McpServer, config);
+let schema!: Record<string, { description?: string }>;
+registerScenarioCreate({ registerTool: (_n: string, d: { inputSchema: typeof schema }, h: typeof create) => { create = h; schema = d.inputSchema; } } as unknown as McpServer, config);
 
 function addon(name: string): string {
   const dir = join(root, name);
@@ -35,6 +36,15 @@ function addon(name: string): string {
 const args = (projectPath: string) => ({
   scenarioName: "ScnT", worldName: "Arland", projectPath,
   bases: [{ name: "BaseAlpha", position: "1000 0 2000", faction: "US", type: "MOB" }],
+});
+
+describe("scenario_create_conflict input docs", () => {
+  it("describes suppliesIncome as HQ income and names m_iRegularSuppliesIncomeBase for other bases (B-107)", () => {
+    const d = schema.suppliesIncome.description!;
+    expect(d).toContain("HQs");
+    expect(d).toContain("m_iRegularSuppliesIncomeBase");
+    expect(d).not.toContain("contested bases");
+  });
 });
 
 describe("scenario_create_conflict world files", () => {

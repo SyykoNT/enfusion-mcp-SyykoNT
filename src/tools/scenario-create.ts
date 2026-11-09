@@ -171,7 +171,10 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
         suppliesIncome: z
           .number()
           .optional()
-          .describe("Regular per-tick supply income for contested bases (default 50)."),
+          .describe(
+            "Supplies replenished periodically in HQs (m_iRegularSuppliesIncome, default 50; the game's own default is 40). " +
+            "Other bases use m_iRegularSuppliesIncomeBase (game default 4), which this tool does not write."
+          ),
         seedingEnabled: z
           .boolean()
           .optional()

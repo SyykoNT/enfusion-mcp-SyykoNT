@@ -37,9 +37,11 @@ const PREFAB_PATROL_SEEDING = "{0E66F798F84EEB58}Prefabs/Systems/AmbientPatrol/I
 
 // NOTE (D-044): this file targets vanilla 1.8.0.13 (game mode GameMode_Campaign.et, faction
 // manager CampaignFactionManager.et) and diverges from BK's copy on purpose.
-// The only keywords written that no 1.9.0.37 script declares are the two seeding ones
-// (m_bServerSeedingEnabled, m_iServerSeedingThreshold): Workbench logs "Unknown keyword" for them
-// without a mod that adds them. Seeding (seedingEnabled) still needs that mod.
+// The only keywords written that no 1.9.0.37 script declares are the five seeding ones, written
+// only when seedingEnabled is on: m_bServerSeedingEnabled, m_iServerSeedingThreshold,
+// m_bAutoSizeToHQ, m_iDistanceToHQ (IRON_SeedingRestrictionZoneEntity) and m_bRespawnOnlyDuringSeeding
+// (SCR_Iron_AmbientPatrolSpawnPointComponent_Seeding). They sit on mod classes 1.9.0.37 does not have
+// either, so they are kept and need the seeding mod; without it Workbench logs "Unknown keyword".
 
 // Component GUIDs inside ConflictMilitaryBase (from mod analysis)
 const CID_SEIZING   = "{5C66967235FBEEA3}";

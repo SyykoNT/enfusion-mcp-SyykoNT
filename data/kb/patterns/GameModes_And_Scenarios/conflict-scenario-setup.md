@@ -135,7 +135,6 @@ In Workbench: File → New World → **Sub-scene (of current world)** → save t
 | Faction manager | `{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et` | default.layer | Manages US/USSR/FIA |
 | Military bases | `{1391CE8C0E255636}Prefabs/Systems/MilitaryBase/ConflictMilitaryBase.et` | Bases.layer | All in one `$grp` block |
 | Relay radios | `{522DCD528AE27052}Prefabs/Systems/MilitaryBase/ConflictRelayRadio.et` | Bases.layer | Optional — extend coverage |
-| Battle prep zone | `{D71F66A96E03FE7C}Prefabs/GameLogic/SCR_BattlePrepZone.et` | default.layer | Optional safe zone at match start |
 | Supply depot | `{27941CDF3E7E1A5F}Prefabs/Systems/SupplyDepot/CampaignRemnantsSupplyDepot.et` | Supplies.layer | Drop point for player-built bases |
 
 ---
@@ -175,9 +174,6 @@ Key `SCR_CampaignMilitaryBaseComponent` properties:
 `SCR_CoverageRadioComponent` (required on all bases):
 - `Transceivers { RelayTransceiver "{5C669673E8C94083}" { } }` — always present
 - `m_bIsSource 1` — on MOBs only
-- `m_bIsOnIsland 1` — on island MOBs
-- `m_bIsReceivingFromIsland 1` — on mainland bases near island MOB coverage
-- `m_aAssignedBaseNames` — explicit radio assignment override
 
 ---
 
@@ -230,7 +226,7 @@ Every Conflict world uses a SubScene `.ent` stub + a `_Layers/` folder. Standard
 | `SeedingPvpZone.layer` | Seeding patrol AI + `SCR_CampaignSpawnPointGroup` with `m_bOnlyShowDuringSeeding 1` + `SCR_CaptureAndHoldArea` | Active only during low-pop seeding; keeps server alive |
 | `MOBs.layer` | MOB base entities split from `Bases.layer` | Some mods (NorthEver) separate MOBs for clarity |
 | `SF.layer` / `SF_Missions.layer` / `SF_Patrols.layer` | Scenario Framework entities embedded in a Conflict world | ConflictEscalation AAD variant adds SF objectives on top of Conflict |
-| `AmbientAIZone.layer` / `AmbientAIZones.layer` | AI zone entities for ambient battle simulation | Requires `m_bEnableAmbientAIBattles 1` on game mode |
+| `AmbientAIZone.layer` / `AmbientAIZones.layer` | AI zone entities for ambient battle simulation | Mod only: a game mode mod adds the switch these zones need; 1.9.0.37 declares none |
 | `RelayTowers.layer` | Pre-placed fortification compositions with `SCR_CampaignBuildingCompositionComponent` | Relay tower positions as spawned compositions |
 | `zImport.layer` | Legacy scratch/import layer | Always empty or near-empty; can ignore |
 
@@ -288,17 +284,12 @@ MusicManager : "{359452CCDBDD03F5}Prefabs/Sounds/Music/MusicManager_Campaign.et"
 SCR_LoadoutManager : "{58FBD035E53D95C1}Prefabs/MP/Campaign/CampaignLoadoutManager.et" { coords ... }
 ```
 
-`SCR_GameModeCampaign` key properties (the first five are declared by 1.9.0.37 in `SCR_GameModeCampaign.c` and `SCR_BaseGameMode.c`; the rest are declared by no 1.9.0.37 script, so they only act with a mod that adds them):
+`SCR_GameModeCampaign` key properties (declared by 1.9.0.37 in `SCR_GameModeCampaign.c` and `SCR_BaseGameMode.c`):
 - `m_iControlPointsThreshold` — bases enemy must hold to start victory timer (default 2-5)
 - `m_fVictoryTimer` — seconds after threshold reached before win (default 300)
 - `m_fAutoReloadTime` — mission restart delay after end (default 30)
-- `m_iRegularSuppliesIncome`: passive supply income per interval (default 40)
+- `m_iRegularSuppliesIncome`: supplies replenished periodically in HQs (default 40; `SCR_GameModeCampaign.c:29-30`, desc "How many supplies are periodically replenished in HQs."). Non-HQ bases use `m_iRegularSuppliesIncomeBase` (default 4), applied only while `m_bSuppliesAutoRegenerationEnabled` is on (default off)
 - `m_bEstablishingBasesEnabled 0` — disable for simple scenarios
-- `m_bRandomizeBases 1` + `m_iRandomizeTreshold` — randomize which bases are active
-- `m_bShowBattlePrepTimer 1` — show prep timer at start
-- `m_bScaleRespawnTimer 1` — scale respawn time by player count
-- `m_bServerSeedingEnabled 1` + `m_iServerSeedingThreshold` — seeding mode (ConflictEscalation)
-- `m_bEnableAmbientAIBattles 1` — ambient AI zones active (ConflictEscalation)
 
 ---
 
@@ -338,15 +329,6 @@ Harbors use a **different prefab family** from regular bases:
 ```
 $grp GenericEntity : "{0226331FB6A8249A}Prefabs/Systems/MilitaryBase/ConflictSourceBase_T3Harbor.et" {
  HarborName {
-  components {
-   SCR_CampaignSeizingComponent "{621EB97024DABABE}" {
-    m_fSupplyMultiplier 0
-   }
-   SCR_CampaignSourceBaseComponent "{621EB97024DABD3C}" {
-    m_iScorePerTick 0
-    m_bExcludeFromBaseCaptureScore 1
-   }
-  }
   coords 5803 2 3533
   angles 0 -138 0
  }

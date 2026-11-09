@@ -20,7 +20,7 @@ HQ / MOB
     → every 5s: +40 supplies (m_iRegularSuppliesIncome)
     → each connected relay radio: +4 extra/tick
 
-Regular contested base
+Regular contested base (only while m_bSuppliesAutoRegenerationEnabled is on)
     → every 5s: +4 supplies (m_iRegularSuppliesIncomeBase)
     → each connected relay radio: +4 extra/tick
 
@@ -39,8 +39,8 @@ Auto-replenish ceiling: 1000 supplies (m_iSuppliesReplenishThreshold)
 ### Income
 | Attribute | Default | Description |
 |---|---|---|
-| `m_iRegularSuppliesIncome` | `40` | HQ/MOB income per tick |
-| `m_iRegularSuppliesIncomeBase` | `4` | Regular base income per tick |
+| `m_iRegularSuppliesIncome` | `40` | Supplies replenished periodically in HQs |
+| `m_iRegularSuppliesIncomeBase` | `4` | Supplies replenished periodically in non-HQ bases; applied only while `m_bSuppliesAutoRegenerationEnabled` is on (default off), otherwise a non-HQ base gets 0 |
 | `m_iRegularSuppliesIncomeExtra` | `4` | Bonus per connected relay radio per tick |
 | `m_iRegularSuppliesIncomeSource` | `2500` | Source base (harbor/airfield) income per distribution |
 | `m_iSuppliesArrivalInterval` | `5` | Seconds between base income ticks |

@@ -489,6 +489,14 @@ describe("generateConflictScenario", () => {
       expect(seedingLayer).toBeNull();
     });
 
+    it("writes none of the five mod-only seeding keywords or classes unless seedingEnabled (B-107)", () => {
+      const out = generateConflictScenario(MINIMAL_OPTS);
+      const all = [out.defaultLayer, out.basesLayer, out.seedingLayer ?? ""].join("\n");
+      for (const k of ["m_bServerSeedingEnabled", "m_iServerSeedingThreshold", "m_bAutoSizeToHQ", "m_iDistanceToHQ", "m_bRespawnOnlyDuringSeeding", "IRON_", "SCR_Iron_"]) {
+        expect(all).not.toContain(k);
+      }
+    });
+
     it("adds gamemode seeding attributes with default threshold 12", () => {
       const { defaultLayer } = generateConflictScenario({ ...MINIMAL_OPTS, seedingEnabled: true });
       expect(defaultLayer).toContain("m_bServerSeedingEnabled 1");

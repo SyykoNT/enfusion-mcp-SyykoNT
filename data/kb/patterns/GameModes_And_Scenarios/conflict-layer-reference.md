@@ -49,7 +49,7 @@ Quick-reference for layer file names, entity types, and prefab GUIDs used in pro
 
 | Layer file | Content | Notes |
 |---|---|---|
-| `MOBs.layer` / `StartingPositions.layer` | MOB base entities (split from `Bases.layer`) | Includes `IRON_SeedingRestrictionZoneEntity`, `MOBSpawnProtectionArea.et` |
+| `MOBs.layer` / `StartingPositions.layer` | MOB base entities (split from `Bases.layer`) | Includes `IRON_SeedingRestrictionZoneEntity` (seeding mod only) |
 | `MOB1_Veh_Spawns.layer` / `MOB2_Veh_Spawns.layer` | Vehicle spawns linked to specific MOB | Placed close to MOB entity |
 
 ### Seeding & Low-Pop Support
@@ -82,7 +82,7 @@ Quick-reference for layer file names, entity types, and prefab GUIDs used in pro
 
 | Layer file | Content | Notes |
 |---|---|---|
-| `AmbientAIZone.layer` / `AmbientAIZones.layer` | AI zone entities for ambient battle simulation | Requires `m_bEnableAmbientAIBattles 1` on game mode |
+| `AmbientAIZone.layer` / `AmbientAIZones.layer` | AI zone entities for ambient battle simulation | Mod only: a game mode mod adds the switch these zones need; 1.9.0.37 declares none |
 | `RelayTowers.layer` | `ConflictRelayRadio.et` placements between distant bases | Extend radio coverage network |
 | `WorldSetup_Logic.layer` | `SCR_AIWorld`, perception, camera, radio, fog, post-processing | Only needed if not provided by parent SubScene world |
 | `zImport.layer` | Legacy scratch layer | Always empty; ignore |
@@ -101,8 +101,6 @@ Quick-reference for layer file names, entity types, and prefab GUIDs used in pro
 | `{1739B43A3702BB84}` | `ConflictSourceBase_Airfield.et` | Airfield supply source |
 | `{3B230AAC5252108F}` | `Prefabs/MP/Modes/Conflict/GameMode_Campaign.et` | Conflict game mode (1.9.0.37 vanilla) |
 | `{F1AC26310BAE3788}` | `Prefabs/MP/Campaign/CampaignFactionManager.et` | Faction manager (1.9.0.37 vanilla) |
-| `{35C70C8528D145B1}` | `MOBSpawnProtectionArea.et` | MOB player spawn safety zone |
-| `{D71F66A96E03FE7C}` | `SCR_BattlePrepZone.et` | Battle prep safe zone at match start |
 | `{27941CDF3E7E1A5F}` | `CampaignRemnantsSupplyDepot.et` | Supply drop point for player-built bases |
 
 ### Ambient Patrols
@@ -244,7 +242,7 @@ The base's range is the `"Transmitting Range"` of its `RelayTransceiver` (inside
 ### Supply scarcity design
 - MOBs start with `500` supplies (not `3000`) — forces supply management from day 1
 - Control points: `3000` max — high capture reward
-- Regular bases: often no `SCR_CampaignSuppliesComponent` (uses game mode's `m_iRegularSuppliesIncome`)
+- Regular bases: often no `SCR_CampaignSuppliesComponent` (non-HQ bases take the game mode's `m_iRegularSuppliesIncomeBase`, only while `m_bSuppliesAutoRegenerationEnabled` is on; `m_iRegularSuppliesIncome` is HQ income)
 
 ### Seeding restriction zones
 `IRON_SeedingRestrictionZoneEntity : "{801DADF0D6C316B9}PrefabsEditable/RestrictionZone/E_SeedingRestrictionZoneBase.et"` — restricts players to MOB area during seeding. Add as child entity to MOB with `m_bAutoSizeToHQ 1`.
