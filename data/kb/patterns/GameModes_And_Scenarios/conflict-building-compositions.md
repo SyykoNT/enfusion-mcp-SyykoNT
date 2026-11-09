@@ -216,7 +216,7 @@ provider.ClearAccumulatedBudgetChanges();
 
 ## Scenario Design Notes
 
-- **Relay radios extend HQ radio coverage**: a non-HQ base's spawn point needs two-way HQ radio coverage, and so does supply income for every base other than a source base, so a faction that builds relay chains extends both. Relays are not counted for the radio extra (`m_iRegularSuppliesIncomeExtra`, script default 4, per friendly `BASE`-type base in range that receives HQ radio traffic, up to 5, for non-HQ bases with an income loop, not relays, auto regeneration on). Design maps with radio range gaps to incentivize building.
+- **Relay radios extend HQ radio coverage**: a non-HQ base's spawn point needs two-way HQ radio coverage, and so does supply income for every base other than a source base, so a faction that builds relay chains extends both. Relays are not counted for the radio extra (`m_iRegularSuppliesIncomeExtra`, script default 4, 1 in `GameMode_Campaign.et`, per friendly `BASE`-type base in range that receives HQ radio traffic, up to 5, for non-HQ bases with an income loop, not relays, auto regeneration on). Design maps with radio range gaps to incentivize building.
 - **Fortification slots** define what can be built at a base. Production mods place `SlotFlat*` and `SlotRoad*` entities inside `BaseLogic.layer` compositions.
 - **Master provider at MOB** — always set the MOB as `m_bIsMasterProvider`. All other service providers at the same base should use `m_bUseMasterProvider`.
 - **Building radius** — default 50m. Increase for large airfield/harbour bases.

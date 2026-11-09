@@ -12,6 +12,8 @@ The modern supply system uses `SCR_ResourceComponent` internally. The older `SCR
 
 ## Supply Income Flow
 
+Numbers in this flow are script defaults; the vanilla game mode prefabs override several (see Gamemode Supply Attributes below).
+
 ```
 Every base: the check before each tick
     → no income unless the base has an owner and a spawn point, is not being captured by another faction, its respawn delay after capture has passed, and (except a source base) it has two-way HQ radio coverage; INDFOR-owned bases always pass the coverage check
@@ -27,7 +29,7 @@ Source base (SCR_CampaignSourceBaseComponent, m_eType SOURCE_BASE: harbors, airf
     → these income and tick rules hold even when the source base is also a supply hub or an HQ (its two getters read neither flag); the HQ flag still removes the radio extra and the replenish ceiling
 
 HQ (m_bIsHQ, not a source base)
-    → income: m_iRegularSuppliesIncome (40); the base's own m_iRegularSuppliesIncomeBase, if not -1, replaces it only while auto regeneration is off
+    → income: m_iRegularSuppliesIncome (script default 40, 10 in GameMode_Campaign.et); the base's own m_iRegularSuppliesIncomeBase, if not -1, replaces it only while auto regeneration is off
     → tick: the game mode's m_iSuppliesArrivalInterval (5s) while auto regeneration is on, unless the HQ is also a supply hub; otherwise the base's own m_iSuppliesArrivalInterval if not -1, else m_iSuppliesArrivalIntervalSource (300s)
     → vanilla ConflictBase_MOB.et sets m_iRegularSuppliesIncomeBase 250 and m_iSuppliesArrivalInterval 300, so a vanilla MOB that is the HQ gets 250 every 300s while auto regeneration is off
     → no radio extra (the game skips it for HQs); no replenish ceiling, only its storage max
@@ -38,8 +40,8 @@ Supply hub (m_bIsSupplyHub, not an HQ or source base)
     → radio extra like any non-HQ base, only while m_bSuppliesAutoRegenerationEnabled is on
 
 Regular base (BASE type, not an HQ or supply hub): income only while m_bSuppliesAutoRegenerationEnabled is on, else 0
-    → every 5s (game mode m_iSuppliesArrivalInterval): +4 supplies (game mode m_iRegularSuppliesIncomeBase; the per-base value is not read)
-    → radio extra: +4/tick (m_iRegularSuppliesIncomeExtra) for each friendly BASE-type base in this base's radio range that receives HQ radio traffic, up to 5
+    → every 5s (game mode m_iSuppliesArrivalInterval): +4 supplies (game mode m_iRegularSuppliesIncomeBase, script default 4, 0 in GameMode_Campaign.et; the per-base value is not read)
+    → radio extra: +4/tick (m_iRegularSuppliesIncomeExtra, script default 4, 1 in GameMode_Campaign.et) for each friendly BASE-type base in this base's radio range that receives HQ radio traffic, up to 5
 
 Quick replenish (below m_iQuickSuppliesReplenishThreshold, 200; every base type)
     → the income (not the radio extra) × m_fQuickSuppliesReplenishMultiplier (2.0), capped at what brings the base to 200, never below the normal income
@@ -52,7 +54,7 @@ Replenish ceiling: m_iSuppliesReplenishThreshold (1000)
 
 ## Gamemode Supply Attributes (`SCR_GameModeCampaign`)
 
-Every default in this file is the script attribute default (`SCR_GameModeCampaign.c:17-117`). The vanilla game mode prefabs override several: `GameMode_Campaign.et:356-366` sets `m_iSuppliesReplenishThreshold` 6000, `m_iQuickSuppliesReplenishThreshold` 100, `m_iRegularSuppliesIncome` 10, `m_iRegularSuppliesIncomeBase` 0, `m_iRegularSuppliesIncomeExtra` 1, `m_iHQStartingSupplies` 1000, `m_iMinStartingSupplies` 75, `m_iMaxStartingSupplies` 250, `m_bSuppliesAutoRegenerationEnabled` 1 and `m_iSuppliesArrivalIntervalSource` 5; `GameMode_CampaignHQC.et:110-111` sets auto regeneration 0 and the source interval 300. When the mission has an `SCR_MissionHeaderCampaign`, its own `m_bSuppliesAutoRegenerationEnabled` (default 1) replaces the game mode value at start (`SCR_GameModeCampaign.c:1920`); the vanilla HQC mission headers set 0. A world can override any of these again on its game mode entity.
+Every default in this file is the script attribute default (`SCR_GameModeCampaign.c:17-117`). The vanilla game mode prefabs override several: `GameMode_Campaign.et:356-366` sets `m_iSuppliesReplenishThreshold` 6000, `m_iQuickSuppliesReplenishThreshold` 100, `m_iRegularSuppliesIncome` 10, `m_iRegularSuppliesIncomeBase` 0, `m_iRegularSuppliesIncomeExtra` 1, `m_iHQStartingSupplies` 1000, `m_iMinStartingSupplies` 75, `m_iMaxStartingSupplies` 250, `m_bSuppliesAutoRegenerationEnabled` 1 and `m_iSuppliesArrivalIntervalSource` 5; `GameMode_CampaignHQC.et:110-111` sets auto regeneration 0 and the source interval 300. When the mission has an `SCR_MissionHeaderCampaign`, its own `m_bSuppliesAutoRegenerationEnabled` (default 1) replaces the game mode value at start (`SCR_GameModeCampaign.c:1920`); the vanilla HQC mission headers set 0. A world can override these again on its game mode entity, except auto regeneration when the mission has a campaign header: the game mode constructor applies the header after the entity values (`SCR_BaseGameMode.c:2335-2337` calls `ParseHeaderFile`), so the header value wins.
 
 ### Income
 | Attribute | Default | Description |
@@ -197,9 +199,9 @@ base.GetOnReservedSupplyAmountChanged();
 ### Querying gamemode supply settings
 ```c
 SCR_GameModeCampaign gm = SCR_GameModeCampaign.Cast(GetGame().GetGameMode());
-int hqIncome  = gm.GetRegularSuppliesIncome();        // 40 default
-int baseIncome = gm.GetRegularSuppliesIncomeBase();    // 4 default
-int radioExtra = gm.GetRegularSuppliesIncomeExtra();   // 4 default, per friendly BASE-type base in range that receives HQ radio traffic, up to 5; non-HQ bases with an income loop (not relays), auto regeneration only
+int hqIncome  = gm.GetRegularSuppliesIncome();        // script default 40, 10 in GameMode_Campaign.et
+int baseIncome = gm.GetRegularSuppliesIncomeBase();    // script default 4, 0 in GameMode_Campaign.et
+int radioExtra = gm.GetRegularSuppliesIncomeExtra();   // script default 4, 1 in GameMode_Campaign.et, per friendly BASE-type base in range that receives HQ radio traffic, up to 5; non-HQ bases with an income loop (not relays), auto regeneration only
 int sourceIncome = gm.GetRegularSuppliesIncomeSource(); // 2500 default
 int replenishCap = gm.GetSuppliesReplenishThreshold();  // 1000 default
 ```
@@ -228,18 +230,20 @@ modded class SCR_GameModeCampaign
 
 ## Scenario Design Guidelines
 
+Numbers are script defaults unless a prefab is named; `GameMode_Campaign.et:358-365` sets HQ income 10, regular base income 0, radio extra 1, HQ start 1000, other bases' start 75 to 250 and auto regeneration on.
+
 | Base type | Starting supplies | Max cap | Income/tick | Notes |
 |---|---|---|---|---|
-| MOB / HQ | 600 (gamemode default) | storage in range (unverified) | 40 with auto regeneration on; with it off, 250 per 300s from the vanilla MOB prefab | Set the start with `m_iHQStartingSupplies` or the header's `m_iStartingHQSupplies` (`m_iSupplies` is not read) |
-| Regular base | 100–500 (randomized) | storage in range (unverified) | 0 (4 only while auto regeneration is on) | |
-| Major base | 100–500 | storage in range (unverified) | 40 as a supply hub, else as a regular base | |
+| MOB / HQ | 600 (gamemode default) | storage in range (unverified) | `m_iRegularSuppliesIncome` (40, 10 in `GameMode_Campaign.et`) with auto regeneration on; with it off, 250 per 300s from the vanilla MOB prefab | Set the start with `m_iHQStartingSupplies` or the header's `m_iStartingHQSupplies` (`m_iSupplies` is not read) |
+| Regular base | 100–500 (randomized) | storage in range (unverified) | `GameMode_Campaign.et`: 0 plus the radio extra (auto regeneration on). Script defaults: 0 (auto regeneration off; 4 when on) | |
+| Major base | 100–500 | storage in range (unverified) | HQ income (`m_iRegularSuppliesIncome`) as a supply hub, else as a regular base | |
 | Harbor (T3) | n/a | storage in range (unverified) | 1000 per 600s (vanilla T3 prefab; game mode fallback 2500 per 300s) | Source base: income goes into the harbor itself, up to the 1000 ceiling |
-| Control point | 100–500 | storage in range (unverified) | 0 (4 only while auto regeneration is on) | Lightweight, no supply hub |
+| Control point | 100–500 | storage in range (unverified) | as a regular base | Lightweight, no supply hub |
 
 Max cap: `GetSuppliesMax()` returns the summed max of the stored supply containers that the base's `SCR_ResourceConsumer` reaches (`SCR_CampaignMilitaryBaseComponent.c:2029-2045`; `m_fResourceRange` 150 in `ConflictBase_Base.et:60`, 100 in `ConflictMilitaryBase.et:61`). The base prefabs hold no supply container of their own, so the cap depends on what is built or placed in range; this KB has no verified number per base type. The obsolete `m_iSuppliesMax` (500 in `ConflictBase_Base.et:24`, 3000 in `ConflictBase_MOB.et:9`, 5000 in `ConflictSourceBase.et:6`) is not read.
 
 **Balance tips from production mods:**
 - Start MOBs low (production mods use 500) through `m_iHQStartingSupplies` or the header's `m_iStartingHQSupplies`, not `m_iSupplies`, to force players to manage supply chains from day 1
 - Quick replenish (below 200 supplies) multiplies a base's income, but only for a base that passes the check before each tick
-- Radio coverage over friendly bases adds +4/tick per friendly BASE-type base in range that receives HQ radio traffic (up to 5; relays and source bases are not counted) to non-HQ bases with an income loop (not relays), only with auto regeneration on
+- Radio coverage over friendly bases adds +4/tick by script default (1 in `GameMode_Campaign.et`) per friendly BASE-type base in range that receives HQ radio traffic (up to 5; relays and source bases are not counted) to non-HQ bases with an income loop (not relays), only with auto regeneration on
 - Source bases make harbors strategically important — place them at map extremes

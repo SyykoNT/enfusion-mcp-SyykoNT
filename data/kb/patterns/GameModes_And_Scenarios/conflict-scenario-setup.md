@@ -288,7 +288,7 @@ SCR_LoadoutManager : "{58FBD035E53D95C1}Prefabs/MP/Campaign/CampaignLoadoutManag
 - `m_iControlPointsThreshold` — bases enemy must hold to start victory timer (default 2-5)
 - `m_fVictoryTimer` — seconds after threshold reached before win (default 300)
 - `m_fAutoReloadTime` — mission restart delay after end (default 30)
-- `m_iRegularSuppliesIncome`: supplies replenished periodically in HQs (default 40; `SCR_GameModeCampaign.c:29-30`, desc "How many supplies are periodically replenished in HQs."); supply hubs that are not source bases take it too (`SCR_CampaignMilitaryBaseComponent.c:829`). Regular bases (not HQs, supply hubs or source bases) use `m_iRegularSuppliesIncomeBase` (default 4), applied only while `m_bSuppliesAutoRegenerationEnabled` is on (script default off; `GameMode_Campaign.et` and a campaign mission header left at its default turn it on, see `conflict-supply-system.md`)
+- `m_iRegularSuppliesIncome`: supplies replenished periodically in HQs (script default 40, 10 in `GameMode_Campaign.et:358`; `SCR_GameModeCampaign.c:29-30`, desc "How many supplies are periodically replenished in HQs."); supply hubs that are not source bases take it too (`SCR_CampaignMilitaryBaseComponent.c:829`). Regular bases (not HQs, supply hubs or source bases) use `m_iRegularSuppliesIncomeBase` (script default 4, 0 in `GameMode_Campaign.et:359`), applied only while `m_bSuppliesAutoRegenerationEnabled` is on (script default off; `GameMode_Campaign.et` and a campaign mission header left at its default turn it on, see `conflict-supply-system.md`)
 - `m_bEstablishingBasesEnabled 0` — disable for simple scenarios
 
 ---
