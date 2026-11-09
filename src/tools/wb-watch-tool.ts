@@ -33,6 +33,15 @@ export interface WatchToolDeps {
   settleMs?: number;
 }
 
+export const WB_EXE = /ArmaReforgerWorkbenchSteamDiag\.exe/i;
+
+/** A command line of the watcher of Workbench `pid`: wb-watch with `--pid <pid>` as a whole argument. */
+export const isWatcherCmd = (cmd: string | undefined, pid: number) => !!cmd?.includes("wb-watch") && new RegExp(`--pid\\s+${pid}(\\s|$)`).test(cmd);
+
+/** Before a kill: the lock holder is this PID's watcher by its command line, and the state file names it (a reused PID does neither). */
+const isOurWatcher = (d: WatchToolDeps, pid: number, watcher: number) =>
+  readStates(d.stateDir).states.some((s) => s.pid === pid && s.watcherPid === watcher) && isWatcherCmd(d.proc(watcher)?.cmd, pid);
+
 /** Kill the watcher (its tree: the watcher's finally never runs under taskkill /F) and remove its files. */
 function endWatcher(d: WatchToolDeps, pid: number, watcher: number): void {
   d.kill(watcher);
@@ -47,7 +56,13 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
   const fail = (text: string) => ({ text, isError: true });
   if (a.action === "status") {
     const { states, errors } = readStates(d.stateDir);
-    if (!states.length && !errors.length) return { text: "No Workbench is watched. wb_launch watches what it starts; wb_watch start pid=<n> attaches a watcher to another one." };
+    if (!states.length && !errors.length) {
+      return {
+        text:
+          "No Workbench is watched. wb_launch watches what it starts, and the next live call attaches a watcher to the Workbench on the NET API port " +
+          "(unless ENFUSION_WB_AUTOWATCH is off); wb_watch start pid=<n> attaches one now.",
+      };
+    }
     const now = Date.now();
     const reports = states.map((s) => {
       const gone = s.state !== "exited" && s.state !== "crashed" && !d.alive(s.watcherPid);
@@ -61,7 +76,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
 
   if (a.action === "stop") {
     if (!watcher) return fail(`No watcher runs for Workbench PID ${pid}.`);
-    if (!d.proc(watcher)?.cmd.includes("wb-watch")) return fail(`PID ${watcher} holds the watch lock for ${pid} but is not a watcher. Not stopped.`);
+    if (!isOurWatcher(d, pid, watcher)) return fail(`PID ${watcher} holds the watch lock for ${pid} but is not its watcher. Not stopped.`);
     // Written before the kill: the stopped Workbench run is not watched again automatically (a new run has another start time).
     const created = d.proc(pid)?.created;
     if (created) writeFileSync(noautoFile(d.stateDir, pid), String(created));
@@ -70,9 +85,9 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
   }
 
   const proc = o.proc ?? d.proc(pid);
-  if (!proc || !/ArmaReforgerWorkbenchSteamDiag\.exe/i.test(proc.cmd)) return fail(`PID ${pid} is not a Workbench process.`);
+  if (!proc || !WB_EXE.test(proc.cmd)) return fail(`PID ${pid} is not a Workbench process.`);
   // An explicit start replaces an automatic watcher (only one that really is a watcher); any other watcher is kept.
-  const replace = !!watcher && !o.auto && readStates(d.stateDir).states.some((s) => s.pid === pid && s.auto) && !!d.proc(watcher)?.cmd.includes("wb-watch");
+  const replace = !!watcher && !o.auto && readStates(d.stateDir).states.some((s) => s.pid === pid && s.auto) && isOurWatcher(d, pid, watcher);
   if (watcher && !replace) return fail(`already watched by watcher PID ${watcher}`);
   if (replace) endWatcher(d, pid, watcher!);
   if (!o.auto) rmSync(noautoFile(d.stateDir, pid), { force: true });
@@ -96,7 +111,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
   if (holder === w) return { text: `Replaced the automatic watcher PID ${watcher} with watcher PID ${w}. ${text}` };
   return fail(
     holder
-      ? `Stopped the automatic watcher PID ${watcher}, but another MCP's automatic watcher (PID ${holder}) took Workbench PID ${pid} first; the requested watcher did not start. Run wb_watch start again to replace it.`
+      ? `Stopped the automatic watcher PID ${watcher}, but another watcher (PID ${holder}) took Workbench PID ${pid} first; check wb_watch status.`
       : `Stopped the automatic watcher PID ${watcher}, but the new watcher PID ${w} did not take Workbench PID ${pid} within ${(d.settleMs ?? 2000) / 1000} s. Check wb_watch status.`
   );
 }
@@ -154,8 +169,10 @@ export function registerWbWatch(server: McpServer, config: Config): void {
       description:
         "Watch a Workbench between calls: notices a blocking dialog (such as the diag build's \"Resources are leaking!\" assert), " +
         "a hang, a script reload that never finishes, or a crash, names the likely trigger, and reports it here, in every live tool's footer " +
-        "and in wb_diagnose. wb_launch already watches each Workbench it starts. status lists watched Workbench copies; start attaches a " +
-        "watcher to another Workbench (it never closes, kills or focuses a Workbench this MCP did not start); stop ends one. " +
+        "and in wb_diagnose. wb_launch watches each Workbench it starts, and any live call attaches a watcher by itself to the Workbench " +
+        "on the NET API port, whoever started it (ENFUSION_WB_AUTOWATCH=off turns that off). A watcher never closes, kills or focuses a Workbench " +
+        "this MCP did not start. status lists watched Workbench copies; start attaches a watcher (it replaces an automatic one); " +
+        "stop ends one, and that Workbench run is not watched again automatically. " +
         "Automatic clicks: Ignore on the \"Resources are leaking!\" assert, and answers to \"Script Authorization Required\" by the setting ENFUSION_SCRIPT_AUTH " +
         "(rules, the default: Yes to a script call from an addon the Workbench loaded, No to a script that is not in one, a program run or an unreadable dialog left open; " +
         "all: Yes to All on every request; off: report only), in any Workbench it watches, scoped per watch by authorizeScripts; every answer is reported and logged. " +

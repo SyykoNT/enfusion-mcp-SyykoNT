@@ -22,13 +22,13 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
       lines.push(`- **NET API:** ${r.host}:${r.port}`);
       if (r.workbenchExe) {
         const mark = r.workbenchExe.exists ? "FOUND" : "NOT FOUND";
-        lines.push(`- **Workbench Exe:** ${mark} — \`${r.workbenchExe.path}\``);
+        lines.push(`- **Workbench Exe:** ${mark}, \`${r.workbenchExe.path}\``);
       } else {
         lines.push("- **Workbench Exe:** config not loaded");
       }
       if (r.projectPath) {
         const mark = r.projectPath.exists ? "EXISTS" : "NOT FOUND";
-        lines.push(`- **Project Path:** ${mark} — \`${r.projectPath.path}\``);
+        lines.push(`- **Project Path:** ${mark}, \`${r.projectPath.path}\``);
       } else {
         lines.push("- **Project Path:** not configured");
       }
@@ -38,16 +38,16 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
       lines.push("\n### Handler Scripts");
       {
         const mark = r.bundledScripts.exists ? "FOUND" : "MISSING";
-        lines.push(`- **Bundled source:** ${mark} — \`${r.bundledScripts.path}\``);
+        lines.push(`- **Bundled source:** ${mark}, \`${r.bundledScripts.path}\``);
       }
       {
         const mark = r.standaloneAddon.exists
-          ? `EXISTS (${r.standaloneAddon.fileCount} .c files) — should be absent when injecting into a mod`
+          ? `EXISTS (${r.standaloneAddon.fileCount} .c files), should be absent when injecting into a mod`
           : "not present (correct)";
-        lines.push(`- **Standalone addon:** ${mark} — \`${r.standaloneAddon.path}\``);
+        lines.push(`- **Standalone addon:** ${mark}, \`${r.standaloneAddon.path}\``);
       }
       if (r.installedMods.length === 0) {
-        lines.push("- **Installed in mods:** none found — handlers not injected into any mod");
+        lines.push("- **Installed in mods:** none found, handlers not injected into any mod");
       } else {
         for (const m of r.installedMods) {
           lines.push(`- **Installed:** ${m.fileCount} .c files → \`${m.handlerDir}\``);
@@ -58,7 +58,7 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
       lines.push("\n### NET API Connection");
       switch (r.netApi) {
         case "up_with_handlers":
-          lines.push("- **Status:** CONNECTED — EMCP_WB_Ping responded. All wb_* tools are available.");
+          lines.push("- **Status:** CONNECTED. EMCP_WB_Ping responded. All wb_* tools are available.");
           break;
         case "up_no_handlers":
           lines.push("- **Status:** PORT OPEN, HANDLERS NOT LOADED");
@@ -70,12 +70,12 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
           if (r.netApiError) lines.push(`  - Raw error: \`${r.netApiError}\``);
           break;
         case "refused":
-          lines.push("- **Status:** CONNECTION REFUSED — Workbench is not running or NET API is disabled.");
+          lines.push("- **Status:** CONNECTION REFUSED. Workbench is not running or NET API is disabled.");
           lines.push("  - Start Workbench and enable NET API: File > Options > General > Net API");
           if (r.netApiError) lines.push(`  - Raw error: \`${r.netApiError}\``);
           break;
         case "timeout":
-          lines.push("- **Status:** TIMEOUT — connection hung. Possible firewall or port conflict.");
+          lines.push("- **Status:** TIMEOUT. Connection hung. Possible firewall or port conflict.");
           if (r.netApiError) lines.push(`  - Raw error: \`${r.netApiError}\``);
           break;
         case "error":
@@ -91,7 +91,7 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
       }
       if (r.standaloneAddon.exists && r.installedMods.length > 0) {
         problems.push(
-          "A standalone addon AND mod-injected handlers coexist — this causes duplicate class errors. " +
+          "A standalone addon AND mod-injected handlers coexist: this causes duplicate class errors. " +
             "Run wb_launch to clean up the standalone addon automatically, or delete it manually: " +
             `\`${r.standaloneAddon.path}\``
         );
@@ -113,7 +113,7 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
       // --- Watchdog ---
       const watch = readStates();
       lines.push("\n### Watchdog");
-      if (!watch.states.length && !watch.errors.length) lines.push("- No Workbench is watched (wb_watch start pid=<n> attaches a watcher).");
+      if (!watch.states.length && !watch.errors.length) lines.push("- No Workbench is watched. The next live call attaches a watcher to the Workbench on the NET API port unless ENFUSION_WB_AUTOWATCH is off; wb_watch start pid=<n> attaches one now.");
       for (const s of watch.states) lines.push("```", formatReport(s), "```");
       for (const e of watch.errors) lines.push(`- ${e}`);
 

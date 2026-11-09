@@ -127,4 +127,25 @@ describe("ensureMode", () => {
     expect(result).toContain("not running on 127.0.0.1:1");
     expect(launch).not.toHaveBeenCalled();
   });
+
+  it("on a timeout, adds the automatic watch check's line", async () => {
+    const client = new WorkbenchClient("127.0.0.1", 1, { autoWatch: true } as Config);
+    vi.spyOn(client, "probeMode").mockResolvedValue("timeout");
+    client.watchCheck = async () => ({ ok: true, text: "Workbench PID 19524 is watched by watcher PID 600." });
+    const result = await ensureMode(client, "edit", "save");
+    expect(result).toContain("Cannot save: Workbench did not answer within 3 s");
+    expect(result).toContain("\nWatchdog: Workbench PID 19524 is watched by watcher PID 600.\n");
+    expect(result).toContain("ask the user to check Workbench");
+  });
+
+  it("on a timeout, a check that never settles is named and the refusal still arrives; with the watch off there is no line", async () => {
+    const client = new WorkbenchClient("127.0.0.1", 1, { autoWatch: true } as Config);
+    vi.spyOn(client, "probeMode").mockResolvedValue("timeout");
+    client.watchCheck = () => new Promise(() => {});
+    client.watchWaitMs = 50;
+    expect(await ensureMode(client, "edit", "save")).toContain("Watchdog: the watch check did not finish in 0.05 s");
+    const off = new WorkbenchClient("127.0.0.1", 1, { autoWatch: false } as Config);
+    vi.spyOn(off, "probeMode").mockResolvedValue("timeout");
+    expect(await ensureMode(off, "edit", "save")).not.toContain("Watchdog");
+  });
 });

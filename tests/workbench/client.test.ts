@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkbenchClient, WorkbenchError, buildLaunchArgs } from "../../src/workbench/client.js";
 import type { Config } from "../../src/config.js";
+import { ensureWatched } from "../../src/watchdog/auto-attach.js";
+import { logger } from "../../src/utils/logger.js";
 import {
   decodePascalString,
   decodeInt32LE,
@@ -222,7 +224,7 @@ describe("WorkbenchClient", () => {
   });
 
   it("state.mode stays unknown for responses without mode field", async () => {
-    // ReloadScripts returns { status: "ok" } — no mode field
+    // ReloadScripts returns { status: "ok" }: no mode field
     await client.call("ReloadScripts");
     expect(client.state.mode).toBe("unknown");
     expect(client.state.connected).toBe(true);
@@ -474,5 +476,143 @@ describe("buildLaunchArgs", () => {
     expect(() => buildLaunchArgs({ worldPath: "worlds/Map.ent" })).toThrow(/needs a project/);
     expect(() => buildLaunchArgs({ gproj: "a.gproj", worldPath: "worlds/Map.layer" })).toThrow(/\.ent/);
     expect(() => buildLaunchArgs({ gproj: "a.gproj", worldPath: 'x" -scriptAuthorizeAll "y.ent' })).toThrow(/quote/);
+  });
+});
+
+describe("automatic watch check (B-093)", () => {
+  const AUTO = { autoWatch: true } as Config;
+  const T = new Date("2026-11-08T18:00:00").getTime();
+  const flush = () => new Promise((r) => setImmediate(r));
+  const attached = async () => ({ ok: true, text: "Attached watcher PID 700 to Workbench PID 19524." });
+  let mock: ReturnType<typeof createMockWorkbench>;
+  beforeEach(() => {
+    mock = createMockWorkbench(() => ({ status: "ok", mode: "edit" }));
+  });
+  afterEach(async () => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    await mock.close();
+  });
+
+  it("starts at the request and never delays it: a check whose deps never settle", async () => {
+    const c = new WorkbenchClient("127.0.0.1", mock.port, AUTO);
+    const never = () => new Promise<never>(() => {});
+    const netstat = vi.fn(never);
+    c.watchCheck = () =>
+      ensureWatched(mock.port, "127.0.0.1", {
+        stateDir: mkdtempSync(join(tmpdir(), "emcp-cw-")), platform: "win32", netstat, proc: never, owned: () => false, alive: () => false, start: vi.fn(() => 1), base: {},
+      });
+    const started = Date.now();
+    expect(await c.call("EMCP_WB_Ping")).toMatchObject({ status: "ok" });
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(netstat).toHaveBeenCalledOnce();
+  });
+
+  it("after attached or already watched, no new check for 60 s; 61 s later a new one", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T);
+    const c = new WorkbenchClient("127.0.0.1", mock.port, AUTO);
+    const check = vi.fn(attached);
+    c.watchCheck = check;
+    await c.call("EMCP_WB_Ping");
+    await flush();
+    vi.setSystemTime(T + 59_000);
+    await c.call("EMCP_WB_Ping");
+    await flush();
+    expect(check).toHaveBeenCalledOnce();
+    vi.setSystemTime(T + 61_000);
+    await c.call("EMCP_WB_Ping");
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
+  it("after any other result (no listener) the next request checks again", async () => {
+    const c = new WorkbenchClient("127.0.0.1", mock.port, AUTO);
+    const check = vi.fn(async () => ({ ok: false, text: "Workbench not watched: no process listens on port 5775." }));
+    c.watchCheck = check;
+    await c.call("EMCP_WB_Ping");
+    await flush();
+    await c.call("EMCP_WB_Ping");
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs only when config.autoWatch is true: none for {} as config or no config", async () => {
+    for (const c of [new WorkbenchClient("127.0.0.1", mock.port, {} as Config), new WorkbenchClient("127.0.0.1", mock.port)]) {
+      const check = vi.fn(attached);
+      c.watchCheck = check;
+      await c.call("EMCP_WB_Ping");
+      await flush();
+      expect(check).not.toHaveBeenCalled();
+      expect(await c.watchNote()).toBe("");
+    }
+  });
+
+  it("a throwing check never fails the call and is logged at debug level", async () => {
+    const debug = vi.spyOn(logger, "debug").mockImplementation(() => {});
+    const c = new WorkbenchClient("127.0.0.1", mock.port, AUTO);
+    c.watchCheck = () => {
+      throw new Error("boom");
+    };
+    expect(await c.call("EMCP_WB_Ping")).toMatchObject({ status: "ok" });
+    c.watchCheck = async () => {
+      throw new Error("late boom");
+    };
+    expect(await c.call("EMCP_WB_Ping")).toMatchObject({ status: "ok" });
+    await flush();
+    expect(debug.mock.calls.map((x) => x[0])).toEqual(
+      expect.arrayContaining(["Automatic watch check failed: boom", "Automatic watch check failed: late boom"])
+    );
+  });
+
+  it("three parallel requests while a check runs start no second check", async () => {
+    const c = new WorkbenchClient("127.0.0.1", mock.port, AUTO);
+    let release: (r: { ok: boolean; text: string }) => void = () => {};
+    const check = vi.fn(() => new Promise<{ ok: boolean; text: string }>((r) => (release = r)));
+    c.watchCheck = check;
+    await Promise.all([c.call("EMCP_WB_Ping"), c.call("EMCP_WB_Ping"), c.call("EMCP_WB_Ping")]);
+    expect(check).toHaveBeenCalledOnce();
+    release({ ok: false, text: "x" });
+    await flush();
+    await c.call("EMCP_WB_Ping");
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
+  describe("on a TIMEOUT", () => {
+    const openSockets: Socket[] = [];
+    let slow: Server;
+    let c: WorkbenchClient;
+    beforeEach(() => {
+      slow = createServer({ allowHalfOpen: true }, (socket) => {
+        openSockets.push(socket);
+        socket.on("data", () => {});
+      });
+      slow.listen(0);
+      const addr = slow.address();
+      c = new WorkbenchClient("127.0.0.1", addr && typeof addr !== "string" ? addr.port : 0, AUTO);
+      c.dialogProbe = async () => []; // the real one would start PowerShell on the test PC
+    });
+    afterEach(async () => {
+      for (const s of openSockets.splice(0)) s.destroy();
+      await new Promise<void>((res) => slow.close(() => res()));
+    });
+
+    it("the error carries the check's line, run again despite the 60 s pause", async () => {
+      const check = vi.fn(async () => ({ ok: true, text: "Workbench PID 19524 is watched by watcher PID 600." }));
+      c.watchCheck = check;
+      const err = await c.call("ReloadScripts", {}, { timeout: 200 }).catch((e) => e);
+      expect(err).toBeInstanceOf(WorkbenchError);
+      expect(err.code).toBe("TIMEOUT");
+      expect(err.message).toContain("timed out after 200ms");
+      expect(err.message).toContain("Watchdog: Workbench PID 19524 is watched by watcher PID 600.");
+      expect(check).toHaveBeenCalledTimes(2); // at the request start, and for the reply
+    });
+
+    it("a check that never settles adds that line after the wait, and the error still arrives", async () => {
+      expect(c.watchWaitMs).toBe(5_000);
+      c.watchWaitMs = 50;
+      c.watchCheck = () => new Promise(() => {});
+      const err = await c.call("ReloadScripts", {}, { timeout: 200 }).catch((e) => e);
+      expect(err.code).toBe("TIMEOUT");
+      expect(err.message).toContain("Watchdog: the watch check did not finish in 0.05 s");
+    });
   });
 });

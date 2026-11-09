@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, parseAuthMode, type Config } from "../../src/config.js";
+import { loadConfig, parseAuthMode, parseAutoWatch, type Config } from "../../src/config.js";
 import { crashLogsDir } from "../../src/workbench/cli.js";
 import { buildLaunchArgs } from "../../src/workbench/client.js";
 import { SERVER_INSTRUCTIONS } from "../../src/server-instructions.js";
@@ -17,9 +17,9 @@ vi.mock("node:os", async (orig) => {
   return { ...actual, homedir: () => home.dir };
 });
 
-const saved = { auth: process.env.ENFUSION_SCRIPT_AUTH, dir: process.env.ENFUSION_CRASH_LOGS_DIR };
+const saved = { auth: process.env.ENFUSION_SCRIPT_AUTH, dir: process.env.ENFUSION_CRASH_LOGS_DIR, watch: process.env.ENFUSION_WB_AUTOWATCH };
 afterEach(() => {
-  for (const [k, v] of [["ENFUSION_SCRIPT_AUTH", saved.auth], ["ENFUSION_CRASH_LOGS_DIR", saved.dir]] as const) {
+  for (const [k, v] of [["ENFUSION_SCRIPT_AUTH", saved.auth], ["ENFUSION_CRASH_LOGS_DIR", saved.dir], ["ENFUSION_WB_AUTOWATCH", saved.watch]] as const) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
@@ -62,6 +62,46 @@ describe("ENFUSION_SCRIPT_AUTH", () => {
   });
 });
 
+describe("ENFUSION_WB_AUTOWATCH", () => {
+  it("vitest.config.ts turns it off for every test", () => {
+    expect(saved.watch).toBe("off");
+  });
+
+  it("unset or on, 1, true, yes in any case is on; off, 0, false, no is off", () => {
+    delete process.env.ENFUSION_WB_AUTOWATCH;
+    expect(loadConfig().autoWatch).toBe(true);
+    for (const [value, on] of [["on", true], ["1", true], ["TRUE", true], [" yes ", true], ["off", false], ["0", false], ["false", false], ["NO", false]] as const) {
+      process.env.ENFUSION_WB_AUTOWATCH = value;
+      expect(loadConfig().autoWatch, value).toBe(on);
+    }
+  });
+
+  it("any other value is off, with one warning per process", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    process.env.ENFUSION_WB_AUTOWATCH = "sometimes";
+    expect(loadConfig().autoWatch).toBe(false);
+    loadConfig();
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("ENFUSION_WB_AUTOWATCH"))).toEqual([['ENFUSION_WB_AUTOWATCH "sometimes" is not on or off; automatic watch is off.']]);
+    expect(parseAutoWatch(undefined)).toEqual({ on: true });
+    expect(parseAutoWatch(false)).toEqual({ on: false });
+    expect(parseAutoWatch(2)).toEqual({ on: false, invalid: "2" });
+  });
+
+  it("the config file is read by the same rule, and the variable wins", () => {
+    delete process.env.ENFUSION_WB_AUTOWATCH;
+    mkdirSync(join(home.dir, ".enfusion-mcp"), { recursive: true });
+    const file = join(home.dir, ".enfusion-mcp", "config.json");
+    writeFileSync(file, JSON.stringify({ autoWatch: false }));
+    try {
+      expect(loadConfig().autoWatch).toBe(false);
+      process.env.ENFUSION_WB_AUTOWATCH = "on";
+      expect(loadConfig().autoWatch).toBe(true);
+    } finally {
+      writeFileSync(file, "{}");
+    }
+  });
+});
+
 describe("ENFUSION_CRASH_LOGS_DIR", () => {
   it("unset gives Workbench Crash Logs beside the Workbench profile folder", () => {
     const profile = mkdtempSync(join(tmpdir(), "emcp-crash-"));
@@ -94,7 +134,7 @@ describe("-scriptAuthorizeAll stays impossible", () => {
 describe("server instructions", () => {
   it("carry the one line about program-run dialogs and stay under 4,096 characters", () => {
     expect(SERVER_INSTRUCTIONS).toContain(
-      'A "Script Authorization Required" dialog that asks to run a program is left open in the default mode; answer it with wb_watch answer, following the rules in that tool\'s description.'
+      'The watcher answers "Script Authorization Required" by ENFUSION_SCRIPT_AUTH; a dialog that asks to run a program is left open in the default mode; answer it with wb_watch answer, following the rules in that tool\'s description.'
     );
     expect(SERVER_INSTRUCTIONS.length).toBeLessThan(4096);
   });

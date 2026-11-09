@@ -20,6 +20,7 @@ import { findPids, isAlive } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { crashLogsDir, workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher } from "../watchdog/wb-watch.js";
+import { attachDeps, ensureWatched, type AttachResult } from "../watchdog/auto-attach.js";
 import { probeDialogs } from "../watchdog/probe.js";
 import { dialogKind, formatDialogs, type DialogProbe } from "../watchdog/signals.js";
 import type { Config } from "../config.js";
@@ -162,7 +163,7 @@ export interface WorkbenchCallOptions {
   /**
    * Return a `status: "error"` response instead of throwing.
    *
-   * Only for calls whose failure is genuinely optional — a secondary lookup the
+   * Only for calls whose failure is genuinely optional: a secondary lookup the
    * caller degrades gracefully around (e.g. reading a position to enrich a result
    * that is still useful without it). Never use it for the primary action of a
    * tool: that is exactly how a failed mutation gets reported as success.
@@ -201,6 +202,12 @@ export class WorkbenchClient {
   private _state: WorkbenchState = { connected: false, mode: "unknown", lastUpdated: 0 };
   /** Public so tests can stub it: the real one starts PowerShell. */
   dialogProbe: (pids: number[]) => Promise<DialogProbe[]> = (pids) => probeDialogs(pids);
+  /** The automatic watch check (B-093). Public so tests can stub it: the real one runs netstat and PowerShell. */
+  watchCheck: () => Promise<AttachResult> = () => ensureWatched(this.port, this.host, attachDeps(this.config!));
+  /** How long a timeout reply waits for the watch check. Public so tests can shorten it. */
+  watchWaitMs = 5_000;
+  private watchRun: Promise<AttachResult> | null = null;
+  private watchQuietUntil = 0;
 
   /** Current cached connection state. Updated after every successful call. */
   get state(): Readonly<WorkbenchState> {
@@ -242,8 +249,8 @@ export class WorkbenchClient {
         }
         // A modal in any Workbench copy makes every call time out; name it so the caller does not blame the network.
         if (err.code === "TIMEOUT") {
-          const r = await this.dialogReport(findPids(WORKBENCH_EXE));
-          throw new WorkbenchError(r.text ? `${err.message}\n${r.text}` : err.message, "TIMEOUT", r.dialogs);
+          const [r, w] = await Promise.all([this.dialogReport(findPids(WORKBENCH_EXE)), this.watchNote()]);
+          throw new WorkbenchError([err.message, r.text, w].filter(Boolean).join("\n"), "TIMEOUT", r.dialogs);
         }
         // Only wb_launch starts Workbench (D-025): a shared PC may have someone else's session waiting on it.
         if (err.code === "CONNECTION_REFUSED") {
@@ -256,6 +263,39 @@ export class WorkbenchClient {
       }
       throw err;
     }
+  }
+
+  /** The running watch check, or a new one. Never rejects: a failure is logged at debug level and becomes the result line. */
+  private runWatchCheck(): Promise<AttachResult> {
+    return (this.watchRun ??= Promise.resolve()
+      .then(() => this.watchCheck())
+      .then((r) => {
+        // Attached or already watched: no new check for 60 s; any other result is checked again on the next request.
+        if (r.ok) this.watchQuietUntil = Date.now() + 60_000;
+        return r;
+      })
+      .catch((e) => {
+        logger.debug(`Automatic watch check failed: ${e instanceof Error ? e.message : e}`);
+        return { ok: false, text: `Workbench not watched: the watch check failed (${e instanceof Error ? e.message : e}).` };
+      })
+      .finally(() => {
+        this.watchRun = null;
+      }));
+  }
+
+  /**
+   * The watch line for a timeout reply, or "" when the automatic watch is off. Runs the check whatever the 60 s pause says,
+   * and waits at most watchWaitMs for it. Never throws.
+   */
+  async watchNote(): Promise<string> {
+    if (this.config?.autoWatch !== true) return "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<string>((done) => {
+      timer = setTimeout(() => done(`the watch check did not finish in ${this.watchWaitMs / 1000} s`), this.watchWaitMs);
+    });
+    const line = await Promise.race([this.runWatchCheck().then((r) => r.text), late]);
+    clearTimeout(timer);
+    return `Watchdog: ${line}`;
   }
 
   /** Dialog text for these Workbench PIDs, or the reason the check could not run. Never throws. */
@@ -272,7 +312,7 @@ export class WorkbenchClient {
    * Record connection state from a successful transport round-trip, then surface an
    * in-band handler failure as a thrown error.
    *
-   * The NET API returns transport-level "Ok" even when the handler itself failed —
+   * The NET API returns transport-level "Ok" even when the handler itself failed:
    * 18 of the Enforce handlers report failure in-band by setting `status: "error"`
    * and a human-readable `message`. Without this check that response was returned
    * as if it had succeeded, so a tool would render "**Entity Modified**" over the
@@ -341,7 +381,7 @@ export class WorkbenchClient {
 
   /**
    * Ensure Workbench is running. Installs handler scripts, launches exe,
-   * and waits for NET API. Safe to call concurrently — deduplicates launches.
+   * and waits for NET API. Safe to call concurrently: deduplicates launches.
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
    * @param unattended Launch with -noThrow (no error dialogs).
    * @param worldPath Optional .ent to open in the World Editor at start.
@@ -349,10 +389,10 @@ export class WorkbenchClient {
    */
   async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
     if (!this.config) {
-      throw new WorkbenchError("No config provided — cannot auto-launch Workbench.", "LAUNCH_FAILED");
+      throw new WorkbenchError("No config provided: cannot auto-launch Workbench.", "LAUNCH_FAILED");
     }
 
-    // Deduplicate concurrent calls — all callers await the same promise
+    // Deduplicate concurrent calls: all callers await the same promise
     if (this.launchPromise) {
       return this.launchPromise;
     }
@@ -374,7 +414,7 @@ export class WorkbenchClient {
    *
    * Uses our custom EMCP_WB_Ping handler (not the built-in GetLoadedProjects)
    * so the launch poller only succeeds once the mod's handler scripts have
-   * finished compiling — avoiding a race where the NET API socket is up but
+   * finished compiling: avoiding a race where the NET API socket is up but
    * custom handlers aren't loaded yet.
    */
   async ping(): Promise<boolean> {
@@ -396,7 +436,7 @@ export class WorkbenchClient {
    * Every addon under the project path that currently has handler scripts installed.
    *
    * Handlers get injected into whichever mod is open at the time, so over many
-   * sessions they accumulate across unrelated addons — and each copy ships with the
+   * sessions they accumulate across unrelated addons, and each copy ships with the
    * user's mod if they publish it. Enumerating them is what makes a bulk cleanup
    * possible; `diagnose()` reports the same list.
    *
@@ -418,7 +458,7 @@ export class WorkbenchClient {
         }
       }
     } catch {
-      /* unreadable project dir — report what we have */
+      /* unreadable project dir: report what we have */
     }
     return installed;
   }
@@ -528,7 +568,7 @@ export class WorkbenchClient {
 
   /**
    * Collect a diagnostic snapshot: config, file system, and NET API state.
-   * Does NOT auto-launch Workbench or throw — always returns a report.
+   * Does NOT auto-launch Workbench or throw: always returns a report.
    */
   async diagnose(): Promise<DiagnosticReport> {
     // --- Config info ---
@@ -686,7 +726,7 @@ export class WorkbenchClient {
     }
 
     // 2. Resolve the target .gproj and inject handler scripts into that mod.
-    //    Handler scripts must compile as part of the opened project — Workbench
+    //    Handler scripts must compile as part of the opened project: Workbench
     //    only compiles the active project and its declared dependencies, NOT every
     //    addon folder in the project directory.  A standalone sibling addon will
     //    never be compiled unless the user's project explicitly depends on it.
@@ -713,7 +753,7 @@ export class WorkbenchClient {
       // picked up as a sibling addon and cause compile-time class name conflicts.
       this.cleanupStandaloneAddon();
     } else if (!resolvedGproj) {
-      // No project found — fall back to standalone addon as last resort and open it
+      // No project found: fall back to standalone addon as last resort and open it
       // directly so its handlers at least compile (user's project won't be open).
       gitNote = this.installHandlerScripts();
       const fallbackBase = this.config?.projectPath;
@@ -775,7 +815,7 @@ export class WorkbenchClient {
       }
     }
 
-    // 5. Wait for NET API — track the last error type so the timeout message is actionable
+    // 5. Wait for NET API: track the last error type so the timeout message is actionable
     const timeoutMs = worldPath ? WORLD_LAUNCH_TIMEOUT_MS : LAUNCH_TIMEOUT_MS;
     const deadline = Date.now() + timeoutMs;
     let lastErrorCode: WorkbenchError["code"] | undefined;
@@ -939,7 +979,7 @@ export class WorkbenchClient {
 
     const fallbackBase = this.config?.projectPath;
     if (!modDir && !fallbackBase) {
-      logger.warn("No modDir or projectPath configured — cannot install handler scripts.");
+      logger.warn("No modDir or projectPath configured: cannot install handler scripts.");
       return;
     }
     const isFallback = !modDir;
@@ -991,7 +1031,7 @@ export class WorkbenchClient {
   }
 
   /**
-   * Raw TCP call — no auto-launch, no retry.
+   * Raw TCP call: no auto-launch, no retry.
    */
   private rawCall<T = Record<string, unknown>>(
     apiFunc: string,
@@ -1000,6 +1040,8 @@ export class WorkbenchClient {
   ): Promise<T> {
     const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
     const requestBuf = encodeRequest(this.clientId, apiFunc, params);
+    // Not awaited: the call never waits for the automatic watch check (config.autoWatch is true only from loadConfig).
+    if (this.config?.autoWatch === true && Date.now() >= this.watchQuietUntil) void this.runWatchCheck();
 
     return new Promise<T>((resolve, reject) => {
       const chunks: Buffer[] = [];
@@ -1058,7 +1100,7 @@ export class WorkbenchClient {
             socket.destroy();
             reject(
               new WorkbenchError(
-                `Response for "${apiFunc}" exceeded ${MAX_RESPONSE_SIZE} bytes — possible malformed data`,
+                `Response for "${apiFunc}" exceeded ${MAX_RESPONSE_SIZE} bytes: possible malformed data`,
                 "PROTOCOL_ERROR"
               )
             );
@@ -1077,7 +1119,7 @@ export class WorkbenchClient {
         if (responseBuf.length === 0) {
           reject(
             new WorkbenchError(
-              `Empty response from Workbench for "${apiFunc}" — connection closed without data`,
+              `Empty response from Workbench for "${apiFunc}": connection closed without data`,
               "PROTOCOL_ERROR"
             )
           );
@@ -1102,7 +1144,7 @@ export class WorkbenchClient {
 
       socket.on("close", (hadError) => {
         if (settled) return;
-        // close fired without end — connection dropped unexpectedly
+        // close fired without end: connection dropped unexpectedly
         settled = true;
         cleanup();
 

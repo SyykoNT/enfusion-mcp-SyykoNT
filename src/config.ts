@@ -55,7 +55,18 @@ export interface Config {
   scriptAuth?: AuthMode;
   /** Where the log files of a crashed Workbench are copied. Set via ENFUSION_CRASH_LOGS_DIR; default: "Workbench Crash Logs" beside the Workbench profile folder. */
   crashLogsDir?: string;
+  /** Attach a watcher by itself to the Workbench on the NET API port, whoever started it. On unless ENFUSION_WB_AUTOWATCH is off; set only by loadConfig. */
+  autoWatch?: boolean;
 }
+
+/** A setting value as on or off: unset or on, 1, true, yes (any case) is on; off, 0, false, no is off; anything else is off, with the value in `invalid`. */
+export function parseAutoWatch(value: unknown): { on: boolean; invalid?: string } {
+  if (value === undefined || value === null || value === "") return { on: true };
+  const v = String(value).trim().toLowerCase();
+  if (["on", "1", "true", "yes"].includes(v)) return { on: true };
+  return ["off", "0", "false", "no"].includes(v) ? { on: false } : { on: false, invalid: String(value) };
+}
+let autoWatchWarned = false;
 
 export type AuthMode = "rules" | "all" | "off";
 
@@ -188,12 +199,19 @@ export function loadConfig(): Config {
     logger.warn(`ENFUSION_SCRIPT_AUTH "${auth.invalid}" is not rules, all or off; using rules.`);
   }
   if (process.env.ENFUSION_CRASH_LOGS_DIR) config.crashLogsDir = process.env.ENFUSION_CRASH_LOGS_DIR;
+  // Same rule for the file and the variable; an unknown value is off, with one warning per process.
+  const autoWatch = parseAutoWatch(process.env.ENFUSION_WB_AUTOWATCH || config.autoWatch);
+  config.autoWatch = autoWatch.on;
+  if (autoWatch.invalid !== undefined && !autoWatchWarned) {
+    autoWatchWarned = true;
+    logger.warn(`ENFUSION_WB_AUTOWATCH "${autoWatch.invalid}" is not on or off; automatic watch is off.`);
+  }
 
   // Auto-derive gamePath from workbenchPath if not explicitly set.
   //
   // ENFUSION_WORKBENCH_PATH is accepted pointing either at the tools ROOT
   // ("...\Arma Reforger Tools") or at its Workbench SUBDIRECTORY
-  // ("...\Arma Reforger Tools\Workbench") — findWorkbenchExe() deliberately
+  // ("...\Arma Reforger Tools\Workbench"): findWorkbenchExe() deliberately
   // supports both. A single fixed "../Arma Reforger" only works for the first:
   // given the subdirectory form it resolves to
   // "...\Arma Reforger Tools\Arma Reforger", which does not exist, and every
@@ -201,7 +219,7 @@ export function loadConfig(): Config {
   // silently searched a missing directory instead of reporting a bad path.
   //
   // So try both shapes and take the one that is actually on disk. If neither is,
-  // keep the one-level guess and warn — that keeps the previous behaviour for
+  // keep the one-level guess and warn: that keeps the previous behaviour for
   // anyone relying on it while making the misconfiguration visible.
   if (!process.env.ENFUSION_GAME_PATH && config.workbenchPath !== DEFAULT_WORKBENCH_PATH) {
     const candidates = [
@@ -216,7 +234,7 @@ export function loadConfig(): Config {
       logger.warn(
         `Could not locate the Arma Reforger game directory from ENFUSION_WORKBENCH_PATH ` +
           `("${config.workbenchPath}"). Tried: ${candidates.join(" and ")}. ` +
-          `Base game tools (asset_search, game_read, game_browse) will not find anything — ` +
+          `Base game tools (asset_search, game_read, game_browse) will not find anything: ` +
           `set ENFUSION_GAME_PATH explicitly.`
       );
     }

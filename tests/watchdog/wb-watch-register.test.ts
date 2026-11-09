@@ -26,6 +26,7 @@ describe("wb_watch stop as registered", () => {
     expect(WATCH_DIR.startsWith(home)).toBe(true);
     mkdirSync(WATCH_DIR, { recursive: true });
     writeFileSync(join(WATCH_DIR, "19524.lock"), "600");
+    writeFileSync(join(WATCH_DIR, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600 }));
     const r = await handler({ action: "stop", pid: 19524 });
     expect(r.content[0].text).toBe("Stopped watcher PID 600 for Workbench PID 19524.");
     expect(kills).toEqual([[[600], true, true]]);

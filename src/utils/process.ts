@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { openSync, closeSync, existsSync, readdirSync, statSync } from "node:fs";
 import { constants, setPriority } from "node:os";
 import { join } from "node:path";
@@ -81,15 +81,19 @@ export function parseProcJson(out: string): ProcInfo[] {
   }));
 }
 
-// shortcut: CIM is Windows only, so elsewhere no process is found and stop/status touch nothing; add a /proc reader if Linux servers matter.
-function cimQuery(filter: string): ProcInfo[] {
-  if (!IS_WIN) return [];
-  // Creation time converted to epoch ms in PowerShell; -EncodedCommand keeps the WQL quotes off the command line.
+// Creation time converted to epoch ms in PowerShell; -EncodedCommand keeps the WQL quotes off the command line.
+function cimArgs(filter: string): string[] {
   const ps =
     `Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId,ParentProcessId,CommandLine,` +
     `@{n='Created';e={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress`;
+  return ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")];
+}
+
+// shortcut: CIM is Windows only, so elsewhere no process is found and stop/status touch nothing; add a /proc reader if Linux servers matter.
+function cimQuery(filter: string): ProcInfo[] {
+  if (!IS_WIN) return [];
   try {
-    const out = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], {
+    const out = execFileSync("powershell", cimArgs(filter), {
       encoding: "utf-8",
       windowsHide: true,
       stdio: ["ignore", "pipe", "ignore"], // PowerShell writes progress records to stderr
@@ -101,6 +105,20 @@ function cimQuery(filter: string): ProcInfo[] {
 }
 
 export const processInfo = (pid: number): ProcInfo | undefined => cimQuery(`ProcessId=${Math.trunc(pid)}`)[0];
+
+/** processInfo without blocking: the automatic watch check runs beside live tool calls. Undefined when not found or the query fails. */
+export function processInfoAsync(pid: number): Promise<ProcInfo | undefined> {
+  if (!IS_WIN) return Promise.resolve(undefined);
+  return new Promise((done) =>
+    execFile("powershell", cimArgs(`ProcessId=${Math.trunc(pid)}`), { windowsHide: true, timeout: 10_000 }, (err, out) => {
+      try {
+        done(err ? undefined : parseProcJson(String(out))[0]);
+      } catch {
+        done(undefined);
+      }
+    })
+  );
+}
 export const serverProcesses = () => cimQuery("Name='ArmaReforgerServerDiag.exe' OR Name='ArmaReforgerServer.exe'");
 export const clientProcesses = () => cimQuery("Name='ArmaReforgerSteamDiag.exe' OR Name='ArmaReforgerSteam.exe'");
 export const crashReporters = () => cimQuery("Name='CrashReporter.exe'");

@@ -87,7 +87,7 @@ describe("wb_watch stop", () => {
   it("ends only a real watcher and clears its files", async () => {
     const d = deps();
     writeFileSync(join(d.stateDir, "19524.lock"), "600");
-    writeFileSync(join(d.stateDir, "19524.json"), "{}");
+    writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600 }));
     expect((await watchAction({ action: "stop", pid: 19524 }, d)).text).toBe("Stopped watcher PID 600 for Workbench PID 19524.");
     expect(d.kill).toHaveBeenCalledWith(600);
     expect(existsSync(join(d.stateDir, "19524.json"))).toBe(false);
@@ -95,6 +95,25 @@ describe("wb_watch stop", () => {
     writeFileSync(join(d.stateDir, "19524.lock"), "19524");
     expect((await watchAction({ action: "stop", pid: 19524 }, d)).isError).toBe(true);
     expect(d.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("T1 finding 1: a live wb-watch lock holder is not killed when the state names another watcher or its --pid is another Workbench", async () => {
+    const procs: Record<number, string> = {
+      19524: WB, 600: "node.exe C:\\x\\dist\\watchdog\\wb-watch.js --pid 19524", 601: "node.exe C:\\x\\dist\\watchdog\\wb-watch.js --pid 195240",
+    };
+    const d = deps({ alive: (pid) => pid in procs, proc: (pid) => (procs[pid] ? { pid, ppid: 1, cmd: procs[pid], created: 1 } : undefined) });
+    // Holder 600 runs wb-watch for this PID, but the state names watcher 650 (600 is a reused PID).
+    writeFileSync(join(d.stateDir, "19524.lock"), "600");
+    writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 650, auto: true }));
+    expect(await watchAction({ action: "stop", pid: 19524 }, d)).toEqual({ text: "PID 600 holds the watch lock for 19524 but is not its watcher. Not stopped.", isError: true });
+    expect(await watchAction({ action: "start", pid: 19524 }, d)).toEqual({ text: "already watched by watcher PID 600", isError: true });
+    // Holder 601 is named by the state, but watches Workbench 195240: --pid must match as a whole argument.
+    writeFileSync(join(d.stateDir, "19524.lock"), "601");
+    writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 601, auto: true }));
+    expect((await watchAction({ action: "stop", pid: 19524 }, d)).isError).toBe(true);
+    expect((await watchAction({ action: "start", pid: 19524 }, d)).text).toBe("already watched by watcher PID 601");
+    expect(d.kill).not.toHaveBeenCalled();
+    expect(d.start).not.toHaveBeenCalled();
   });
 });
 
@@ -187,7 +206,7 @@ describe("automatic watchers: replace, refuse, stop and noauto", () => {
     expect(d.start).not.toHaveBeenCalled();
   });
 
-  it("another MCP's automatic watcher took the PID first: the reply says so", async () => {
+  it("another watcher took the PID first: the reply names it neutrally (T1 finding 2)", async () => {
     const d = deps({ alive, settleMs: 50 });
     d.start = vi.fn(() => {
       writeFileSync(join(d.stateDir, "19524.lock"), "800"); // the other MCP's watcher won the claim; ours would exit with code 3
@@ -196,7 +215,7 @@ describe("automatic watchers: replace, refuse, stop and noauto", () => {
     autoState(d, true);
     const r = await watchAction({ action: "start", pid: 19524 }, d);
     expect(r.isError).toBe(true);
-    expect(r.text).toContain("another MCP's automatic watcher (PID 800) took Workbench PID 19524 first");
+    expect(r.text).toBe("Stopped the automatic watcher PID 600, but another watcher (PID 800) took Workbench PID 19524 first; check wb_watch status.");
   });
 
   it("the automatic attach (internal flag) starts a not-owned watcher with --auto, an owned one without, and never replaces a watcher", async () => {
@@ -225,6 +244,7 @@ describe("automatic watchers: replace, refuse, stop and noauto", () => {
       seen.push(existsSync(file) ? readFileSync(file, "utf-8") : "no file at kill time");
     });
     writeFileSync(join(d.stateDir, "19524.lock"), "600");
+    writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600 }));
     await watchAction({ action: "stop", pid: 19524 }, d);
     expect(seen).toEqual([String(at("06:12:43.000"))]);
     expect(autoBlocked(d.stateDir, 19524, at("06:12:43.000") + 9_000)).toBe(true);
@@ -245,7 +265,9 @@ describe("automatic watchers: replace, refuse, stop and noauto", () => {
   it("a stop does not write noauto when the Workbench process is already gone", async () => {
     const d = deps({ proc: (pid) => (pid === 600 ? { pid, ppid: 1, cmd: "node wb-watch.js --pid 19524", created: 1 } : undefined) });
     writeFileSync(join(d.stateDir, "19524.lock"), "600");
+    writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600 }));
     await watchAction({ action: "stop", pid: 19524 }, d);
+    expect(d.kill).toHaveBeenCalledExactlyOnceWith(600);
     expect(existsSync(join(d.stateDir, "19524.noauto"))).toBe(false);
   });
 });

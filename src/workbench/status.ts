@@ -80,8 +80,14 @@ export async function ensureMode(client: WorkbenchClient, want: "edit" | "play",
   switch (mode) {
     case "not_running":
       return `Cannot ${action}: Workbench is not running on ${client.endpoint}. Start it with wb_launch (gprojPath) after checking that nobody else is using Workbench.`;
-    case "timeout":
-      return `Cannot ${action}: Workbench did not answer within 3 s. Ask the user to check Workbench for an open dialog and answer it.`;
+    case "timeout": {
+      const watch = await client.watchNote();
+      return (
+        `Cannot ${action}: Workbench did not answer within 3 s, most likely because a dialog is open in it.` +
+        (watch ? `\n${watch}\n` : " ") +
+        "If the dialog is still open and no watcher answers it, ask the user to check Workbench and answer it."
+      );
+    }
     case "no_handlers":
       return `Cannot ${action}: the MCP handlers are not loaded in this Workbench; run wb_diagnose.`;
     case "unknown":
