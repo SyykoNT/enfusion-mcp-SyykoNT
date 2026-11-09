@@ -245,8 +245,9 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        // Only a world open raises "Loading world"; skip it when the client's report already names a different dialog
         const hint =
-          e instanceof WorkbenchError && e.code === "TIMEOUT"
+          e instanceof WorkbenchError && e.code === "TIMEOUT" && /\.ent$/i.test(path) && (!msg.includes("has a dialog open") || msg.includes("\"Loading world\""))
             ? "\n\nA timeout here usually means Workbench is showing the \"Loading world\" dialog (the current world has unsaved changes). Ask the user to answer it in Workbench; use wb_save before opening another world."
             : "";
         return {

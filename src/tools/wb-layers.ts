@@ -69,8 +69,8 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         const result = await client.call<Record<string, unknown>>("EMCP_WB_Layers", params);
 
         if (action === "list") {
-          // 1.9 packs an extra empty object before each real row; a real row always carries entityCount
-          const layers = (Array.isArray(result.layers) ? result.layers : []).filter((l) => typeof (l as Record<string, unknown>).entityCount === "number");
+          // 1.9 packs an extra empty object before each real row; a real row has a path, name or layer ID (the count may be missing)
+          const layers = (Array.isArray(result.layers) ? result.layers : []).filter((l) => l?.path || l?.name || typeof l?.layerID === "number");
           if (layers.length === 0) {
             return {
               content: [{ type: "text" as const, text: `**No layers found.**${formatConnectionStatus(client)}` }],
@@ -87,7 +87,7 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
             if (l.locked) flags.push("LOCKED");
             if (l.visible === false) flags.push("HIDDEN");
             const flagStr = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
-            lines.push(`- ${path}${flagStr} (${l.entityCount} entities)`);
+            lines.push(`- ${path}${flagStr}${typeof l.entityCount === "number" ? ` (${l.entityCount} entities)` : ""}`);
           }
 
           if (result.activeLayer) {

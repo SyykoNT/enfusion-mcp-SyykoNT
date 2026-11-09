@@ -81,4 +81,11 @@ describe("wb_layers", () => {
     expect(text).not.toContain("(unnamed)");
     expect(text).toContain(message);
   });
+
+  it("list keeps a real layer whose entityCount is missing or not a number and shows no count for it", async () => {
+    const t = layers({ status: "ok", layers: [{}, { layerID: 0, path: "default", entityCount: "5" }, {}, { layerID: 1, path: "OPS_A" }] });
+    const text = (await t.run({ action: "list" })).content[0].text;
+    expect(text).toContain("- default\n- OPS_A");
+    expect(text).not.toContain("entities)");
+  });
 });

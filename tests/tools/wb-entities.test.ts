@@ -66,7 +66,36 @@ describe("wb_entity_modify enum and listProperties", () => {
   });
 });
 
+describe("wb_entity_inspect components and list rows", () => {
+  it("1.9 payload (empty object before each row) and 1.8 payload give the same component count", async () => {
+    const rows = [{ className: "RigidBody", index: 0 }, { className: "Hierarchy", index: 1 }];
+    const v19 = (await tool("wb_entity_inspect", { status: "ok", name: "E", components: rows.flatMap((r) => [{}, r]) }).run({ name: "E" })).content[0].text;
+    const v18 = (await tool("wb_entity_inspect", { status: "ok", name: "E", components: rows }).run({ name: "E" })).content[0].text;
+    expect(v19).toContain("### Components (2)\n0. RigidBody\n1. Hierarchy");
+    expect(v19).not.toContain("Unknown");
+    expect(v18).toContain("### Components (2)\n0. RigidBody\n1. Hierarchy");
+  });
+
+  it("wb_entity_list drops the empty rows, counts and numbers the real ones, and keeps an unnamed entity that has a class", async () => {
+    const ents = [{ name: "A", className: "GenericEntity", position: "1 2 3" }, { name: "", className: "Tree", position: "4 5 6" }];
+    const v19 = (await tool("wb_entity_list", { status: "ok", total: 2, offset: 0, entities: ents.flatMap((e) => [{}, e]) }).run({ offset: 0, limit: 50 })).content[0].text;
+    const v18 = (await tool("wb_entity_list", { status: "ok", total: 2, offset: 0, entities: ents }).run({ offset: 0, limit: 50 })).content[0].text;
+    expect(v19).toContain("(showing 2 of 2, offset 0)");
+    expect(v19).toContain("1. **A** at 1 2 3\n2. **(unnamed)** at 4 5 6");
+    expect(v19).not.toContain("3. ");
+    expect(v18).toBe(v19);
+  });
+});
+
 describe("wb_entity_inspect values", () => {
+  it("lists rows with a value first and folds the empty-value rows into one line", async () => {
+    const names = ["EOnTouch", "_WB_CanDelete", "OnA", "OnB", "OnC", "OnD"];
+    const props = [...names.map((name) => ({ name, value: "" })), { name: "Mass", value: "77" }, { name: "Off", value: "0" }];
+    const text = (await tool("wb_entity_inspect", { status: "ok", name: "E", varCount: 8, properties: props.flatMap((p) => [{}, p]) }).run({ name: "E" })).content[0].text;
+    expect(text).toContain("### Properties (8)\n| Property | Value |\n|---|---|\n| Mass | 77 |\n| Off | 0 |\n\n*6 more with no value: EOnTouch, _WB_CanDelete, OnA, OnB, OnC, ...*");
+    expect(text).not.toContain("| EOnTouch |");
+  });
+
   it("prints the properties the handler read, marks the capped count, and drops the empty rows", async () => {
     const t = tool("wb_entity_inspect", { status: "ok", name: "E", varCount: 60, properties: [{}, { name: "ShapeType", value: "Box" }, {}, { name: "m_Arr", value: "(not read: ARRAY)" }] });
     const text = (await t.run({ name: "E" })).content[0].text;

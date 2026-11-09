@@ -19,12 +19,11 @@ function formatEntityDetails(data: Record<string, unknown>): string {
   if (data.layerPath) lines.push(`- **Layer:** ${data.layerPath}`);
   if (data.parentName) lines.push(`- **Parent:** ${data.parentName}`);
 
-  if (Array.isArray(data.components) && data.components.length > 0) {
-    lines.push(`\n### Components (${data.components.length})`);
-    for (let i = 0; i < data.components.length; i++) {
-      const comp = data.components[i] as Record<string, unknown>;
-      lines.push(`${i}. ${comp.className || comp.type || "Unknown"}`);
-    }
+  // 1.9 packs an empty object before each real component row; a real one has a class
+  const comps = (Array.isArray(data.components) ? data.components : []).filter((c) => c?.className || c?.type);
+  if (comps.length > 0) {
+    lines.push(`\n### Components (${comps.length})`);
+    comps.forEach((comp, i) => lines.push(`${i}. ${comp.className || comp.type}`));
   }
 
   // Values the entity holds (the handler marks a type it cannot read instead of printing a class default); entity-level properties only, capped by the handler
@@ -32,7 +31,11 @@ function formatEntityDetails(data: Record<string, unknown>): string {
   if (props.length > 0) {
     const total = typeof data.varCount === "number" ? data.varCount : props.length;
     lines.push(`\n### Properties (${props.length}${total > props.length ? ` of ${total}` : ""})`, "| Property | Value |", "|---|---|");
-    for (const p of props) lines.push(`| ${p.name} | ${p.value ?? ""} |`);
+    const held = props.filter((p) => p.value !== undefined && p.value !== "");
+    for (const p of held) lines.push(`| ${p.name} | ${p.value} |`);
+    // 1.9 lists script-method names with no value; they would bury the real properties
+    const empty = props.filter((p) => !held.includes(p));
+    if (empty.length > 0) lines.push(`\n*${empty.length} more with no value: ${empty.slice(0, 5).map((p) => p.name).join(", ")}${empty.length > 5 ? ", ..." : ""}*`);
   }
 
   if (Array.isArray(data.children) && data.children.length > 0) {
@@ -48,7 +51,8 @@ function formatEntityDetails(data: Record<string, unknown>): string {
 
 function formatEntityList(data: Record<string, unknown>): string {
   const lines: string[] = [];
-  const entities = Array.isArray(data.entities) ? data.entities : [];
+  // 1.9 packs an empty object before each real entity row; a real one has a name, class or position
+  const entities = (Array.isArray(data.entities) ? data.entities : []).filter((e) => e?.name || e?.className || e?.position);
   const total = typeof data.total === "number" ? data.total : entities.length;
   const offset = typeof data.offset === "number" ? data.offset : 0;
 

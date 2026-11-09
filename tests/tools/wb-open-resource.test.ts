@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer, type Socket } from "node:net";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { WorkbenchClient } from "../../src/workbench/client.js";
+import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
 import { decodeInt32LE, decodePascalString, encodePascalString } from "../../src/workbench/protocol.js";
 
@@ -71,6 +71,16 @@ describe("wb_open_resource", () => {
     expect(r.content[0].text).toContain("Error opening resource:");
     expect(r.content[0].text).toContain("A timeout here usually means Workbench is showing the \"Loading world\" dialog");
     expect(r.content[0].text).toContain("use wb_save before opening another world");
+  });
+
+  it("the Loading world hint is only for .ent paths and only when no other dialog was named", async () => {
+    const t = setup(() => undefined);
+    const timeout = (msg: string) => vi.spyOn(t.client, "call").mockRejectedValue(new WorkbenchError(msg, "TIMEOUT"));
+    timeout("timed out");
+    expect((await t.tool.run({ path: "Prefabs/X.et" })).content[0].text).not.toContain("Loading world");
+    expect((await t.tool.run({ path: "Worlds/Other.ent" })).content[0].text).toContain("\"Loading world\" dialog");
+    timeout("Workbench PID 1 has a dialog open, which blocks every NET API call:\n- \"Script Authorization Required\" (#32770) [script_authorization]");
+    expect((await t.tool.run({ path: "Worlds/Other.ent" })).content[0].text).not.toContain("usually means");
   });
 
   it("another error carries no dialog hint", async () => {
