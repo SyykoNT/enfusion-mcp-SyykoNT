@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
 import { decodeResponse, encodePascalString } from "../../src/workbench/protocol.js";
-import { registerWbReload, reloadScripts } from "../../src/tools/wb-reload.js";
+import { notifyFailure, registerWbReload, reloadScripts } from "../../src/tools/wb-reload.js";
 
 type Reply = { content: { text: string }[]; isError?: boolean };
 
@@ -85,7 +85,8 @@ describe("wb_reload", () => {
     const r = await setup((f) => { if (f === "ReloadScripts") return okNoBody(); throw new WorkbenchError("Workbench error: handler missing", "API_ERROR"); }).run("both");
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("**ReloadScripts answered Ok**");
-    expect(r.content[0].text).toContain("Error reloading: Workbench error: handler missing");
+    expect(r.content[0].text).toContain("\n\nPlugin reload failed: Workbench error: handler missing");
+    expect(r.content[0].text).not.toContain("Error reloading");
     expect(r.content[0].text).not.toContain("Plugins were not tried");
   });
 
@@ -95,12 +96,40 @@ describe("wb_reload", () => {
     expect(t.call.mock.calls.map((c) => c[0])).toEqual(["ReloadScripts"]);
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("Compilation failed");
-    expect(r.content[0].text).toContain("Plugins were not tried.");
+    expect(r.content[0].text).toContain("Compilation failed\n\nPlugins were not tried.");
+    expect(r.content[0].text).toContain("Error reloading: Workbench error: Compilation failed");
   });
 
   it("plugins alone does not claim a scripts step it never ran", async () => {
     const r = await setup(() => { throw new WorkbenchError("Workbench error: handler missing", "API_ERROR"); }).run("plugins");
-    expect(r.content[0].text).not.toMatch(/Plugins were not tried|ReloadScripts answered/);
+    expect(r.content[0].text).not.toMatch(/Plugins were not tried|ReloadScripts answered|Plugin reload failed/);
+    expect(r.content[0].text).toContain("Error reloading: Workbench error: handler missing");
+  });
+});
+
+describe("notifyFailure (the tuning server's reply when its post-write call throws)", () => {
+  // tuner.html shows its warning banner when the text has "not reachable" or "not notified".
+  const warns = (s: string) => s.includes("not reachable") || s.includes("not notified");
+
+  it("a Workbench API error says Workbench answered, not that it is unreachable, and still warns", () => {
+    const s = notifyFailure(new WorkbenchError("Workbench error: Compilation failed", "API_ERROR"));
+    expect(s).toContain("Workbench answered: Compilation failed.");
+    expect(s).not.toContain("not reachable");
+    expect(warns(s)).toBe(true);
+  });
+
+  it("a timeout says the reload may still be running and still warns", () => {
+    const s = notifyFailure(new WorkbenchError('Workbench call "ReloadScripts" timed out after 180000ms', "TIMEOUT"));
+    expect(s).toContain("The reload may still be running; check console.log.");
+    expect(s).not.toContain("not reachable");
+    expect(s).not.toContain("reload it manually");
+    expect(warns(s)).toBe(true);
+  });
+
+  it("a failed connection says not reachable and still warns", () => {
+    const s = notifyFailure(new WorkbenchError("connect ECONNREFUSED 127.0.0.1:5775", "CONNECTION_REFUSED"));
+    expect(s).toContain("Workbench not reachable (connect ECONNREFUSED 127.0.0.1:5775).");
+    expect(warns(s)).toBe(true);
   });
 });
 

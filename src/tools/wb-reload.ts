@@ -21,6 +21,19 @@ export async function reloadScripts(client: Pick<WorkbenchClient, "call">): Prom
   return RELOAD_NOTE;
 }
 
+/** The tuning server's reply when its post-write call to Workbench throws. Only a failed connection says "not reachable"; tuner.html shows its warning banner when the text has "not reachable" or "not notified". */
+export function notifyFailure(e: unknown): string {
+  const reason = e instanceof Error ? e.message : String(e);
+  const code = e instanceof WorkbenchError ? e.code : undefined;
+  if (code === "API_ERROR") {
+    return `Workbench answered: ${reason.replace(/^Workbench error: /, "")}. The file was still written; Workbench is not notified of it, so reload it manually once the error is fixed.`;
+  }
+  if (code === "TIMEOUT") {
+    return `Workbench did not answer in time (${reason}). The reload may still be running; check console.log. The file was still written; Workbench is not notified of it yet.`;
+  }
+  return `Workbench not reachable (${reason}). The file was still written -- reload it manually.`;
+}
+
 export function registerWbReload(server: McpServer, client: WorkbenchClient): void {
   server.registerTool(
     "wb_reload",
@@ -61,9 +74,10 @@ export function registerWbReload(server: McpServer, client: WorkbenchClient): vo
         const hint = e instanceof WorkbenchError && e.code === "TIMEOUT" ? " The reload may still be running; check console.log." : "";
         // target both: keep the scripts part when the plugins step throws; with no part yet, the scripts step failed and plugins never ran.
         const kept = parts.length ? parts.join("\n\n") + "\n\n" : "";
-        const skipped = target === "both" && !parts.length ? " Plugins were not tried." : "";
+        const skipped = target === "both" && !parts.length ? "\n\nPlugins were not tried." : "";
+        const label = parts.length ? "Plugin reload failed" : "Error reloading";
         return {
-          content: [{ type: "text" as const, text: `${kept}Error reloading: ${msg}${hint}${skipped}${formatConnectionStatus(client)}` }],
+          content: [{ type: "text" as const, text: `${kept}${label}: ${msg}${hint}${skipped}${formatConnectionStatus(client)}` }],
           isError: true,
         };
       }

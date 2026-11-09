@@ -4,7 +4,7 @@ import { createTuningServer } from "./server.js";
 import { WorkbenchClient } from "../workbench/client.js";
 import { PakVirtualFS } from "../pak/vfs.js";
 import { baseReader } from "../tools/config-override.js";
-import { reloadScripts } from "../tools/wb-reload.js";
+import { notifyFailure, reloadScripts } from "../tools/wb-reload.js";
 
 const config = loadConfig();
 const addonName = process.env.ENFUSION_TUNING_ADDON || "RoadForger";
@@ -23,10 +23,11 @@ const allowWrite = process.env.ENFUSION_TUNING_READONLY !== "1";
 //   menu:A,B       run an exact menu path against WorldEditor, e.g. menu:Plugins,Reload Scripts
 //   none           write only
 //
-// WARNING on `scripts`: a full script compile is documented to kill the NET API bridge.
-// After it fires, further calls here fail until Workbench is restarted. `rebuild` does not
-// do this. The write itself always lands regardless of postWrite, and the banner reports
-// what happened.
+// Note on `scripts`: ReloadScripts keeps the NET API and the MCP handlers on 1.9.0.37 (tests/records
+// 2026-11-08_WB19-LIVE_fix-checks.md, row 11). On the diag build every ReloadScripts raises the
+// "Resources are leaking!" assert and the reply waits until it is answered, up to 180 s; the MCP's
+// watcher (automatic, or `wb_watch start`) presses Ignore. The write itself always lands regardless
+// of postWrite, and the reply reports what happened.
 const postWrite = process.env.ENFUSION_TUNING_POST_WRITE || "rebuild";
 
 const wbClient = new WorkbenchClient(config.workbenchHost, config.workbenchPort, config);
@@ -52,8 +53,7 @@ async function notifyWorkbench(relPath: string): Promise<string | null> {
     const msg = typeof result.message === "string" ? result.message : JSON.stringify(result);
     return `Workbench [${postWrite}]: ${msg}`;
   } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    return `Workbench not reachable (${reason}). The file was still written -- reload it manually.`;
+    return notifyFailure(e);
   }
 }
 
@@ -71,7 +71,7 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`  addon:      ${addonName}`);
   console.log(`  path:       ${addonPath}`);
   console.log(`  mode:       ${allowWrite ? "read-write, close the prefab's Prefab Edit tab before applying" : "READ-ONLY (ENFUSION_TUNING_READONLY=1)"}`);
-  console.log(`  after write: ${postWrite}${postWrite === "scripts" ? " (script compile can drop the NET API bridge until restart)" : ""}`);
+  console.log(`  after write: ${postWrite}${postWrite === "scripts" ? " (the reply waits for the reload, up to 180 s)" : ""}`);
   console.log(`  base data:  ${baseData}`);
   console.log(`  Set ENFUSION_TUNING_ADDON to point at a different addon, ENFUSION_TUNING_PORT to change the port.`);
 });
