@@ -338,7 +338,7 @@ export function duplicateAddonError(
         continue; // an unreadable listed folder (dangling link, no permission) is not this launch's business
       }
       folders.push({ root, info });
-      if (opts.ids?.some((id) => id.toLowerCase() === info.id.toLowerCase())) targets.push(info.guid);
+      if (opts.ids?.some((id) => [info.id, info.guid].some((k) => k.toLowerCase() === id.toLowerCase()))) targets.push(info.guid);
     }
   }
   const seen = new Set<string>();

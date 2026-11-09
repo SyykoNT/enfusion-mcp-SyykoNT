@@ -137,6 +137,18 @@ describe("duplicateAddonError", () => {
     expect(duplicateAddonError([gprojOf(lone)], [projects, mission])).toBeNull(); // Dep's two copies are not Lone's business
   });
 
+  it("checks an addon passed in ids by GUID too, alone or next to its ID, in any letter case", () => {
+    const base = fresh();
+    const a = join(base, "a"), b = join(base, "b");
+    addon(a, "Extra", DEP);
+    addon(b, "Extra", DEP);
+    const opened = addon(a, "World", G);
+    for (const ids of [[DEP], [DEP.toLowerCase()], ["Extra", DEP], [DEP, DEP]]) {
+      expect(duplicateAddonError([gprojOf(opened)], [a, b], { ids }), ids.join(",")).toContain(DEP);
+    }
+    expect(duplicateAddonError([gprojOf(opened)], [a, b], { ids: ["DDDDDDDDDDDDDDDD"] })).toBeNull();
+  });
+
   it("checks every addon ID passed in ids, resolved in the folder set", () => {
     const base = fresh();
     const a = join(base, "a"), b = join(base, "b");
