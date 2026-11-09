@@ -63,6 +63,14 @@ describe("wb_prefabs locate", () => {
     if (p.trim()) expect(r.content[0].text).toContain(`"${p}"`);
   });
 
+  it.each([["$..\\..:Prefabs/X", "..\\.."], ["$My\\Addon:Prefabs/X", "My\\Addon"], ["$..:Prefabs/X", ".."]])("refuses %j without a NET API call and names the addon name", async (p, name) => {
+    expect(locateRequest(p)).toBeUndefined();
+    const { calls, r } = await locate(p);
+    expect(r.isError).toBe(true);
+    expect(calls).toEqual([]);
+    expect(r.content[0].text).toContain(`The addon name "${name}" must be a plain name`);
+  });
+
   it.each([
     ["Prefabs/Weapons/Rifles", "ArmaReforger", "Prefabs", "Prefabs/Weapons/Rifles"],
     [" Prefabs\\Weapons\\Rifles\\ ", "ArmaReforger", "Prefabs", "Prefabs/Weapons/Rifles"],
@@ -70,6 +78,7 @@ describe("wb_prefabs locate", () => {
     ["Prefabs/a.b/..x", "ArmaReforger", "Prefabs", "Prefabs/a.b/..x"],
     ["$ArmaReforger:Prefabs/Weapons", "ArmaReforger", "$ArmaReforger:Prefabs", "$ArmaReforger:Prefabs/Weapons"],
     ["$My Addon:Prefabs/Props", "My Addon", "$My Addon:Prefabs", "$My Addon:Prefabs/Props"],
+    ["$MyAddon:Prefabs/X", "MyAddon", "$MyAddon:Prefabs", "$MyAddon:Prefabs/X"],
     ["$MyAddon.v2:Prefabs", "MyAddon.v2", "$MyAddon.v2:Prefabs", "$MyAddon.v2:Prefabs"],
   ])("keeps %j", (p, selectedProject, projectPath, selectedFolder) => {
     expect(locateRequest(p)).toEqual({ selectedProject, projectPath, selectedFolder });

@@ -264,7 +264,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 | `wb_undo_redo` | Undo or redo in the World Editor |
 | `wb_open_resource` | Open a resource in its Workbench editor |
 | `wb_execute_action` | Run a Workbench menu action by path |
-| `wb_reload` | Reload game scripts with Workbench's built-in `ReloadScripts` call, plugins through one menu action (see Known limitations) |
+| `wb_reload` | Reload game scripts with Workbench's built-in `ReloadScripts` call, plugins through one menu action, Plugins > Reload (see Known limitations) |
 | `wb_projects` | List, locate or open loaded projects |
 
 ### World Editor (NET API)
@@ -455,7 +455,7 @@ only read (apart from those git refs), so they are not affected. To write, name 
 - `wb_reload` sends Workbench's built-in `ReloadScripts` call. Its Ok does not prove the scripts were recompiled: look for a
   new "Reloading game scripts took" line in Workbench's `console.log`. On the diag build (tested on 1.9.0.37) each reload raised the "Resources are leaking!"
   assert, which waits for Ignore; an attached `wb_watch` presses it. The plugin reload (`target` `plugins` or `both`) tries
-  one Workbench menu action; on 1.9.0.37 it returned false, so the tool says "not confirmed". Saving a `.c`
+  one Workbench menu action, Plugins > Reload; on 1.9.0.37 it returned false, so the tool says "not confirmed". Saving a `.c`
   file of the loaded project also makes Workbench reload game scripts. `mod compile` refuses while a Workbench is open
   (`force=true` runs it anyway).
 - The console server ignores the close request, so `server stop` kills it after `graceSec` (default 10 seconds).

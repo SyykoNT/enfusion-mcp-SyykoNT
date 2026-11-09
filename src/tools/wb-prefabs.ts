@@ -18,7 +18,7 @@ const MUTATING_PREFAB_ACTIONS = new Set(["createTemplate", "save"]);
 export function locateRequest(searchPath: string) {
   const input = searchPath.trim();
   if (/\p{C}/u.test(input) || /^[\\/]{2}/.test(input)) return undefined;
-  const [, prefix = "", rest] = /^(\$[^:/]*:|[A-Za-z]:)?([\s\S]*)$/.exec(input)!;
+  const [, prefix = "", rest] = /^(\$[^:/\\]*:|[A-Za-z]:)?([\s\S]*)$/.exec(input)!;
   if (prefix && !prefix.startsWith("$")) return undefined;
   const segs = rest.replace(/\\/g, "/").split("/").map((x) => x.trim()).filter((x) => x && x !== ".");
   const addon = prefix.startsWith("$") ? prefix.slice(1, -1).trim() : undefined;
@@ -28,6 +28,12 @@ export function locateRequest(searchPath: string) {
     projectPath: prefix + segs[0],
     selectedFolder: prefix + segs.join("/"),
   };
+}
+
+/** Names the `$Addon:` name the caller gave when it is blank, dots only or holds a backslash, so the refusal says which part was wrong. */
+function badAddonNote(searchPath: string): string {
+  const name = /^\s*\$([^:/]*):/.exec(searchPath)?.[1];
+  return name !== undefined && (/^[.\s]*$/.test(name) || name.includes("\\")) ? ` The addon name "${name}" must be a plain name: not blank, only dots, or containing a backslash.` : "";
 }
 
 export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): void {
@@ -107,7 +113,7 @@ export function registerWbPrefabs(server: McpServer, client: WorkbenchClient): v
           const request = locateRequest(searchPath);
           if (!request) {
             return {
-              content: [{ type: "text" as const, text: `Error: \`searchPath\` "${searchPath}" is empty, a whole data root, a single top-level folder, a drive or network path, or contains control or invisible characters; locate needs a virtual game folder such as 'Prefabs/Weapons/Rifles'.` }],
+              content: [{ type: "text" as const, text: `Error: \`searchPath\` "${searchPath}" is empty, a whole data root, a single top-level folder, a drive or network path, or contains control or invisible characters; locate needs a virtual game folder such as 'Prefabs/Weapons/Rifles'.${badAddonNote(searchPath)}` }],
               isError: true,
             };
           }

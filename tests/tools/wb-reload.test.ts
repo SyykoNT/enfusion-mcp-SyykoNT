@@ -72,14 +72,14 @@ describe("wb_reload", () => {
     expect(t.call.mock.calls[0][1]).toEqual({ target: "plugins" });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("**Plugin reload not confirmed**");
-    expect(r.content[0].text).toContain("Workbench did not confirm the menu action.");
+    expect(r.content[0].text).toContain("Workbench did not confirm the menu action Plugins > Reload.");
     expect(r.content[0].text).not.toContain("ReloadScripts");
   });
 
   it("the description says the plugin reload tries one menu action, never several", () => {
     let description = "";
     registerWbReload({ registerTool: (_n: string, d: { description: string }) => { description = d.description; } } as unknown as McpServer, new WorkbenchClient("127.0.0.1", 1));
-    expect(description).toContain("one menu action");
+    expect(description).toContain("one menu action, Plugins > Reload,");
     expect(description).not.toMatch(/menu actions/);
   });
 

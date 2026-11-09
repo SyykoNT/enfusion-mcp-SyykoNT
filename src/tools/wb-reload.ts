@@ -41,7 +41,7 @@ export function registerWbReload(server: McpServer, client: WorkbenchClient): vo
       description:
         "Reloads game scripts by sending Workbench's built-in NET API call ReloadScripts. Workbench answers Ok or 'Compilation failed'; " +
         "a new 'Reloading game scripts took' line in Workbench's console.log confirms the reload. target 'plugins' (and 'both') also tries " +
-        "one menu action through a handler, which may report 'not confirmed'.",
+        "one menu action, Plugins > Reload, through a handler, which may report 'not confirmed'.",
       inputSchema: {
         target: z
           .enum(["scripts", "plugins", "both"])
@@ -62,7 +62,7 @@ export function registerWbReload(server: McpServer, client: WorkbenchClient): vo
           // The handler tries one menu action (Plugins > Reload); "=false" means Workbench did not confirm it.
           if (/ExecuteAction=false/.test(msg)) {
             isError = true;
-            parts.push(`**Plugin reload not confirmed**: ${msg}\n\nWorkbench did not confirm the menu action.`);
+            parts.push(`**Plugin reload not confirmed**: ${msg}\n\nWorkbench did not confirm the menu action Plugins > Reload.`);
           } else {
             parts.push(`**Plugin reload triggered**\n\n${msg || "Reload triggered."}`);
           }
