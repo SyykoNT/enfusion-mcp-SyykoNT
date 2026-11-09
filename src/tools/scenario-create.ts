@@ -37,8 +37,10 @@ const BASE_SPEC_SCHEMA = z.object({
     .describe(
       "Base type. 'base' (default) = standard contested base. 'major' = large base with CAH areas (harbour, port, airfield). " +
       "'MOB' = main operating base and HQ candidate (no seizing, radio source; listed in the mission header as able to be an HQ). " +
+      "An HQ starts with the game mode's m_iHQStartingSupplies (1000 in GameMode_Campaign.et, script default 600) " +
+      "or the header's m_iStartingHQSupplies when not -1; this tool writes neither and writes no supply value on the base. " +
       "'controlPoint' = lightweight capture point. " +
-      "'relay' =pre-placed always-on radio relay tower, not capturable, extends coverage into radio gaps (default range 3000m)."
+      "'relay' = pre-placed always-on radio relay tower, not capturable, extends coverage into radio gaps (default range 3000m)."
     ),
   radioRange: z
     .number()
@@ -193,7 +195,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
             "Supplies replenished periodically in HQs and supply hubs (m_iRegularSuppliesIncome, default 50; 10 in GameMode_Campaign.et, script default 40). " +
             "Regular bases use m_iRegularSuppliesIncomeBase (0 in GameMode_Campaign.et, script default 4) only while m_bSuppliesAutoRegenerationEnabled is on " +
             "(script default off, 1 in GameMode_Campaign.et; a campaign mission header replaces it at start, default 1). " +
-            "This tool writes neither and leaves the header flag at its default, so with its GameMode_Campaign.et game mode generated regular bases get base income 0 plus the radio extra. Source bases set their own. " +
+            "This tool writes neither and leaves the header flag at its default, so with its GameMode_Campaign.et game mode generated 'base' and 'controlPoint' bases get base income 0, plus the radio extra only where it applies. " +
             "The radio extra (m_iRegularSuppliesIncomeExtra, 1 in GameMode_Campaign.et, script default 4, for each friendly BASE-type base in this base's radio range that receives HQ radio traffic, up to 5) " +
             "applies only to non-HQ bases with auto regeneration on (a relay has no income loop)."
           ),

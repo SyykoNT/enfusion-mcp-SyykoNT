@@ -147,7 +147,7 @@ All bases use **`ConflictMilitaryBase.et`** (`{1391CE8C0E255636}`) in a `$grp Ge
 |---|---|
 | Standard town/small base | `SCR_CampaignSeizingComponent` enabled, no CAH, no `m_bCanBeHQ` |
 | Major base (harbour, port) | `SCR_CampaignSeizingComponent` with a larger `m_iRadius`, `m_bIsControlPoint 1`, `m_bIsSupplyHub 1`. 1.9.0.37 has no property that ties a base to CAH areas (the three the old text used are declared by no script) |
-| MOB / HQ | `SCR_CampaignSeizingComponent Enabled 0`, `m_bCanBeHQ 1`, `m_bIsSupplyHub 1`, radio `m_bIsSource 1`, `SCR_CampaignSuppliesComponent m_iSupplies 500` (not read in 1.9.0.37; an HQ starts with the game mode's `m_iHQStartingSupplies` or the header's `m_iStartingHQSupplies`), radio range 1000m |
+| MOB / HQ | `SCR_CampaignSeizingComponent Enabled 0`, `m_bCanBeHQ 1`, `m_bIsSupplyHub 1`, radio `m_bIsSource 1`, no supply value to write (the `m_iSupplies` of the obsolete `SCR_CampaignSuppliesComponent` is not read in 1.9.0.37; an HQ starts with the game mode's `m_iHQStartingSupplies` or the header's `m_iStartingHQSupplies`), radio range 1000m |
 | Relay radio tower | Use `ConflictRelayRadio.et` — different prefab, just radio + base name component |
 
 **Radio range by role (from production mods).** The range is the `"Transmitting Range"` of the base's `RelayTransceiver` (1.9.0.37: `SCR_CampaignMilitaryBaseComponent.c` `GetRelayRadioRange`; `ConflictMilitaryBase.et` sets `"Transmitting Range" 1000`):

@@ -183,7 +183,9 @@ export function registerScenarioTools(server: McpServer, client: WorkbenchClient
           .optional()
           .describe(
             "(base) Base type. 'base' (default) = standard contested base. " +
-            "'MOB' = main operating base / HQ candidate (seizing disabled, radio source)."
+            "'MOB' = main operating base, an HQ candidate: sets m_bCanBeHQ 1, m_bDisableWhenUnusedAsHQ 1, radio m_bIsSource 1 and seizing disabled, and writes no supply value. " +
+            "If the game picks it as a faction HQ it starts with the game mode's m_iHQStartingSupplies (1000 in GameMode_Campaign.et, script default 600) " +
+            "or the mission header's m_iStartingHQSupplies when not -1."
           ),
         patrolCount: z
           .number()

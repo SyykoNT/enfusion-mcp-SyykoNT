@@ -54,7 +54,7 @@ describe("scenario_create_conflict input docs", () => {
     const d = schema.suppliesIncome.description!;
     expect(d).toContain("HQs and supply hubs");
     expect(d).toMatch(/Regular bases use m_iRegularSuppliesIncomeBase .* only while m_bSuppliesAutoRegenerationEnabled is on/);
-    expect(d).toContain("Source bases set their own");
+    expect(d).toContain("'base' and 'controlPoint' bases get base income 0, plus the radio extra only where it applies");
     expect(d).toMatch(/radio extra .* applies only to non-HQ bases with auto regeneration on/);
   });
 });
