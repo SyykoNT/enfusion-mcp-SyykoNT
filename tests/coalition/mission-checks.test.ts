@@ -173,6 +173,19 @@ describe("settings (GI-04)", () => {
     expect(short["faction {607A} friendly with"]).toBe("BLUFOR, OPFOR, INDFOR");
   });
 
+  it("takes the CIVILIAN faction from the base of the prefab chain, not from CRF's override that lists only changed factions", () => {
+    const m = mission({
+      [`${LAYERS}/_INIT.layer`]: lobbyEntity(
+        ` {\n  SCR_FactionManager "6A39" {\n   Factions {\n${friendly("607A", '      "BLUFOR"\n')}${friendly("9999", '      "OPFOR"\n')}   }\n  }\n }\n`
+      ),
+    });
+    const override = prefabWith(faction("1111") + faction("2222") + faction("3333") + faction("9999") + faction("4444"));
+    const lobbyPrefab = prefabWith(faction("1111") + faction("2222") + faction("3333") + faction("607A") + faction("628B", "BLUFOR"));
+    const rows = Object.fromEntries(settings(m, [m.lobby.node, override, lobbyPrefab], new Map(), new Map()).map((r) => [r.name, r.value]));
+    expect(rows["CIVILIAN friendly with"]).toBe("BLUFOR");
+    expect(rows["faction {9999} friendly with"]).toBe("OPFOR");
+  });
+
   const SCRIPT = `class COA_GearScriptContainer {\n [Attribute("true", UIWidgets.Hidden)]\n bool m_bEnableBFT;\n [Attribute("true", UIWidgets.Hidden)]\n bool m_bEnableLeadershipRadios;\n [Attribute("false", UIWidgets.Hidden)]\n bool m_bEnableGIRadios;\n [Attribute("true", UIWidgets.Hidden)]\n bool m_bEnableRTORadios;\n}`;
   const CRF_SCRIPT = `modded class COA_GearScriptContainer {\n [Attribute("false", UIWidgets.Hidden)]\n bool m_bEnableShareableMarkers;\n}`;
   const container = (side: string, body: string) => ` m_${side}GearScriptSettings COA_GearScriptContainer "{5}" {\n${body} }\n`;

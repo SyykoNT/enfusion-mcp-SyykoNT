@@ -201,7 +201,7 @@ function missionInspect(config: Config, p: Params): string {
   // ── progress, settings, standards ──
   const nodes = want.has("progress") || want.has("settings") ? lobbyNodes(config, roots, m) : [];
   const steps = want.has("progress") ? progress(m, nodes) : undefined;
-  // [Attribute] defaults: the gamemode's fields, then each side's gearscript container (CRF adds m_bEnableShareableMarkers)
+  // [Attribute] defaults (last declaration per field wins): the gamemode's fields, then the dialog's COA_SimplifiedGearScriptContainer (CRF adds m_bEnableShareableMarkers)
   const defaultsOf = (copy: Layer, file: string) => {
     const f = copy.list("Scripts/Game").find((x) => x.endsWith(`/${file}`));
     return f ? attributeDefaults(textOf(copy, f) ?? "") : new Map<string, string>();
