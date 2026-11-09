@@ -114,13 +114,20 @@ describe("notifyFailure (the tuning server's reply when its post-write call thro
   it("a Workbench API error says Workbench answered, not that it is unreachable, and still warns", () => {
     const s = notifyFailure(new WorkbenchError("Workbench error: Compilation failed", "API_ERROR"));
     expect(s).toContain("Workbench answered: Compilation failed.");
+    expect(s).toContain("the tuner was not notified that Workbench loaded the change");
     expect(s).not.toContain("not reachable");
     expect(warns(s)).toBe(true);
   });
 
-  it("a timeout says the reload may still be running and still warns", () => {
+  it("an API error message that ends in a period does not get a second one", () => {
+    const s = notifyFailure(new WorkbenchError("Workbench error: Compilation failed.", "API_ERROR"));
+    expect(s).toContain("Workbench answered: Compilation failed. The file");
+  });
+
+  it("a timeout says Workbench may still be working and still warns", () => {
     const s = notifyFailure(new WorkbenchError('Workbench call "ReloadScripts" timed out after 180000ms', "TIMEOUT"));
-    expect(s).toContain("The reload may still be running; check console.log.");
+    expect(s).toContain("Workbench may still be working on it; check console.log.");
+    expect(s).toContain("the tuner was not notified that Workbench loaded the change");
     expect(s).not.toContain("not reachable");
     expect(s).not.toContain("reload it manually");
     expect(warns(s)).toBe(true);

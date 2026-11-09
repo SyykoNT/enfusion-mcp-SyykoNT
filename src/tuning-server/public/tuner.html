@@ -97,6 +97,7 @@ const AXLE_BLOCKS = [["tyre", "Tyre"], ["steering", "Steering"], ["suspension", 
 let cur = null;          // { rel, body } of the loaded vehicle
 let lastMtime = null;
 let deepLinkMiss = null;
+let writing = false;     // a POST is in flight: Apply stays disabled and the poll stays quiet
 /** Every editable value on the page: id -> { target, loaded, value, touched }. */
 let rows = new Map();
 
@@ -406,7 +407,7 @@ function changesBody() {
 function refreshWriteState() {
   const n = changedRows().length;
   const btn = $("writeBtn");
-  btn.disabled = !$("allowWrite").checked || n === 0 || !cur;
+  btn.disabled = writing || !$("allowWrite").checked || n === 0 || !cur;
   btn.textContent = n ? `Apply ${n} change(s) to prefab` : "Apply to prefab";
 }
 
@@ -508,10 +509,11 @@ async function loadVehicle(rel, manual) {
 
 // A Workbench save bumps the mtime; re-read then, unless that would throw away edits.
 async function pollForChanges() {
-  if (!cur || !$("autoWatch").checked) return;
+  if (!cur || writing || !$("autoWatch").checked) return;
   try {
     const body = await (await fetch(apiUrl(cur.rel))).json();
-    if (body.status !== "ok" || body.mtimeMs === lastMtime) return;
+    // A write that began during the fetch changes the file itself; writeChanges reloads it afterwards.
+    if (writing || body.status !== "ok" || body.mtimeMs === lastMtime) return;
     const pending = changedRows().length;
     if (pending) {
       lastMtime = body.mtimeMs;
@@ -527,27 +529,31 @@ async function writeChanges() {
   if (!cur) return;
   const changes = changesBody();
   if (!Object.keys(changes).length) return;
-  $("writeBtn").disabled = true;
-  let res, body;
+  writing = true;
+  refreshWriteState();
   try {
-    res = await fetch(apiUrl(cur.rel), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes }) });
-    body = await res.json();
-  } catch (e) {
-    showBanner("err", "The request failed: " + (e instanceof Error ? e.message : String(e)));
+    let res, body;
+    try {
+      res = await fetch(apiUrl(cur.rel), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes }) });
+      body = await res.json();
+    } catch (e) {
+      showBanner("err", "The request failed: " + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    if (!res.ok || body.status !== "ok") {
+      // The server's own words, so a refusal reads exactly as it was given.
+      showBanner("err", `The server refused (HTTP ${res.status}):\n${body.message || ""}`);
+      return;
+    }
+    const wb = body.workbench || "";
+    const reached = wb.indexOf("not reachable") === -1 && wb.indexOf("not notified") === -1;
+    await loadVehicle(cur.rel);
+    showBanner(wb && !reached ? "warn" : "ok",
+      `Wrote ${(body.written || []).join(", ")} to ${cur.rel}.\n${body.message || ""}${wb ? "\n" + wb : ""}`);
+  } finally {
+    writing = false;
     refreshWriteState();
-    return;
   }
-  if (!res.ok || body.status !== "ok") {
-    // The server's own words, so a refusal reads exactly as it was given.
-    showBanner("err", `The server refused (HTTP ${res.status}):\n${body.message || ""}`);
-    refreshWriteState();
-    return;
-  }
-  const wb = body.workbench || "";
-  const reached = wb.indexOf("not reachable") === -1 && wb.indexOf("not notified") === -1;
-  await loadVehicle(cur.rel);
-  showBanner(wb && !reached ? "warn" : "ok",
-    `Wrote ${(body.written || []).join(", ")} to ${cur.rel}.\n${body.message || ""}${wb ? "\n" + wb : ""}`);
 }
 
 $("reloadBtn").onclick = () => cur && loadVehicle(cur.rel, true);

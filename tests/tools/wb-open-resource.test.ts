@@ -92,6 +92,18 @@ describe("wb_open_resource", () => {
     expect(await hinted("Prefabs/X.et")).toBe(false);
   });
 
+  it("the hint follows the structured dialog probe, not the message text", async () => {
+    const t = setup(() => undefined);
+    const hinted = async () => (await t.tool.run({ path: "Worlds/Other.ent" })).content[0].text.includes("usually means");
+    const dialogs: DialogProbe[] = [{ pid: 1, dialogs: [{ hwnd: 1, cls: "#32770", text: "Script Authorization Required" }] }];
+    // The message names no dialog, so a check on the text would still add the hint
+    vi.spyOn(t.client, "call").mockRejectedValue(new WorkbenchError("timed out", "TIMEOUT", dialogs));
+    expect(await hinted()).toBe(false);
+    // No probe at all (for example it was not run): the hint stays
+    vi.spyOn(t.client, "call").mockRejectedValue(new WorkbenchError("timed out", "TIMEOUT", undefined));
+    expect(await hinted()).toBe(true);
+  });
+
   it("another error carries no dialog hint", async () => {
     const t = setup(() => ({ status: "error", message: "Workbench could not open: X.ent" }));
     const r = await t.tool.run({ path: "X.ent" });

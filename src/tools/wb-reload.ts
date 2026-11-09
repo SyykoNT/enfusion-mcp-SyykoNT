@@ -26,10 +26,10 @@ export function notifyFailure(e: unknown): string {
   const reason = e instanceof Error ? e.message : String(e);
   const code = e instanceof WorkbenchError ? e.code : undefined;
   if (code === "API_ERROR") {
-    return `Workbench answered: ${reason.replace(/^Workbench error: /, "")}. The file was still written; Workbench is not notified of it, so reload it manually once the error is fixed.`;
+    return `Workbench answered: ${reason.replace(/^Workbench error: /, "").replace(/\.$/, "")}. The file was still written; the tuner was not notified that Workbench loaded the change, so reload it manually once the error is fixed.`;
   }
   if (code === "TIMEOUT") {
-    return `Workbench did not answer in time (${reason}). The reload may still be running; check console.log. The file was still written; Workbench is not notified of it yet.`;
+    return `Workbench did not answer in time (${reason}). Workbench may still be working on it; check console.log. The file was still written; the tuner was not notified that Workbench loaded the change.`;
   }
   return `Workbench not reachable (${reason}). The file was still written -- reload it manually.`;
 }

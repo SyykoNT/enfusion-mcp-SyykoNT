@@ -54,7 +54,7 @@ function formatEntityList(data: Record<string, unknown>): string {
   const lines: string[] = [];
   // 1.9 packs an empty object before each real entity row; a real one has a name, class or position
   const entities = (Array.isArray(data.entities) ? data.entities : []).filter((e) => e?.name || e?.className || e?.position);
-  // the handler sends totalCount; total is the older name
+  // the handler sends totalCount; total is only a fallback (no handler has sent it)
   const count = data.totalCount ?? data.total;
   const total = typeof count === "number" ? count : entities.length;
   const offset = typeof data.offset === "number" ? data.offset : 0;
