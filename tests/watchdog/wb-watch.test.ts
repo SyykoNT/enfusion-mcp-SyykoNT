@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { eventLines, watchAlerts } from "../../src/workbench/status.js";
 import { alerts, claimWatch, createWatcher, findLogDir, recentStates, runWatcher, type WatchOpts, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
@@ -449,6 +450,93 @@ describe("crash folder sweep at attach (B-044)", () => {
     expect(await runWatcher(t.opts({ crashDir }), { probe: () => ({ stop: vi.fn() }), ...twoTicks() })).toBe(0);
     expect(readdirSync(crashDir)).toEqual(["logs_2026-10-30_08-00-00"]);
     expect(events(t.stateDir).filter((e) => e.kind === "crash")).toHaveLength(1);
+  });
+});
+
+describe("settings drift report (profile settings files)", () => {
+  const events = (dir: string) => readFileSync(join(dir, "events.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+  const conf = (classes: string[]) =>
+    ["GameUserSettings {", ...classes.flatMap((c, i) => [` ${c} ${c} "{6AB07B176D3DEE${String(i).padStart(2, "0")}}" {`, "  m_bX 0", " }"]), "}", ""].join("\r\n");
+  const sha = (f: string) => createHash("sha256").update(readFileSync(f)).digest("hex");
+  /** A game and a Workbench profile in temp folders, each with one settings file. */
+  function profiles(t: ReturnType<typeof setup>) {
+    const game = join(t.root, "game");
+    const wb = join(t.root, "wbprofile");
+    const gameFile = join(game, "profile", ".save", "app1_x", "settings", "ReforgerGameSettings.conf");
+    const wbFile = join(wb, "profile", ".save", "settings", "ReforgerEngineSettings.conf");
+    for (const f of [gameFile, wbFile]) mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(gameFile, conf(["SCR_VideoSettings", "WCS_EarplugSettings", "CSI_Extra"]));
+    writeFileSync(wbFile, conf(["AudioSettings", "GraphicsQualitySettings"]));
+    return { roots: [game, wb], gameFile, wbFile, hashes: () => [sha(gameFile), sha(wbFile)] };
+  }
+  /** Two ticks, then the Workbench is gone; `change` runs between them, like Workbench rewriting its files while it runs. */
+  const run = (t: ReturnType<typeof setup>, roots: string[], change?: () => void) => {
+    let ticks = 0;
+    return runWatcher(t.opts({ logsRoot: undefined, settingsRoots: roots }), {
+      probe: () => ({ stop: vi.fn() }), alive: () => ticks < 2,
+      wait: () => new Promise((r) => setImmediate(() => { if (++ticks === 1) change?.(); r(undefined); })),
+    });
+  };
+  const settingsEvents = (dir: string) => events(dir).filter((e) => e.kind === "settings");
+
+  it("reports a block missing at exit, once, naming the file and the block; the same blocks in another order give no event", async () => {
+    const t = setup();
+    const p = profiles(t);
+    const changed = () => {
+      writeFileSync(p.gameFile, conf(["CSI_Extra", "SCR_VideoSettings", "WCS_EarplugSettings"])); // another order
+      writeFileSync(p.wbFile, conf(["AudioSettings"])); // GraphicsQualitySettings is gone
+    };
+    let after: string[] = [];
+    expect(await run(t, p.roots, () => { changed(); after = p.hashes(); })).toBe(0);
+    const ev = settingsEvents(t.stateDir);
+    expect(ev).toHaveLength(1);
+    expect(ev[0].action).toMatch(/^SETTINGS \d\d:\d\d:\d\d .*ReforgerEngineSettings\.conf: blocks gone: GraphicsQualitySettings \(/);
+    expect(ev[0].action).not.toContain("ReforgerGameSettings");
+    expect(eventLines(t.stateDir, 0).lines.filter((l) => l.startsWith("SETTINGS"))).toEqual([ev[0].action]);
+    expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")).actions).toContain(ev[0].action);
+    expect(p.hashes()).toEqual(after); // read only
+    expect(Object.values(JSON.parse(readFileSync(join(t.stateDir, "settings.json"), "utf-8")))).toContainEqual(["AudioSettings"]);
+  });
+
+  it("an unchanged profile gives no event and changes no file outside the watch dir", async () => {
+    const t = setup();
+    const p = profiles(t);
+    const before = p.hashes();
+    expect(await run(t, p.roots)).toBe(0);
+    expect(settingsEvents(t.stateDir)).toEqual([]);
+    expect(p.hashes()).toEqual(before);
+    expect(existsSync(join(t.stateDir, "settings.json"))).toBe(true);
+  });
+
+  it("at the next attach, a block lost while nothing watched is reported once against the saved snapshot", async () => {
+    const t = setup();
+    const p = profiles(t);
+    expect(await run(t, p.roots)).toBe(0);
+    writeFileSync(p.gameFile, conf(["SCR_VideoSettings", "WCS_EarplugSettings"])); // CSI_Extra dropped by a run nobody watched
+    expect(await run(t, p.roots)).toBe(0);
+    const ev = settingsEvents(t.stateDir);
+    expect(ev).toHaveLength(1);
+    expect(ev[0].action).toMatch(/ReforgerGameSettings\.conf: blocks gone: CSI_Extra \(/);
+    expect(await run(t, p.roots)).toBe(0); // the snapshot moved on: nothing is reported twice
+    expect(settingsEvents(t.stateDir)).toHaveLength(1);
+  });
+
+  it("missing profile folders give no event and no throw; a snapshot that cannot be saved is noted and the watch ends normally", async () => {
+    const t = setup();
+    expect(await run(t, [join(t.root, "no-game"), join(t.root, "no-wb")])).toBe(0);
+    expect(settingsEvents(t.stateDir)).toEqual([]);
+
+    const u = setup();
+    const p = profiles(u);
+    mkdirSync(join(u.stateDir, "settings.json")); // a folder where the file belongs: the save fails (MCP-0040 stand-in)
+    expect(await run(u, p.roots)).toBe(0);
+    expect(events(u.stateDir).some((e) => /settings check failed/.test(e.action))).toBe(true);
+  });
+
+  it("a watcher started without profile roots checks nothing", async () => {
+    const t = setup();
+    expect(await run(t, [])).toBe(0);
+    expect(existsSync(join(t.stateDir, "settings.json"))).toBe(false);
   });
 });
 

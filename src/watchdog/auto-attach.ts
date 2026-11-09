@@ -6,11 +6,10 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "../config.js";
-import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { WORKBENCH_INSTANCES, isOwned } from "../utils/instances.js";
 import { isAlive, netstat, processInfoAsync, sleep, type ProcInfo } from "../utils/process.js";
 import { WB_EXE, isWatcherCmd, watchAction } from "../tools/wb-watch-tool.js";
-import { UNREADABLE, WATCH_DIR, autoBlocked, readStates, startWatcher, watcherOf, type StartWatcher } from "./wb-watch.js";
+import { UNREADABLE, WATCH_DIR, autoBlocked, readStates, startWatcher, watcherBase, watcherOf, type StartWatcher } from "./wb-watch.js";
 import { portOwner } from "./signals.js";
 
 export interface AttachDeps {
@@ -44,7 +43,7 @@ export function attachDeps(config: Config): AttachDeps {
     owned: (pid, proc) => isOwned(pid, WORKBENCH_INSTANCES, proc),
     alive: isAlive,
     start: startWatcher,
-    base: { logsRoot: join(workbenchProfileDir(config), "logs"), scriptAuth: config.scriptAuth ?? "rules", crashDir: crashLogsDir(config) },
+    base: watcherBase(config),
   };
 }
 

@@ -18,8 +18,8 @@ import { findGproj, findWorkbenchExe, isProtectedAddon } from "../utils/game-pat
 import { forbiddenRoot, sameRealPath } from "../utils/safe-path.js";
 import { argValue, findPids, isAlive, netstat, processInfoAsync, type ProcInfo } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, isOwned, pidInstanceFile, writeInstance } from "../utils/instances.js";
-import { crashLogsDir, DIALOG_CHECK_AFTER_MS, DIALOG_CHECK_EVERY_MS, workbenchEnv, workbenchProfileDir } from "./cli.js";
-import { startWatcher, sweepForStart } from "../watchdog/wb-watch.js";
+import { DIALOG_CHECK_AFTER_MS, DIALOG_CHECK_EVERY_MS, workbenchEnv, workbenchProfileDir } from "./cli.js";
+import { startWatcher, sweepForStart, watcherBase } from "../watchdog/wb-watch.js";
 import { LOCAL_HOSTS, attachDeps, ensureWatched, type AttachResult } from "../watchdog/auto-attach.js";
 import { probeDialogs, probeTitles, type TitleProbe } from "../watchdog/probe.js";
 import { dialogKind, formatDialogs, portOwner, unsavedWorld, type DialogProbe } from "../watchdog/signals.js";
@@ -900,8 +900,7 @@ export class WorkbenchClient {
       }
       try {
         startWatcher({
-          pid: proc.pid, startTime: launchedAt, owned: true, logsRoot: join(workbenchProfileDir(this.config!), "logs"),
-          host: this.host, port: this.port, scriptAuth: this.config!.scriptAuth ?? "rules", crashDir: crashLogsDir(this.config!),
+          pid: proc.pid, startTime: launchedAt, owned: true, ...watcherBase(this.config!), host: this.host, port: this.port,
         });
       } catch (e) {
         logger.warn(`Could not start the watchdog for Workbench PID ${proc.pid}: ${e}`);

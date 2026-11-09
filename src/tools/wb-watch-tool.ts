@@ -3,10 +3,9 @@ import { z } from "zod";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthMode, Config } from "../config.js";
-import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { isOwned } from "../utils/instances.js";
 import { isAlive, killPids, processInfo, sleep, type ProcInfo } from "../utils/process.js";
-import { UNREADABLE, WATCH_DIR, formatReport, hms, noautoFile, olderLine, readStates, recentStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
+import { UNREADABLE, WATCH_DIR, formatReport, hms, noautoFile, olderLine, readStates, recentStates, startWatcher, watcherBase, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
 import { answerDialog, probeDialogs } from "../watchdog/probe.js";
 import { appendLockLine, authDetails, loadSetOf, type LoadSet } from "../watchdog/auth.js";
 import { authLine, authText, dialogKind, parseAuthWindow, textHash, type AuthLog, type WinInfo } from "../watchdog/signals.js";
@@ -252,10 +251,7 @@ export function registerWbWatch(server: McpServer, config: Config): void {
               start: startWatcher,
               // Tree kill: the watcher's finally never runs under taskkill /F, so its probe PowerShell must go with it.
               kill: (pid) => killPids([pid], true, true),
-              base: {
-                logsRoot: join(workbenchProfileDir(config), "logs"), host: config.workbenchHost, port: config.workbenchPort,
-                scriptAuth: config.scriptAuth ?? "rules", crashDir: crashLogsDir(config),
-              },
+              base: { ...watcherBase(config), host: config.workbenchHost, port: config.workbenchPort },
             });
       return { content: [{ type: "text" as const, text: r.text }], ...(r.isError ? { isError: true as const } : {}) };
     }

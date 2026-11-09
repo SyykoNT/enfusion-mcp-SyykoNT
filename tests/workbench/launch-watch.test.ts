@@ -103,6 +103,13 @@ describe("launchWorkbench records and watches what it starts", () => {
     expect(isOwned(4242, WORKBENCH_INSTANCES, { pid: 4242, ppid: 0, cmd: "", created: inst.startedAt + 60_000 })).toBe(false);
   });
 
+  it("hands the game and Workbench profile folders to the watcher as --settings-root", async () => {
+    const { c, gproj } = client({ workshopPath: join(home, "Games", "ArmaReforger", "addons") });
+    await c.ensureRunning(gproj);
+    const args = sys.watcher[0];
+    expect(args.flatMap((a, i) => (a === "--settings-root" ? [args[i + 1]] : []))).toEqual([join(home, "Games", "ArmaReforger"), home]);
+  });
+
   it("starts Workbench as the Tools app in Steam and keeps the rest of the environment", async () => {
     const { c, gproj } = client();
     await c.ensureRunning(gproj);

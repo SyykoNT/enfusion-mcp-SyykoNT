@@ -1,11 +1,29 @@
 import { describe, it, expect, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { answerAction, watchAction, type WatchArgs, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
+import { dirname, join } from "node:path";
+import type { Config } from "../../src/config.js";
+import { answerAction, registerWbWatch, watchAction, type WatchArgs, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
 import { formatConnectionStatus, watchAlerts } from "../../src/workbench/status.js";
 import { alertLine, autoBlocked, createWatcher, formatReport, type WatchState } from "../../src/watchdog/wb-watch.js";
+import { profileRoots } from "../../src/watchdog/settings-drift.js";
 import type { WorkbenchClient } from "../../src/workbench/client.js";
+
+// A fake home before any module loads, so the watch dir and the instance registry are temp folders; the watcher spawn is a stub.
+const home = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const h = fs.mkdtempSync(path.join(os.tmpdir(), "emcp-wt-home-"));
+  process.env.USERPROFILE = process.env.HOME = h;
+  return h;
+});
+const spawnDetached = vi.hoisted(() => vi.fn((_exe: string, _args: string[], _cwd: string, _log?: string) => 1234));
+vi.mock("../../src/utils/process.js", async (orig) => ({
+  ...(await orig<typeof import("../../src/utils/process.js")>()),
+  spawnDetached,
+  processInfo: (pid: number) => ({ pid, ppid: 1, cmd: "\"C:\\Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe\" -gproj x", created: 1 }),
+}));
 
 // Temp state dir and lock file; processes, ownership and the watcher spawn are stubs.
 const lockPath = join(mkdtempSync(join(tmpdir(), "emcp-wt-lock-")), "WORKBENCH_LOCK.txt");
@@ -362,5 +380,19 @@ describe("an unreadable watch lock (B-099 items 1 and 4)", () => {
     other.kill = vi.fn(() => writeFileSync(json(other), rival));
     await watchAction({ action: "stop", pid: 19524 }, other);
     expect(readFileSync(json(other), "utf-8")).toBe(rival);
+  });
+});
+
+describe("wb_watch start as registered: the profile roots reach the watcher", () => {
+  it("passes the game and Workbench profile folders as --settings-root", async () => {
+    const config = { projectPath: join(home, "projects"), workshopPath: join(home, "Games", "ArmaReforger", "addons"), workbenchHost: "127.0.0.1", workbenchPort: 5775 } as Config;
+    let handler: (a: unknown) => Promise<{ content: { text: string }[] }> = async () => ({ content: [] });
+    registerWbWatch({ registerTool: (_n: string, _s: unknown, h: typeof handler) => (handler = h) } as never, config);
+    const r = await handler({ action: "start", pid: 4321 });
+    expect(r.content[0].text).toContain("Watching Workbench PID 4321");
+    const args = spawnDetached.mock.calls.at(-1)![1];
+    const roots = args.flatMap((a, i) => (a === "--settings-root" ? [args[i + 1]] : []));
+    expect(roots).toEqual(profileRoots(config));
+    expect(roots[0]).toBe(dirname(config.workshopPath!));
   });
 });

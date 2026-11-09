@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkbenchClient } from "../../src/workbench/client.js";
-import { formatConnectionStatus, ensureMode, portOwnerLines } from "../../src/workbench/status.js";
+import { eventLines, formatConnectionStatus, ensureMode, portOwnerLines } from "../../src/workbench/status.js";
 import type { Config } from "../../src/config.js";
 import { encodePascalString, decodePascalString, decodeInt32LE } from "../../src/workbench/protocol.js";
 
@@ -188,5 +188,15 @@ describe("formatConnectionStatus: a Workbench that does not hold the NET API por
     state(100, { portOwner: 200 });
     expect(portOwnerLines(dir, 5775, () => true)).toContain("does not hold");
     expect(portOwnerLines(dir, 5775, () => false)).toBe("");
+  });
+});
+
+describe("eventLines: the settings kind", () => {
+  it("shows a settings event in the footer line like the other watcher events, and still skips a kind it does not know", () => {
+    const dir = mkdtempSync(join(tmpdir(), "emcp-status-settings-"));
+    const line = (kind: string, action: string, t: number) => JSON.stringify({ t, pid: 1, action, kind });
+    writeFileSync(join(dir, "events.jsonl"), [line("settings", "SETTINGS 10:00:00 f.conf: blocks gone: CSI_X (restore from your own backup)", 5), line("other", "not shown", 6), ""].join("\n"));
+    expect(eventLines(dir, 0)).toEqual({ lines: ["SETTINGS 10:00:00 f.conf: blocks gone: CSI_X (restore from your own backup)"], last: 5 });
+    expect(eventLines(dir, 5).lines).toEqual([]);
   });
 });

@@ -30,7 +30,7 @@ export function watchEvents(dir = WATCH_DIR): string {
   return lines.map((l) => `\n\`Watchdog: ${l}\``).join("");
 }
 
-/** The auth, crash, dialog and watch lines in events.jsonl (its last 256 KB) with a time after `since`, and the newest time among them. */
+/** The auth, crash, dialog, watch and settings lines in events.jsonl (its last 256 KB) with a time after `since`, and the newest time among them. */
 export function eventLines(dir: string, since: number): { lines: string[]; last: number } {
   let text = "";
   try {
@@ -53,7 +53,7 @@ export function eventLines(dir: string, since: number): { lines: string[]; last:
   for (const raw of text.split("\n")) {
     try {
       const e = JSON.parse(raw) as { t: number; kind?: string; action?: string };
-      if (e.kind && ["auth", "crash", "dialog", "watch"].includes(e.kind) && e.action && e.t > since) {
+      if (e.kind && ["auth", "crash", "dialog", "watch", "settings"].includes(e.kind) && e.action && e.t > since) {
         lines.push(e.action);
         last = Math.max(last, e.t);
       }

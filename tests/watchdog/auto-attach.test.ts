@@ -13,8 +13,10 @@ const spawnDetached = vi.hoisted(() =>
 );
 vi.mock("../../src/utils/process.js", async (orig) => ({ ...(await orig<typeof import("../../src/utils/process.js")>()), spawnDetached }));
 
-import { ensureWatched, type AttachDeps } from "../../src/watchdog/auto-attach.js";
+import { attachDeps, ensureWatched, type AttachDeps } from "../../src/watchdog/auto-attach.js";
 import { startWatcher } from "../../src/watchdog/wb-watch.js";
+import { profileRoots } from "../../src/watchdog/settings-drift.js";
+import type { Config } from "../../src/config.js";
 
 const T0 = new Date("2026-11-08T17:50:00").getTime();
 const WB = "\"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe\" -gproj x";
@@ -229,5 +231,16 @@ describe("start refusals that reach the footer carry no wb_watch caller wording 
     d.alive = (pid) => (pid === 800 ? ++n > 1 : pid in { 19524: 1 });
     expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: another watcher (PID 800) holds Workbench PID 19524." });
     expect(d.start).not.toHaveBeenCalled();
+  });
+});
+
+describe("the automatic attach hands the profile roots to the watcher", () => {
+  it("attachDeps builds the base from the config, and a started watcher gets each root as --settings-root", async () => {
+    const config = { projectPath: join(tmpdir(), "emcp-aa-projects"), workshopPath: join(tmpdir(), "Games", "ArmaReforger", "addons") } as Config;
+    const base = attachDeps(config).base;
+    expect(base.settingsRoots).toEqual(profileRoots(config));
+    expect((await check(deps({ start: startWatcher, base }))).ok).toBe(true);
+    const args = spawnDetached.mock.calls.at(-1)![1];
+    expect(args.flatMap((a, i) => (a === "--settings-root" ? [args[i + 1]] : []))).toEqual(profileRoots(config));
   });
 });

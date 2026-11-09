@@ -28,6 +28,7 @@ import {
 } from "./signals.js";
 import { appendLockLine, authDetails, copyCrashFiles, endCrashReporters, loadSetOf, type LoadSet } from "./auth.js";
 import { saveCrashFolders, sweepLine, type SweepResult } from "./crash-sweep.js";
+import { driftLine, loadSnapshot, lostBlocks, profileRoots, saveSnapshot, takeSnapshot, type SettingsSnapshot } from "./settings-drift.js";
 
 export const WATCH_DIR = join(MCP_HOME, "watch");
 const SELF = fileURLToPath(import.meta.url);
@@ -50,6 +51,8 @@ export interface WatchOpts {
   authScope?: Dismiss;
   /** Where the log files of a crash of this Workbench are copied. */
   crashDir?: string;
+  /** Game and Workbench profile folders whose settings files are checked for lost blocks at attach and at exit. */
+  settingsRoots?: string[];
   /** Attached by the MCP on its own to a Workbench it did not start (adds a WATCH event; answers and crash handling are unchanged). */
   auto?: boolean;
   host: string;
@@ -155,12 +158,13 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
   let recovered = false;
   let authDone: number | undefined;
   let crashDone = false;
+  let settingsAtAttach: SettingsSnapshot | undefined;
   const pressLog = new Map<string, number[]>();
   let startTime = o.startTime;
   const sig: Omit<Signals, "now" | "alive"> = {};
   const mem: { t: number; ws: number; cpu: number }[] = [];
   /** Every action goes into the report and into events.jsonl. */
-  const note = (t: number, action: string, kind?: "auth" | "crash" | "dialog") => {
+  const note = (t: number, action: string, kind?: "auth" | "crash" | "dialog" | "settings") => {
     st.actions.push(action);
     appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action, ...(kind ? { kind } : {}) }) + "\n");
   };
@@ -286,6 +290,24 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
         if (line) note(t, `SWEEP ${hms(t)} PID ${o.pid}: ${line}`, "crash");
       } catch (e) {
         note(t, `crash folder sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      save();
+    },
+    /**
+     * Settings blocks that vanished: at attach against the snapshot the last watcher saved (a run nobody watched), at exit against the
+     * attach snapshot. One event per file; the new snapshot is saved either way. A failing check is logged and never stops the watch.
+     */
+    drift(when: "attach" | "exit") {
+      if (!o.settingsRoots?.length) return;
+      const t = deps.now();
+      try {
+        const now = takeSnapshot(o.settingsRoots);
+        const before = when === "attach" ? loadSnapshot(o.stateDir) : settingsAtAttach;
+        for (const l of lostBlocks(before ?? {}, now)) note(t, driftLine(hms(t), l.file, l.names), "settings");
+        saveSnapshot(o.stateDir, now);
+        if (when === "attach") settingsAtAttach = now;
+      } catch (e) {
+        note(t, `settings check failed: ${e instanceof Error ? e.message : String(e)}`);
       }
       save();
     },
@@ -586,6 +608,7 @@ export async function runWatcher(
   try {
     if (!holdsLock()) return 3;
     w.init();
+    w.drift("attach");
     let swept = false;
     for (;;) {
       const s = await w.tick();
@@ -594,7 +617,10 @@ export async function runWatcher(
         swept = true;
         w.sweep(over.sweep ?? (() => (o.crashDir && o.logsRoot ? sweepCrashes(o.logsRoot, o.crashDir, o.stateDir) : undefined)));
       }
-      if (s.state === "exited" || s.state === "crashed") return 0;
+      if (s.state === "exited" || s.state === "crashed") {
+        w.drift("exit");
+        return 0;
+      }
       await (over.wait ?? sleep)(TICK_MS);
       if (!holdsLock()) return 3;
     }
@@ -624,8 +650,14 @@ export interface StartWatcher {
   scriptAuth?: AuthMode;
   authScope?: Dismiss;
   crashDir?: string;
+  settingsRoots?: string[];
   auto?: boolean;
 }
+
+/** What every watcher starter takes from the config (wb_launch, the automatic attach, wb_watch start); each adds its own host and port. */
+export const watcherBase = (config: Config): Pick<StartWatcher, "logsRoot" | "scriptAuth" | "crashDir" | "settingsRoots"> => ({
+  logsRoot: join(workbenchProfileDir(config), "logs"), scriptAuth: config.scriptAuth ?? "rules", crashDir: crashLogsDir(config), settingsRoots: profileRoots(config),
+});
 
 /** Start a detached watcher for one Workbench. Returns the watcher PID. */
 export function startWatcher(w: StartWatcher): number {
@@ -640,6 +672,7 @@ export function startWatcher(w: StartWatcher): number {
   if (w.scriptAuth) args.push("--auth", w.scriptAuth);
   if (w.authScope) args.push("--auth-scope", w.authScope);
   if (w.crashDir) args.push("--crash-dir", w.crashDir);
+  for (const r of w.settingsRoots ?? []) args.push("--settings-root", r);
   if (process.env.ENFUSION_WORKBENCH_LOCK) args.push("--lock", process.env.ENFUSION_WORKBENCH_LOCK);
   return spawnDetached(process.execPath, args, dirname(SELF), join(stateDir, `${w.pid}.log`));
 }
@@ -760,6 +793,7 @@ async function main(argv: string[]): Promise<number> {
       dismiss: { type: "string" }, "auto-recover": { type: "boolean" }, "recover-after-min": { type: "string" },
       host: { type: "string" }, port: { type: "string" }, event: { type: "string" },
       auth: { type: "string" }, "auth-scope": { type: "string" }, "crash-dir": { type: "string" },
+      "settings-root": { type: "string", multiple: true },
     },
   });
   const stateDir = values["state-dir"] ?? WATCH_DIR;
@@ -782,6 +816,7 @@ async function main(argv: string[]): Promise<number> {
     autoRecover: !!values["auto-recover"], recoverAfterMin: Number(values["recover-after-min"] ?? 5),
     host: values.host ?? "127.0.0.1", port: Number(values.port ?? 5775),
     scriptAuth: parseAuthMode(values.auth).mode, authScope, crashDir: values["crash-dir"],
+    settingsRoots: values["settings-root"],
   });
 }
 
