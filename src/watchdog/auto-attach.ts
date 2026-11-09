@@ -77,7 +77,8 @@ export async function ensureWatched(port: number, host: string, d: AttachDeps): 
   if (holder) {
     const h = await d.proc(holder);
     // An empty command line is what a process of another user or an elevated MCP shows: it may be a live watcher, so leave its lock alone.
-    if (!h?.cmd) return no(`the watch lock of Workbench PID ${pid} names PID ${holder}, whose command line could not be read`, true);
+    // A failed query (h undefined) may be a passing failure: check again on the next call.
+    if (!h?.cmd) return no(`the watch lock of Workbench PID ${pid} names PID ${holder}, whose command line could not be read`, !!h);
     if (isWatcherCmd(h.cmd, pid)) return { ok: true, text: watchedText(d.stateDir, pid, holder) };
     // A lock left by a watcher that died without cleanup, its PID now reused by another process: no watch.
     // Compare-and-delete: another MCP may have replaced the lock while the command line was read.

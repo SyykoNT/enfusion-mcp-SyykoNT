@@ -535,6 +535,17 @@ describe("automatic watch check (B-093)", () => {
     expect(check).toHaveBeenCalledTimes(2);
   });
 
+  it("a call that ends in CONNECTION_REFUSED ends the pause: the next call after a Workbench restart checks at once", async () => {
+    const c = new WorkbenchClient("127.0.0.1", 1, AUTO); // nothing listens on port 1
+    const check = vi.fn(attached);
+    c.watchCheck = check;
+    await c.call("ReloadScripts", {}).catch(() => {}); // the request-start check is ok and sets the pause; the refusal then ends it
+    await flush();
+    expect(check).toHaveBeenCalledOnce();
+    await c.call("ReloadScripts", {}).catch(() => {});
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
   it("a watcher that never claims the lock is started once, not on every call within 60 s", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(T);

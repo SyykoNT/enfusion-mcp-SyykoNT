@@ -480,7 +480,14 @@ export async function runWatcher(
   }
   const lockFile = join(o.stateDir, `${o.pid}.lock`);
   // A rival that took our lock in the same moment wins; the claim itself cannot close that window (B-097).
-  const holdsLock = () => Number(readText(lockFile)) === process.pid;
+  // Only a readable lock naming another PID, or a missing one, is lost: EBUSY/EPERM from a scanner must not end a live watcher.
+  const holdsLock = () => {
+    try {
+      return Number(readFileSync(lockFile, "utf-8")) === process.pid;
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code !== "ENOENT";
+    }
+  };
   let latest: ProbeSample | undefined;
   let loadSet: LoadSet | undefined; // read once it succeeds: the addons a Workbench loaded do not change while it runs
   const probe = (over.probe ?? startProbe)(o.pid, o.port, (s) => (latest = s));

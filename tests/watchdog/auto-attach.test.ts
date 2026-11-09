@@ -92,16 +92,15 @@ describe("ensureWatched", () => {
     }
   });
 
-  it("step 3: a live lock holder whose command line is empty or cannot be read is left alone", async () => {
-    // "" is what CIM shows for a process it may not read (another user, an elevated MCP's watcher); undefined is a failed query.
-    for (const cmd of ["", undefined]) {
-      const d = deps({ alive: () => true }, cmd === undefined ? {} : { 555: cmd });
-      writeFileSync(join(d.stateDir, "19524.lock"), "555");
-      // Stable: ok:true keeps the client from rerunning netstat and two CIM queries on every call.
-      expect(await check(d), String(cmd)).toEqual({ ok: true, text: "Workbench not watched: the watch lock of Workbench PID 19524 names PID 555, whose command line could not be read." });
-      expect(existsSync(join(d.stateDir, "19524.lock"))).toBe(true);
-      expect(d.start).not.toHaveBeenCalled();
-    }
+  it.each([
+    ["an empty command line (a process CIM may not read: another user, an elevated MCP's watcher) is stable", { 555: "" }, true],
+    ["a failed process query may be a passing failure: checked again on the next call", {}, false],
+  ] as const)("step 3: a live lock holder with %s is left alone", async (_name, procs, ok) => {
+    const d = deps({ alive: () => true }, procs);
+    writeFileSync(join(d.stateDir, "19524.lock"), "555");
+    expect(await check(d)).toEqual({ ok, text: "Workbench not watched: the watch lock of Workbench PID 19524 names PID 555, whose command line could not be read." });
+    expect(existsSync(join(d.stateDir, "19524.lock"))).toBe(true);
+    expect(d.start).not.toHaveBeenCalled();
   });
 
   it("step 3: the lock changes between the holder read and the delete: it is not deleted and no watcher starts", async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eventLines, watchAlerts } from "../../src/workbench/status.js";
@@ -257,12 +257,33 @@ describe("watcher keeps its own lock honest (B-097) and the state after Ignore (
     const t = setup();
     const lock = join(t.stateDir, "19524.lock");
     const stop = vi.fn();
+    // The wait yields a macrotask: if the per-tick check regresses, the loop never ends but the vitest timeout still fires.
     const code = await runWatcher(t.opts({ logsRoot: undefined }), {
-      probe: () => ({ stop }), alive: () => true, wait: async () => { writeFileSync(lock, String(process.ppid)); },
+      probe: () => ({ stop }), alive: () => true, wait: () => new Promise((r) => setImmediate(() => { writeFileSync(lock, String(process.ppid)); r(undefined); })),
     });
     expect(code).toBe(3);
     expect(stop).toHaveBeenCalled();
     expect(readFileSync(lock, "utf-8")).toBe(String(process.ppid));
+  });
+
+  it("a lock that cannot be read for one tick (not ENOENT) keeps the watcher running; a deleted lock ends it with 3", async () => {
+    const t = setup();
+    const lock = join(t.stateDir, "19524.lock");
+    let n = 0;
+    const alive = () => n < 3;
+    // A directory in place of the lock makes the read fail with EISDIR, standing in for EBUSY/EPERM from a scanner.
+    const wait = () => new Promise((r) => setImmediate(() => {
+      n++;
+      if (n === 1) { rmSync(lock); mkdirSync(lock); }
+      if (n === 2) { rmSync(lock, { recursive: true }); writeFileSync(lock, String(process.pid)); }
+      r(undefined);
+    }));
+    expect(await run(t, { alive, wait })).toBe(0);
+    expect(n).toBe(3);
+
+    const u = setup();
+    const gone = join(u.stateDir, "19524.lock");
+    expect(await run(u, { alive: () => true, wait: () => new Promise((r) => setImmediate(() => { rmSync(gone); r(undefined); })) })).toBe(3);
   });
 
   it("exits with a foreign lock (taken during the last tick): the lock is left; a normal exit deletes its own", async () => {
