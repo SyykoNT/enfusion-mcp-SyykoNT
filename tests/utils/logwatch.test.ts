@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 import { tmpdir } from "node:os";
-import { isUnderRoots, LogCursor, parseHarnessLine, resolveLogFile, scan, waitFor } from "../../src/utils/logwatch.js";
+import { isUnderRoots, LogCursor, parseHarnessLine, resolveLogFile, runErrors, scan, waitFor } from "../../src/utils/logwatch.js";
 
 const FIX = join(__dirname, "..", "fixtures", "logs");
 let dir: string;
@@ -173,3 +173,57 @@ describe("scan", () => {
   });
 });
 
+
+describe("runErrors", () => {
+  // Lines 337-347 of a real ConflictGen19 server console.log, then a second block in the server form (no blank lines, the stack ends at the next timestamped line).
+  const log = [
+    "Log C:/x/logs_2026-11-09_12-14-01/console.log started at 2026-11-09 12:14:01 (2026-11-09 17:14:01 UTC)",
+    "12:14:03.000 DEFAULT      : Entered online game state.",
+    "12:14:18.032 SCRIPT    (E): Virtual Machine Exception",
+    "",
+    "Reason: NULL pointer to instance",
+    "",
+    "Class:      'SCR_CampaignMilitaryBaseComponent'",
+    "Function: 'OnAllBasesInitialized'",
+    "Stack trace:",
+    "Scripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized",
+    "Scripts/Game/Campaign/SCR_CampaignMilitaryBaseManager.c:274 Function OnAllBasesInitialized",
+    "Scripts/Game/GameMode/SCR_GameModeCampaign.c:610 Function Start",
+    "Scripts/Game/GameMode/SCR_GameModeCampaign.c:946 Function OnGameStart",
+    "12:14:19.000 ENGINE       : after the first block",
+    "12:14:40.500 SCRIPT    (E): Virtual Machine Exception",
+    "Reason: Division by zero",
+    "Class:      'SCR_Other'",
+    "Function: 'Tick'",
+    "Stack trace:",
+    "Scripts/Game/SCR_Other.c:12 Function Tick",
+    "12:14:41.000 ENGINE       : after the second block",
+  ].join("\r\n");
+  const crash = ["crash-line-1", "", "-".repeat(40), "Assertion failed", "Reason: Access violation", ...Array.from({ length: 55 }, (_, i) => `crash-line-${i + 6}`)].join("\n");
+
+  it("reports the count, the first group and the crash.log head (40 of 60 lines)", () => {
+    put("run/console.log", log);
+    put("run/crash.log", crash);
+    const r = runErrors(join(dir, "run"));
+    expect(r).toContain("**Script exceptions in this run: 2**");
+    expect(r).toContain("Reason: NULL pointer to instance\nClass: SCR_CampaignMilitaryBaseComponent\nFunction: OnAllBasesInitialized\nScripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized");
+    expect(r).not.toContain("Division by zero"); // only the first group is shown
+    expect(r).toContain(`**crash.log** ${join(dir, "run", "crash.log")} (Reason: Access violation)`);
+    expect(r).toContain("crash-line-1\n");
+    expect(r).toContain("crash-line-40\n");
+    expect(r).not.toContain("crash-line-41");
+  });
+
+  it("a fence inside log text cannot close the code block", () => {
+    put("f/crash.log", "a ``` b\n");
+    expect(runErrors(join(dir, "f"))).toContain("a ''' b");
+  });
+
+  it("gives nothing for a clean folder, an empty folder and a missing folder, and does not throw", () => {
+    put("clean/console.log", "12:00:00.000 DEFAULT      : Entered online game state.\r\n12:00:01.000 SCRIPT    (E): Some other error\r\n");
+    mkdirSync(join(dir, "empty"));
+    expect(runErrors(join(dir, "clean"))).toBe("");
+    expect(runErrors(join(dir, "empty"))).toBe("");
+    expect(runErrors(join(dir, "missing"))).toBe("");
+  });
+});

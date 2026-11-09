@@ -10,7 +10,8 @@ import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { protectedAddonOf } from "../utils/game-paths.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER } from "../utils/process.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
+import { runErrors } from "../utils/logwatch.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
 import { MISSION_ROOT } from "./mission-server.js";
 
@@ -119,6 +120,7 @@ export function registerServer(server: McpServer, config: Config): void {
         "downloads SteamCMD itself), 'config' (write server.json from options, validated against the game's own schema), " +
         "'validate' (check any server.json), 'start' (with local packed addons and/or Workshop mods), 'stop', 'status', " +
         "'logs' (tail / errors only), 'scenarios' (all scenario IDs of the game). " +
+        "Every server it starts runs with -noThrow (no error dialogs), and the start and status replies report the run's script exceptions (VM exceptions) and crash.log. " +
         "For a mission on unpacked addons that needs its Mission Header, use mission_server; `server` runs packed builds or a server.json.",
       inputSchema: {
         action: z.enum(["install", "update", "config", "validate", "start", "stop", "status", "logs", "scenarios"]),
@@ -224,7 +226,7 @@ export function registerServer(server: McpServer, config: Config): void {
           // Every MCP session defaults to the same profile folder, so a server there from any session would be clobbered.
           const busy = scan(serverProcesses()).filter((e) => e.cls === "own" || sameDir(argValue(e.proc.cmd, "-profile"), config.serverProfilePath));
           if (busy.length) return text(`A dedicated server using ${config.serverProfilePath} is already running (pid ${busy.map((e) => e.proc.pid).join(", ")}). Run \`server stop\` first.`, true);
-          const args = ["-profile", config.serverProfilePath, "-maxFPS", "60", "-logStats", "60000", "-noThrow", DISABLE_CRASH_REPORTER];
+          const args = ["-profile", config.serverProfilePath, "-maxFPS", "60", "-logStats", "60000", NO_THROW, DISABLE_CRASH_REPORTER];
           const guids: string[] = [];
           for (const name of a.addons ?? []) {
             const gproj = resolveGproj(config, name);
@@ -266,9 +268,11 @@ export function registerServer(server: McpServer, config: Config): void {
           await sleep(8000);
           const logDir = newestDir(serverLogsDir(config), started - 5000);
           const alive = isAlive(pid);
+          const errors = logDir ? runErrors(logDir) : "";
           return text(
             `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
             (logDir ? `Logs: ${logDir}\n\n\`\`\`\n${tail(join(logDir, "console.log"), 25)}\n\`\`\`` : "") +
+            (errors && `\n\n${errors}`) +
             `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${port} (and the same local addons).${note}`,
             !alive
           );
@@ -300,6 +304,7 @@ export function registerServer(server: McpServer, config: Config): void {
         if (a.action === "status") {
           const entries = scan(serverProcesses());
           const logDir = newestDir(serverLogsDir(config));
+          const errors = logDir ? runErrors(logDir) : "";
           const installLog = join(config.steamcmdPath, "install-server.log");
           const installing = findPids(STEAMCMD_EXE).length > 0;
           return text([
@@ -310,6 +315,7 @@ export function registerServer(server: McpServer, config: Config): void {
             `- Config: ${existsSync(cfgPath) ? cfgPath : "none yet (`server config`)"}`,
             `- Profile: ${config.serverProfilePath}`,
             logDir ? `- Latest log: ${logDir}` : "",
+            errors && `\n${errors}`,
             existsSync(installLog) ? `\nInstall log (last lines):\n\`\`\`\n${tail(installLog, 8)}\n\`\`\`` : "",
             entries.length ? `\n${instanceTable(entries)}` : "",
           ].filter(Boolean).join("\n"));

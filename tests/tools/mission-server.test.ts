@@ -52,6 +52,42 @@ const { registerGame } = await import("../../src/tools/game.js");
 const { logRoots } = await import("../../src/tools/log-watch.js");
 
 type Result = { content: { text: string }[]; isError?: boolean };
+// Lines 337-347 of a real ConflictGen19 server console.log, then a second block in the server form (no blank lines, the stack ends at the next timestamped line).
+const VME_LOG = [
+  "Log C:/x/logs_2026-11-09_12-14-01/console.log started at 2026-11-09 12:14:01 (2026-11-09 17:14:01 UTC)",
+  "12:14:03.000 DEFAULT      : Entered online game state.",
+  "12:14:18.032 SCRIPT    (E): Virtual Machine Exception",
+  "",
+  "Reason: NULL pointer to instance",
+  "",
+  "Class:      'SCR_CampaignMilitaryBaseComponent'",
+  "Function: 'OnAllBasesInitialized'",
+  "Stack trace:",
+  "Scripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized",
+  "Scripts/Game/Campaign/SCR_CampaignMilitaryBaseManager.c:274 Function OnAllBasesInitialized",
+  "Scripts/Game/GameMode/SCR_GameModeCampaign.c:610 Function Start",
+  "Scripts/Game/GameMode/SCR_GameModeCampaign.c:946 Function OnGameStart",
+  "12:14:19.000 ENGINE       : after the first block",
+  "12:14:40.500 SCRIPT    (E): Virtual Machine Exception",
+  "Reason: Division by zero",
+  "Class:      'SCR_Other'",
+  "Function: 'Tick'",
+  "Stack trace:",
+  "Scripts/Game/SCR_Other.c:12 Function Tick",
+  "12:14:41.000 ENGINE       : after the second block",
+].join("\r\n");
+const CRASH_LOG = Array.from({ length: 60 }, (_, i) => (i === 4 ? "Reason: Access violation" : `crash-line-${i + 1}`)).join("\n");
+const expectReport = (t: string) => {
+  expect(t).toContain("**Script exceptions in this run: 2**");
+  expect(t).toContain("Reason: NULL pointer to instance\nClass: SCR_CampaignMilitaryBaseComponent\nFunction: OnAllBasesInitialized\nScripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized");
+  expect(t).toMatch(/\*\*crash\.log\*\* .*crash\.log \(Reason: Access violation\)/);
+  expect(t).toContain("crash-line-40\n");
+  expect(t).not.toContain("crash-line-41");
+};
+const expectClean = (t: string) => {
+  expect(t).not.toContain("Script exceptions in this run");
+  expect(t).not.toContain("**crash.log**");
+};
 
 /** A temp unpacked addon "Test Mission" (space in the path) with a world and its header. */
 function addon() {
@@ -92,7 +128,7 @@ describe("mission_server run plan and command lines", () => {
     const profile = join(MISSION_ROOT, "2521", "server");
     expect(serverArgs(run, profile, ["-jobsysShortWorkerCount", "2"])).toEqual([
       "-gproj", join(t.dir, "addon.gproj"), "-server", "{1234567890ABCDEF}Missions/Map/Me_1102_TVT1_Test.conf",
-      "-addonsDir", t.root, "-addons", "TestMission", "-addr", "127.0.0.1:2521", "-profile", profile, "-nothrow", "-maxFPS", "60", "-disableCrashReporter", "-addonDownloadDir", SERVER_DOWNLOAD_DIR, "-jobsysShortWorkerCount", "2",
+      "-addonsDir", t.root, "-addons", "TestMission", "-addr", "127.0.0.1:2521", "-profile", profile, "-noThrow", "-maxFPS", "60", "-disableCrashReporter", "-addonDownloadDir", SERVER_DOWNLOAD_DIR, "-jobsysShortWorkerCount", "2",
     ]);
     const peer = peerArgs(run, join(MISSION_ROOT, "2521", "peer1"));
     expect(peer.slice(peer.indexOf("-client"), peer.indexOf("-client") + 2)).toEqual(["-client", "127.0.0.1:2521"]);
@@ -528,5 +564,118 @@ describe("client gates after the 2026-11-02 freeze (join health, RAM, cores, sto
     const r = await game({ action: "launch", lines: 80 });
     expect(sys.spawned.at(-1)).toContain("-disableCrashReporter");
     expect(r.content[0].text).toContain("-disableCrashReporter");
+  });
+});
+
+describe("-noThrow on every process the tools start, and the script error report in their replies", () => {
+  const handler = (register: (s: McpServer, c: Config) => void, c: Config) => {
+    let h: (a: Record<string, unknown>) => Promise<Result> = async () => ({ content: [] });
+    register({ registerTool: (_n: string, _d: unknown, fn: typeof h) => (h = fn) } as unknown as McpServer, c);
+    return h;
+  };
+  const once = (args: string[]) => args.filter((x) => x === "-noThrow");
+  const now = () => Date.now();
+  /** The part of a status reply that belongs to one port (other tests leave runs on other ports). */
+  const portPart = (t: string, port: number) => t.split("\n- port ").find((x) => x.startsWith(`${port}:`)) ?? "";
+
+  /** A spawn stub where the server writes `log` (and a crash.log) into its run folder; `exits` makes it end at once. */
+  const serverWrites = (log: string, crash = true, exits = false) => {
+    sys.onSpawn = (args, pid) => {
+      if (!args.includes("-server")) return;
+      const dir = join(args[args.indexOf("-profile") + 1], "logs", "logs_2026-11-09_12-14-01");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "console.log"), log);
+      if (crash) writeFileSync(join(dir, "crash.log"), CRASH_LOG);
+      if (exits) sys.killed.push(pid);
+    };
+  };
+  const start = (t: { world: string; root: string }, port: number) => {
+    writeFileSync(join(home, "ArmaReforgerServerDiag.exe"), "");
+    return handler(registerMissionServer, config(home))({ action: "start", world: t.world, port, peers: 0, addonsDirs: [t.root], timeoutSec: 10 });
+  };
+
+  it("serverArgs, peerArgs and both game launch exes pass -noThrow once", async () => {
+    const r = { port: 2521, gproj: "g", world: "w", addonsDirs: ["d"], addons: ["a"] };
+    expect(once(serverArgs(r, "p"))).toHaveLength(1);
+    expect(once(peerArgs(r, "p"))).toHaveLength(1);
+    writeFileSync(join(home, "ArmaReforgerSteam.exe"), "");
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+    const game = handler(registerGame, { ...config(home), clientProfilesRoot: join(home, "cli-nothrow") } as Config);
+    for (const extra of [{}, { connect: "127.0.0.1:2001" }]) {
+      await game({ action: "launch", lines: 80, ...extra });
+      expect(once(sys.spawned.at(-1)!)).toHaveLength(1);
+    }
+  });
+
+  it("start prints the report when the server is online, and nothing new for a clean log", async () => {
+    const t = addon();
+    serverWrites(VME_LOG);
+    const r = await start(t, 2561);
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("**Server online**");
+    expect(r.content[0].text).toContain("-noThrow");
+    expectReport(r.content[0].text);
+    serverWrites("12:00:00.000 DEFAULT      : Entered online game state.\r\n", false);
+    const clean = await start(t, 2562);
+    expect(clean.content[0].text).toContain("**Server online**");
+    expectClean(clean.content[0].text);
+  });
+
+  it("start prints the report when the server is not ready", async () => {
+    const t = addon();
+    sys.pids = [901];
+    serverWrites(VME_LOG.replace(/^.*Entered online.*\r\n/m, ""), true, true);
+    const r = await start(t, 2563);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("**Server not ready** (the server exited)");
+    expectReport(r.content[0].text);
+  });
+
+  it("join and status print the report for the server and each peer; a clean run prints nothing new", async () => {
+    const t = addon();
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+    const setup = (port: number, vme: boolean) => {
+      const dir = join(MISSION_ROOT, String(port));
+      const serverDir = join(dir, "server");
+      const logDir = join(serverDir, "logs", "logs_x");
+      mkdirSync(logDir, { recursive: true });
+      mkdirSync(join(dir, "peer1", "logs", "logs_x"), { recursive: true });
+      writeFileSync(join(logDir, "console.log"), (vme ? VME_LOG : "12:00:00.000 DEFAULT      : Entered online game state.\r\n") + "12:15:00.000   NETWORK      : Players connected: 1 / 1\r\n");
+      writeFileSync(join(dir, "peer1", "logs", "logs_x", "console.log"), "12:00:00.000 ENGINE       : loading\r\n");
+      if (vme) {
+        writeFileSync(join(logDir, "crash.log"), CRASH_LOG);
+        writeFileSync(join(dir, "peer1", "logs", "logs_x", "crash.log"), "peer crashed\n");
+      }
+      writeFileSync(join(serverDir, INSTANCE_FILE), JSON.stringify({ kind: "server", name: `mission-${port}`, pid: 701, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: now(), exe: "x" }));
+      writeFileSync(join(dir, "run.json"), JSON.stringify({ port, gproj: join(t.dir, "addon.gproj"), world: "Worlds/Map/Me_TVT_Test.ent", addonsDirs: [t.root], addons: ["TestMission"] }));
+      sys.servers = [{ pid: 701, ppid: 1, cmd: `x.exe -profile "${serverDir}"`, created: now() }];
+      sys.clients = [];
+      sys.onSpawn = () => appendFileSync(join(logDir, "console.log"), "12:15:30.000   NETWORK      : Players connected: 2 / 2\r\n");
+    };
+    const tool = handler(registerMissionServer, config(home));
+
+    setup(2564, true);
+    const join1 = await tool({ action: "join", port: 2564, joinTimeoutSec: 5 });
+    expect(join1.content[0].text).toContain("**Peer 2 joined**");
+    expectReport(join1.content[0].text);
+    expect(join1.content[0].text).toMatch(/\*\*server\*\*\n\*\*Script exceptions/);
+    expect(join1.content[0].text).toContain("**peer1**\n**crash.log**");
+    const status = portPart((await tool({ action: "status" })).content[0].text, 2564);
+    expectReport(status);
+    expect(status).toContain("**peer1**\n**crash.log**");
+
+    setup(2565, false);
+    const clean = await tool({ action: "join", port: 2565, joinTimeoutSec: 5 });
+    expect(clean.content[0].text).toContain("**Peer 2 joined**");
+    expectClean(clean.content[0].text);
+    expectClean(portPart((await tool({ action: "status" })).content[0].text, 2565));
+  });
+
+  it("the descriptions of mission_server and game say -noThrow and the script exception report", () => {
+    for (const [register, tool] of [[registerMissionServer, "mission_server"], [registerGame, "game"]] as const) {
+      let def!: { description: string };
+      register({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config(home));
+      expect(def.description, tool).toMatch(/-noThrow.*script exceptions/);
+    }
   });
 });

@@ -5,12 +5,27 @@ import { join } from "node:path";
 import { myGamesDir } from "../utils/game-paths.js";
 import type { Config } from "../config.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive, refusedArg, DISABLE_CRASH_REPORTER } from "../utils/process.js";
+import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
+import { runErrors } from "../utils/logwatch.js";
 import { OWNER, pidInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
 
 const GAME_EXE = "ArmaReforgerSteam.exe";
 const GAME_DIAG_EXE = "ArmaReforgerSteamDiag.exe"; // needed for -client / -world
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
+
+/**
+ * The log folder a client started at `startedAt` (epoch ms) wrote in the shared logs root: the folder named `logs_YYYY-MM-DD_HH-MM-SS`
+ * (local time) from 1 s before (names cut to the second) to 10 s after that start. The client has no profile of its own to find it by.
+ */
+export function clientLogDir(root: string, startedAt: number): string | undefined {
+  if (!existsSync(root)) return undefined;
+  const name = readdirSync(root).find((n) => {
+    const m = /^logs_(\d{4})-(\d\d)-(\d\d)_(\d\d)-(\d\d)-(\d\d)$/.exec(n);
+    const t = m && new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() - startedAt;
+    return t !== null && t >= -1000 && t <= 10_000;
+  });
+  return name && join(root, name);
+}
 
 export function registerGame(server: McpServer, config: Config): void {
   server.registerTool(
@@ -19,7 +34,8 @@ export function registerGame(server: McpServer, config: Config): void {
       description:
         "Start / stop the Arma Reforger game client for testing: load local packed addons (built with `mod` build), " +
         "join a server directly (connect=IP[:port], e.g. the local `server start`), or open a world straight away. " +
-        "'logs' tails the client console log (script errors at runtime).",
+        "'logs' tails the client console log (script errors at runtime). " +
+        "The client runs with -noThrow (no error dialogs), and the status reply reports the script exceptions (VM exceptions) and crash.log of each client this MCP started.",
       inputSchema: {
         action: z.enum(["launch", "stop", "status", "logs"]),
         addons: z.array(z.string()).optional().describe("(launch) Local addon folder names to load from their packed build"),
@@ -53,7 +69,7 @@ export function registerGame(server: McpServer, config: Config): void {
           const diag = !!(a.connect || a.world);
           const exe = join(config.gamePath, diag ? GAME_DIAG_EXE : GAME_EXE);
           if (!existsSync(exe)) return text(`Not found: ${exe} (set ENFUSION_GAME_PATH)`, true);
-          const args: string[] = ["-noSplash", DISABLE_CRASH_REPORTER];
+          const args: string[] = ["-noSplash", NO_THROW, DISABLE_CRASH_REPORTER];
           const guids: string[] = [];
           for (const name of a.addons ?? []) {
             const gproj = resolveGproj(config, name);
@@ -96,9 +112,15 @@ export function registerGame(server: McpServer, config: Config): void {
 
         if (a.action === "status") {
           const entries = scan(clientProcesses(), { clientRoot: config.clientProfilesRoot });
+          const reports = entries.flatMap((e) => {
+            const dir = e.cls === "own" && e.inst ? clientLogDir(logsDir, e.inst.startedAt) : undefined;
+            const r = dir ? runErrors(dir) : "";
+            return r ? [`**Client pid ${e.proc.pid}**\n${r}`] : [];
+          });
           return text(
             `Game: ${entries.length ? `${entries.length} client(s) running, ${entries.filter((e) => e.cls === "own").length} started by this MCP` : "not running"}\n` +
-            `Install: ${config.gamePath}\nLogs: ${newestDir(logsDir) ?? logsDir}${entries.length ? `\n\n${instanceTable(entries)}` : ""}`
+            `Install: ${config.gamePath}\nLogs: ${newestDir(logsDir) ?? logsDir}${entries.length ? `\n\n${instanceTable(entries)}` : ""}` +
+            (reports.length ? `\n\n${reports.join("\n\n")}` : "")
           );
         }
 

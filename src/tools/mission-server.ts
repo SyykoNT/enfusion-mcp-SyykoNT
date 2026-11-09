@@ -6,9 +6,9 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { readGproj } from "../workbench/cli.js";
-import { DISABLE_CRASH_REPORTER, argValue, clientProcesses, isAlive, killPids, limitProcess, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
+import { DISABLE_CRASH_REPORTER, NO_THROW, argValue, clientProcesses, isAlive, killPids, limitProcess, newestDir, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, instanceTable, isUnder, planStop, scan, writeInstance, type Entry } from "../utils/instances.js";
-import { DEFAULT_FAIL_PATTERNS, resolveLogFile, waitFor } from "../utils/logwatch.js";
+import { DEFAULT_FAIL_PATTERNS, resolveLogFile, runErrors, waitFor } from "../utils/logwatch.js";
 import { findMissionHeader } from "./server-params.js";
 
 /** Everything this tool starts lives here, one folder per port: server/, peer<n>/, run.json. */
@@ -113,7 +113,7 @@ export function serverArgs(r: Run, profile: string, extra: string[] = []): strin
   return [
     "-gproj", r.gproj, "-server", r.header ?? r.world,
     "-addonsDir", r.addonsDirs.join(","), "-addons", r.addons.join(","),
-    "-addr", `127.0.0.1:${r.port}`, "-profile", profile, "-nothrow", "-maxFPS", "60", DISABLE_CRASH_REPORTER, "-addonDownloadDir", SERVER_DOWNLOAD_DIR, ...extra,
+    "-addr", `127.0.0.1:${r.port}`, "-profile", profile, NO_THROW, "-maxFPS", "60", DISABLE_CRASH_REPORTER, "-addonDownloadDir", SERVER_DOWNLOAD_DIR, ...extra,
   ];
 }
 
@@ -121,7 +121,7 @@ export function serverArgs(r: Run, profile: string, extra: string[] = []): strin
 export function peerArgs(r: Run, profile: string): string[] {
   return [
     "-gproj", r.gproj, "-addonsDir", r.addonsDirs.join(","), "-addons", r.addons.join(","),
-    "-window", "-forceupdate", "-nofocus", "-client", `127.0.0.1:${r.port}`, "-rpl-reconnect", "-rpl-timeout-disable", "-profile", profile, DISABLE_CRASH_REPORTER,
+    "-window", "-forceupdate", "-nofocus", "-client", `127.0.0.1:${r.port}`, "-rpl-reconnect", "-rpl-timeout-disable", "-profile", profile, NO_THROW, DISABLE_CRASH_REPORTER,
   ];
 }
 
@@ -183,6 +183,27 @@ const readRun = (port: number): Run | undefined => {
     return undefined;
   }
 };
+/**
+ * Script exceptions and crash.log of the newest run on one port, for the server and every peer that logged since it started
+ * (run.json is written right after the server starts). "" when there are none, else text that begins with a blank line.
+ */
+function runReport(port: number): string {
+  const dir = portDir(port);
+  if (!existsSync(dir)) return "";
+  let since = 0;
+  try {
+    since = statSync(join(dir, "run.json")).mtimeMs - 5000;
+  } catch {
+    // no run.json: the newest logs
+  }
+  const names = ["server", ...readdirSync(dir).filter((d) => /^peer\d+$/.test(d)).sort()];
+  const parts = names.flatMap((n) => {
+    const log = newestDir(join(dir, n, "logs"), since);
+    const r = log ? runErrors(log) : "";
+    return r ? [`**${n}**\n${r}`] : [];
+  });
+  return parts.length ? `\n\n${parts.join("\n\n")}` : "";
+}
 /** This tool's processes (instance file under MISSION_ROOT, or under one port's folder). */
 const mine = (root = MISSION_ROOT): Entry[] => [...scan(serverProcesses()), ...scan(clientProcesses())].filter((e) => e.file && isUnder(e.file, root));
 
@@ -255,7 +276,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         "Starts processes: ask the user (or the Workbench lock owner) first, and keep within the CPU and port slots they give. " +
         "Every client needs at least 4 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
         "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority. " +
-        "The Crash Reporter is switched off for everything it starts (-disableCrashReporter).",
+        "The Crash Reporter is switched off for everything it starts (-disableCrashReporter), and every server and client it starts runs with -noThrow (no error dialogs). " +
+        "The start, join and status replies report the run's script exceptions (VM exceptions) and crash.log, for the server and each peer.",
       inputSchema: {
         action: z.enum(["start", "join", "status", "stop"]),
         world: z.string().optional().describe("(start) Absolute path of the mission .ent inside an unpacked addon"),
@@ -320,7 +342,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}${cpuNote}`;
           if (w.status !== "matched") {
             const why = w.status === "failed" ? `stopped on: ${w.fatal[0]?.line}` : w.status === "exited" ? "the server exited" : `not online within ${a.timeoutSec} s`;
-            return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}`, true);
+            return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}${runReport(port)}`, true);
           }
           const peers: string[] = [];
           const startedPeers: { n: number; pid: number }[] = [];
@@ -329,12 +351,12 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             const p = startPeer(run, config);
             if (typeof p === "string") {
               const stopped = await stopOwn(port, startedPeers);
-              return text(`**Server online**, but a peer could not start: ${p}${stopped}\n\n${head}\n${peers.join("\n")}`, true);
+              return text(`**Server online**, but a peer could not start: ${p}${stopped}\n\n${head}\n${peers.join("\n")}${runReport(port)}`, true);
             }
             startedPeers.push(p);
             if (p.pinned === false) {
               const stopped = await stopOwn(port, startedPeers);
-              return text(`**Server online**, but clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to peer ${p.n} (PID ${p.pid}).${stopped}\n\n${head}\n${peers.join("\n")}`, true);
+              return text(`**Server online**, but clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to peer ${p.n} (PID ${p.pid}).${stopped}\n\n${head}\n${peers.join("\n")}${runReport(port)}`, true);
             }
             peers.push(`Peer ${p.n}: PID ${p.pid}${p.pinned === undefined ? "" : " (pinned)"}`);
             await sleep(2000);
@@ -346,7 +368,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             : `\nNot all peers joined within ${a.joinTimeoutSec} s: players connected ${playersConnected(readFileSync(w.file!, "utf-8"))} of ${a.peers}.${stopped}`;
           return text(
             `**Server online** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})${run.header ? "" : "\nNo Mission Header: the world started without one."}${joinLine}\n\n${head}` +
-              (peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : ""),
+              (peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : "") + runReport(port),
             a.peers > 0 && !joined
           );
         }
@@ -375,7 +397,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             (joined
               ? `**Peer ${p.n} joined** (PID ${p.pid}): players connected ${before + 1}.`
               : `**Peer ${p.n} did not join** within ${a.joinTimeoutSec} s (PID ${p.pid}): players connected ${playersConnected(readFileSync(log, "utf-8"))}.${stopped}`) +
-              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}`,
+              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}` + runReport(port),
             !joined
           );
         }
@@ -389,9 +411,9 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             const players = `, players connected ${playersConnected(t)}`;
             const game = GAME_STATE.test(t) ? `online, GAME reached${players}` : ONLINE.test(t) ? `online (no GAME state: a lobby game mode waits for players)${players}` : "not online";
             const live = entries.filter((e) => e.file && isUnder(e.file, join(MISSION_ROOT, port)));
-            return live.length
+            return (live.length
               ? `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`
-              : `- port ${port}: nothing running; last run was ${game}${log ? `, log ${log}` : ""}`;
+              : `- port ${port}: nothing running; last run was ${game}${log ? `, log ${log}` : ""}`) + runReport(Number(port));
           });
           return text(`**mission_server**\n${rows.length ? rows.join("\n") : "No runs yet."}${entries.length ? `\n\n${instanceTable(entries)}` : ""}`);
         }

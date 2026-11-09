@@ -12,6 +12,9 @@ const IS_WIN = process.platform === "win32";
  */
 export const DISABLE_CRASH_REPORTER = "-disableCrashReporter";
 
+/** BI wiki "Startup Parameters": "Disable all kinds of error message dialogs (VME's, asserts, crashes, ...)". Every server and client the MCP starts gets it. */
+export const NO_THROW = "-noThrow";
+
 /** BelowNormal priority and a CPU affinity mask for one process (Windows). False when the process is gone or PowerShell fails. */
 export function limitProcess(pid: number, mask: number): boolean {
   if (!IS_WIN || !Number.isInteger(pid) || !Number.isInteger(mask) || mask < 1) return false;

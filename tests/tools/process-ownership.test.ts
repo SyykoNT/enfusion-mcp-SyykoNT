@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -19,6 +19,10 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
   sleep: () => Promise.resolve(),
 }));
 
+// The shared client logs root lives under this folder; tests set it.
+const games = vi.hoisted(() => ({ dir: "" }));
+vi.mock("../../src/utils/game-paths.js", async (orig) => ({ ...(await orig<typeof import("../../src/utils/game-paths.js")>()), myGamesDir: () => games.dir }));
+
 const { killPids } = await import("../../src/utils/process.js");
 const { INSTANCE_FILE, OWNER, pidInstanceFile, writeInstance } = await import("../../src/utils/instances.js");
 const { registerServer } = await import("../../src/tools/server.js");
@@ -33,6 +37,42 @@ function tool(register: (s: McpServer, c: ReturnType<typeof loadConfig>) => void
 }
 
 const now = Date.now();
+// Lines 337-347 of a real ConflictGen19 server console.log, then a second block in the server form (no blank lines, the stack ends at the next timestamped line).
+const VME_LOG = [
+  "Log C:/x/logs_2026-11-09_12-14-01/console.log started at 2026-11-09 12:14:01 (2026-11-09 17:14:01 UTC)",
+  "12:14:03.000 DEFAULT      : Entered online game state.",
+  "12:14:18.032 SCRIPT    (E): Virtual Machine Exception",
+  "",
+  "Reason: NULL pointer to instance",
+  "",
+  "Class:      'SCR_CampaignMilitaryBaseComponent'",
+  "Function: 'OnAllBasesInitialized'",
+  "Stack trace:",
+  "Scripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized",
+  "Scripts/Game/Campaign/SCR_CampaignMilitaryBaseManager.c:274 Function OnAllBasesInitialized",
+  "Scripts/Game/GameMode/SCR_GameModeCampaign.c:610 Function Start",
+  "Scripts/Game/GameMode/SCR_GameModeCampaign.c:946 Function OnGameStart",
+  "12:14:19.000 ENGINE       : after the first block",
+  "12:14:40.500 SCRIPT    (E): Virtual Machine Exception",
+  "Reason: Division by zero",
+  "Class:      'SCR_Other'",
+  "Function: 'Tick'",
+  "Stack trace:",
+  "Scripts/Game/SCR_Other.c:12 Function Tick",
+  "12:14:41.000 ENGINE       : after the second block",
+].join("\r\n");
+const CRASH_LOG = Array.from({ length: 60 }, (_, i) => (i === 4 ? "Reason: Access violation" : `crash-line-${i + 1}`)).join("\n");
+const expectReport = (t: string) => {
+  expect(t).toContain("**Script exceptions in this run: 2**");
+  expect(t).toContain("Reason: NULL pointer to instance\nClass: SCR_CampaignMilitaryBaseComponent\nFunction: OnAllBasesInitialized\nScripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized");
+  expect(t).toMatch(/\*\*crash\.log\*\* .*crash\.log \(Reason: Access violation\)/);
+  expect(t).toContain("crash-line-40\n");
+  expect(t).not.toContain("crash-line-41");
+};
+const expectClean = (t: string) => {
+  expect(t).not.toContain("Script exceptions in this run");
+  expect(t).not.toContain("**crash.log**");
+};
 const own = { ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: now, name: "default", exe: "x.exe" };
 
 beforeEach(() => {
@@ -109,5 +149,44 @@ describe("game stop", () => {
     expect(vi.mocked(killPids).mock.calls.flatMap(([pids]) => pids)).toEqual([300]);
     expect(procs.alive.has(400)).toBe(true);
     expect(result.content[0].text).toContain("Not touched: 1 game client(s)");
+  });
+});
+
+
+describe("game status script error report", () => {
+  const stamp = (ms: number) => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `logs_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+  };
+  /** The shared logs root holds an older client's folder and a later one; the MCP's own client started at `now`, its folder 2 s after. */
+  const status = async (vme: boolean) => {
+    const gamesDir = mkdtempSync(join(tmpdir(), "emcp-games-"));
+    games.dir = gamesDir;
+    const logs = join(gamesDir, "ArmaReforger", "logs");
+    const put = (ms: number, log: string, crash?: string) => {
+      mkdirSync(join(logs, stamp(ms)), { recursive: true });
+      writeFileSync(join(logs, stamp(ms), "console.log"), log);
+      if (crash) writeFileSync(join(logs, stamp(ms), "crash.log"), crash);
+    };
+    put(now - 3600_000, VME_LOG, "OLD-CLIENT-CRASH\n");
+    put(now + 2000, vme ? VME_LOG : "12:00:00.000 DEFAULT      : ok\r\n", vme ? CRASH_LOG : undefined);
+    put(now + 60_000, VME_LOG, "LATER-CLIENT-CRASH\n");
+    const config = { ...loadConfig(), clientProfilesRoot: mkdtempSync(join(tmpdir(), "emcp-cli-")) };
+    writeInstance(pidInstanceFile(config.clientProfilesRoot, 300), { kind: "client", pid: 300, ...own });
+    procs.clients = [{ pid: 300, ppid: 1, cmd: "ArmaReforgerSteamDiag.exe -client 127.0.0.1", created: now }];
+    return (await tool(registerGame, config)({ action: "status" })).content[0].text;
+  };
+
+  it("prints the report of the log folder named within 10 s after the client's start, not an older or later client's", async () => {
+    const t = await status(true);
+    expectReport(t);
+    expect(t).toContain("**Client pid 300**");
+    expect(t).not.toContain("OLD-CLIENT-CRASH");
+    expect(t).not.toContain("LATER-CLIENT-CRASH");
+  });
+
+  it("prints nothing new for a clean client log", async () => {
+    expectClean(await status(false));
   });
 });

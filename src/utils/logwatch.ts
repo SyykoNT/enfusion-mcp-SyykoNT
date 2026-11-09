@@ -3,8 +3,9 @@
  * the last call, wait for patterns, extract values, assert on what a run wrote.
  * Polls file size (fs.watch is unreliable for files another process appends to on Windows).
  */
-import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { parseCrashLog } from "../watchdog/signals.js";
 import { parseScriptIssues } from "../workbench/cli.js";
 import { formatLogTime, parseLogHeader, parseLogTime, scriptErrorParser } from "../workbench/script-errors.js";
 import { isAlive as processAlive, newestDir, sleep } from "./process.js";
@@ -274,4 +275,39 @@ export function scan(o: ScanOptions): ScanResult {
     }),
   ];
   return { file: o.file, rows, rowsTotal, counts, assertions, cursor: cur.cursor, linesRead: lineNo };
+}
+
+const CRASH_LINES = 40;
+/** A code block for log text: a fence inside the text must not close it. */
+const fenced = (t: string) => `\`\`\`\n${t.replace(/```/g, "'''")}\n\`\`\``;
+
+/**
+ * Script exceptions (VM exceptions in console.log) and crash.log of one run's log folder, as reply text; "" when it holds neither.
+ * Log text is data: shown in a code block, never used to build a command. Never throws: it runs after a process was started.
+ */
+export function runErrors(logDir: string): string {
+  try {
+    const parts: string[] = [];
+    const log = join(logDir, "console.log");
+    if (existsSync(log)) {
+      const p = scriptErrorParser({ kinds: ["vme"] });
+      const cur = new LogCursor(log);
+      for (let lines = cur.read(); lines.length; lines = cur.read()) for (const l of lines) p.line(l);
+      const { vme, groups } = p.summary();
+      const g = groups[0];
+      if (vme && g) {
+        const body = [`Reason: ${g.reason}`, ...(g.className ? [`Class: ${g.className}`] : []), ...(g.func ? [`Function: ${g.func}`] : []), ...g.frames.map((f) => `${f.file}:${f.line} Function ${f.func}`)];
+        parts.push(`**Script exceptions in this run: ${vme}** (the first is shown; log: ${log})\n${fenced(body.join("\n"))}`);
+      }
+    }
+    const crash = join(logDir, "crash.log");
+    if (existsSync(crash)) {
+      const text = readFileSync(crash, "utf-8");
+      const reason = parseCrashLog(text).reason;
+      parts.push(`**crash.log** ${crash}${reason ? ` (Reason: ${reason})` : ""}\n${fenced(text.split(/\r?\n/).slice(0, CRASH_LINES).join("\n"))}`);
+    }
+    return parts.join("\n\n");
+  } catch {
+    return "";
+  }
 }

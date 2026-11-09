@@ -36,6 +36,42 @@ const config = {
 } as Config;
 mkdirSync(config.gamePath, { recursive: true });
 
+// Lines 337-347 of a real ConflictGen19 server console.log, then a second block in the server form (no blank lines, the stack ends at the next timestamped line).
+const VME_LOG = [
+  "Log C:/x/logs_2026-11-09_12-14-01/console.log started at 2026-11-09 12:14:01 (2026-11-09 17:14:01 UTC)",
+  "12:14:03.000 DEFAULT      : Entered online game state.",
+  "12:14:18.032 SCRIPT    (E): Virtual Machine Exception",
+  "",
+  "Reason: NULL pointer to instance",
+  "",
+  "Class:      'SCR_CampaignMilitaryBaseComponent'",
+  "Function: 'OnAllBasesInitialized'",
+  "Stack trace:",
+  "Scripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized",
+  "Scripts/Game/Campaign/SCR_CampaignMilitaryBaseManager.c:274 Function OnAllBasesInitialized",
+  "Scripts/Game/GameMode/SCR_GameModeCampaign.c:610 Function Start",
+  "Scripts/Game/GameMode/SCR_GameModeCampaign.c:946 Function OnGameStart",
+  "12:14:19.000 ENGINE       : after the first block",
+  "12:14:40.500 SCRIPT    (E): Virtual Machine Exception",
+  "Reason: Division by zero",
+  "Class:      'SCR_Other'",
+  "Function: 'Tick'",
+  "Stack trace:",
+  "Scripts/Game/SCR_Other.c:12 Function Tick",
+  "12:14:41.000 ENGINE       : after the second block",
+].join("\r\n");
+const CRASH_LOG = Array.from({ length: 60 }, (_, i) => (i === 4 ? "Reason: Access violation" : `crash-line-${i + 1}`)).join("\n");
+const expectReport = (t: string) => {
+  expect(t).toContain("**Script exceptions in this run: 2**");
+  expect(t).toContain("Reason: NULL pointer to instance\nClass: SCR_CampaignMilitaryBaseComponent\nFunction: OnAllBasesInitialized\nScripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized");
+  expect(t).toMatch(/\*\*crash\.log\*\* .*crash\.log \(Reason: Access violation\)/);
+  expect(t).toContain("crash-line-40\n");
+  expect(t).not.toContain("crash-line-41");
+};
+const expectClean = (t: string) => {
+  expect(t).not.toContain("Script exceptions in this run");
+  expect(t).not.toContain("**crash.log**");
+};
 type Handler = (args: Record<string, unknown>) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 let tool!: Handler;
 registerServer({ registerTool: (_n: string, _d: unknown, h: Handler) => { tool = h; } } as unknown as McpServer, config);
@@ -171,5 +207,49 @@ describe("server start ports", () => {
     registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, cfg);
     expect(def.description).toContain("For a mission on unpacked addons that needs its Mission Header, use mission_server; `server` runs packed builds or a server.json.");
     expect(def.inputSchema.extraArgs.description).toMatch(/Refused: -config, -server, -addr, -addonsDir, -addons .*-addonsRepair, -addonsVerify/);
+  });
+});
+
+describe("server start and status: -noThrow once, and the script error report", () => {
+  const cfg = { ...config, serverPath: join(root, "srv3"), serverProfilePath: join(root, "prof3"), packedPath: join(root, "packed3") } as Config;
+  mkdirSync(cfg.serverPath, { recursive: true });
+  writeFileSync(join(cfg.serverPath, process.platform === "win32" ? "ArmaReforgerServer.exe" : "ArmaReforgerServer"), "");
+  mkdirSync(join(cfg.packedPath, "TestAddon"), { recursive: true });
+  writeFileSync(join(cfg.packedPath, "TestAddon", "data.pak"), "");
+  writeFileSync(join(cfg.packedPath, "TestAddon", "addon.gproj"), "GameProject {\n ID \"TestAddon\"\n GUID \"1111111111111111\"\n}\n");
+  let h!: Handler;
+  registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, cfg);
+  const SCENARIO = "{ECC61978EDCC2B5A}Missions/23_Campaign.conf";
+
+  /** The run's log folder holds the fixture (with a crash.log) or a clean log. */
+  const putLogs = (vme: boolean) => {
+    const dir = join(cfg.serverProfilePath, "logs", "logs_2026-11-09_12-14-01");
+    rmSync(join(cfg.serverProfilePath, "logs"), { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "console.log"), vme ? VME_LOG : "12:00:00.000 DEFAULT      : Entered online game state.\r\n");
+    if (vme) writeFileSync(join(dir, "crash.log"), CRASH_LOG);
+  };
+
+  it("passes -noThrow once in -config mode and in -server mode", async () => {
+    for (const start of [{ action: "start" }, { action: "start", addons: ["TestAddon"], scenarioId: SCENARIO }]) {
+      vi.mocked(spawnDetached).mockClear();
+      await h(start);
+      expect(vi.mocked(spawnDetached).mock.calls[0][1].filter((x) => x === "-noThrow")).toHaveLength(1);
+    }
+  });
+
+  it("start and status print the report for the fixture, and nothing new for a clean log", async () => {
+    putLogs(true);
+    expectReport((await h({ action: "start" })).content[0].text);
+    expectReport((await h({ action: "status" })).content[0].text);
+    putLogs(false);
+    expectClean((await h({ action: "start" })).content[0].text);
+    expectClean((await h({ action: "status" })).content[0].text);
+  });
+
+  it("the description says every server runs with -noThrow and the replies report script exceptions", () => {
+    let def!: { description: string };
+    registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, cfg);
+    expect(def.description).toMatch(/runs with -noThrow.*report the run's script exceptions/);
   });
 });
