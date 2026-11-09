@@ -9,7 +9,7 @@ import { gitOrNull } from "../release/git.js";
 import { CRF_GUID, LOBBY_GUID, resolveCoalitionRoots, type CoalitionRoots } from "../utils/coalition-paths.js";
 import { findGproj, findWorkbenchExe, isProtectedAddon, myGamesDir } from "../utils/game-paths.js";
 import { findPython } from "../utils/python.js";
-import { realPathOf } from "../utils/safe-path.js";
+import { realPathOf, sameRealPath } from "../utils/safe-path.js";
 
 /**
  * One row per Tools Setup step of the Coalition Mission Making Guide (Section 2), plus the MCP's own
@@ -52,13 +52,7 @@ export function defaultProbe(): Probe {
 }
 
 const ORIGIN = /github\.com[/:]CoalitionArma\/Coalition-Reforger-Framework(\.git)?\/?$/i;
-const samePath = (a: string, b: string) => {
-  try {
-    return realPathOf(a) === realPathOf(b);
-  } catch {
-    return false;
-  }
-};
+const samePath = sameRealPath; // an unreadable path counts as different (addon_deps falls back to comparing the typed spellings)
 
 export function doctorRows(config: Config, probe: Probe): Row[] {
   const rows: Row[] = [];

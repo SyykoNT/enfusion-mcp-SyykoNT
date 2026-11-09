@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitState, hooksDir, originUrl, stagedPaths, stagedStartsWithBom } from "../../src/release/git.js";
+import { gitFailure, gitState, hooksDir, originUrl, stagedPaths, stagedStartsWithBom } from "../../src/release/git.js";
 import { checkGit } from "../../src/release/checks.js";
 
 const hasGit = (() => {
@@ -14,6 +14,14 @@ const hasGit = (() => {
     return false;
   }
 })();
+
+describe("gitFailure", () => {
+  it("names git's first stderr line, else the first line of the error message", () => {
+    expect(gitFailure({ stderr: Buffer.from("fatal: bad object\nhint: more\n"), message: "Command failed" })).toBe("fatal: bad object");
+    expect(gitFailure({ stderr: "", message: "spawnSync git ENOBUFS\nextra" })).toBe("spawnSync git ENOBUFS");
+    expect(gitFailure("plain")).toBe("plain");
+  });
+});
 
 describe.skipIf(!hasGit)("release git helpers (temp repo)", { timeout: 30_000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), "emcp-relgit-"));

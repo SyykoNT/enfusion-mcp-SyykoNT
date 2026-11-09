@@ -5,7 +5,18 @@ import {
   validateEnforceIdentifier,
   safePath,
   validateProjectPath,
+  sameRealPath,
 } from "../../src/utils/safe-path.js";
+
+describe("sameRealPath", () => {
+  it("compares real paths, and answers whenUnreadable (default false) for a path that cannot be read", () => {
+    expect(sameRealPath(resolve("."), resolve("./sub/.."))).toBe(true);
+    expect(sameRealPath(resolve("."), resolve("./sub"))).toBe(false);
+    const unreadable = "bad\0path"; // realpath rejects a NUL byte with an error other than ENOENT
+    expect(sameRealPath(unreadable, unreadable)).toBe(false);
+    expect(sameRealPath(unreadable, unreadable, true)).toBe(true);
+  });
+});
 
 describe("validateFilename", () => {
   it("accepts valid filenames", () => {

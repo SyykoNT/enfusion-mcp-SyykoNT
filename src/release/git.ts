@@ -16,7 +16,7 @@ export function git(dir: string, args: string[]): string {
 }
 
 /** Why a git call failed: git's first stderr line, else the first line of Node's message. */
-function gitFailure(e: unknown): string {
+export function gitFailure(e: unknown): string {
   const err = e as { stderr?: string | Buffer; message?: string };
   return String(err.stderr ?? "").trim().split("\n")[0] || String(err.message ?? e).split("\n")[0];
 }

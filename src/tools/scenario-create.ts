@@ -63,24 +63,38 @@ export function parentWorldHas(text: string): { gameMode: boolean; factionManage
   return { gameMode: GAME_MODE_RE.test(text), factionManager: FACTION_MGR_RE.test(text) };
 }
 
-/** The parent world and its _Layers files as one latin1 string, from the top layer of the addon's stack that has it; null when unreadable. */
+/**
+ * The parent world and its _Layers files as one latin1 string, from the top layer of the addon's stack that has it, followed up the
+ * SubScene `Parent` chain (a sub-scene holds only its own changes, so the game mode may sit in a world above it). Null when any world
+ * in the chain is unreadable; a world met twice ends the walk.
+ */
 export function readParentWorld(config: Config, gproj: string, worldRef: string): string | null {
-  const path = stripGuid(worldRef);
   let layers;
   try {
-    layers = buildStack(config, gproj).layers;
+    layers = [...buildStack(config, gproj).layers].reverse();
   } catch {
     return null;
   }
-  for (const l of [...layers].reverse()) {
-    // Pak paths are lower-case (worlds/...), so retry with a case-insensitive match
-    const file = l.read(path) ? path : l.list(dirname(path)).find((f) => f.toLowerCase() === path.toLowerCase());
-    const buf = file ? l.read(file) : null;
-    if (!buf) continue;
-    const layerFiles = l.list(path.replace(/\.ent$/i, "_Layers")).filter((f) => /\.layer$/i.test(f));
-    return [buf, ...layerFiles.map((f) => l.read(f) ?? Buffer.alloc(0))].map((b) => b.toString("latin1")).join("\n");
-  }
-  return null;
+  const seen = new Set<string>();
+  const read = (ref: string): string | null => {
+    const path = stripGuid(ref);
+    if (seen.has(path.toLowerCase())) return "";
+    seen.add(path.toLowerCase());
+    for (const l of layers) {
+      // Pak paths are lower-case (worlds/...), so retry with a case-insensitive match
+      const file = l.read(path) ? path : l.list(dirname(path)).find((f) => f.toLowerCase() === path.toLowerCase());
+      const buf = file ? l.read(file) : null;
+      if (!buf) continue;
+      const layerFiles = l.list(path.replace(/\.ent$/i, "_Layers")).filter((f) => /\.layer$/i.test(f));
+      const own = [buf, ...layerFiles.map((f) => l.read(f) ?? Buffer.alloc(0))].map((b) => b.toString("latin1")).join("\n");
+      const up = /^\s*Parent\s+"([^"]+)"/m.exec(buf.toString("latin1"))?.[1];
+      if (!up) return own;
+      const above = read(up);
+      return above === null ? null : own + "\n" + above;
+    }
+    return null;
+  };
+  return read(worldRef);
 }
 
 function parentNotes(
@@ -172,8 +186,10 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           .number()
           .optional()
           .describe(
-            "Supplies replenished periodically in HQs (m_iRegularSuppliesIncome, default 50; the game's own default is 40). " +
-            "Other bases use m_iRegularSuppliesIncomeBase (game default 4), which this tool does not write."
+            "Supplies replenished periodically in HQs and supply hubs (m_iRegularSuppliesIncome, default 50; the game's own default is 40). " +
+            "Regular bases use m_iRegularSuppliesIncomeBase (game default 4) only while m_bSuppliesAutoRegenerationEnabled is on " +
+            "(game default off); this tool writes neither, so the game mode gives generated regular bases no income. Source bases set their own. " +
+            "The radio extra (m_iRegularSuppliesIncomeExtra, per friendly base in radio range) applies only to non-HQ bases with auto regeneration on."
           ),
         seedingEnabled: z
           .boolean()

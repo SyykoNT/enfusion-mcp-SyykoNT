@@ -45,6 +45,14 @@ describe("scenario_create_conflict input docs", () => {
     expect(d).toContain("m_iRegularSuppliesIncomeBase");
     expect(d).not.toContain("contested bases");
   });
+
+  it("states when regular bases and the radio extra get income, and that the tool writes no auto regeneration flag (B-108)", () => {
+    const d = schema.suppliesIncome.description!;
+    expect(d).toContain("HQs and supply hubs");
+    expect(d).toMatch(/Regular bases use m_iRegularSuppliesIncomeBase .* only while m_bSuppliesAutoRegenerationEnabled is on/);
+    expect(d).toContain("Source bases set their own");
+    expect(d).toMatch(/radio extra .* applies only to non-HQ bases with auto regeneration on/);
+  });
 });
 
 describe("scenario_create_conflict world files", () => {
@@ -156,6 +164,29 @@ describe("scenario_create_conflict parent world (D-044)", () => {
     const r = await create(withParent(dir, "{1111111111111111}Worlds/Parent.ent"));
     expect(defaultLayer(dir)).toMatch(/SCR_GameModeCampaign[\s\S]*SCR_CampaignFactionManager/);
     expect(r.content[0].text).not.toContain("parent world");
+  });
+
+  it("follows the SubScene parent chain: a sub-scene this tool made over a world with the game mode writes neither again (B-041)", async () => {
+    const dir = addon2("P4", { "Worlds/Top.ent": "SubScene {\n}\nSCR_GameModeCampaign GameMode1 {\n}\nSCR_CampaignFactionManager FM1 {\n}" });
+    const first = await create({ ...withParent(dir, "{1111111111111111}Worlds/Top.ent"), scenarioName: "Mid" });
+    expect(first.isError).toBeUndefined();
+    expect(readFileSync(join(dir, "Worlds", "Mid_Layers", "default.layer"), "utf-8")).toBe("");
+    const r = await create({ ...withParent(dir, "{1111111111111111}Worlds/Mid.ent"), scenarioName: "Low" });
+    expect(r.isError).toBeUndefined();
+    expect(readFileSync(join(dir, "Worlds", "Low_Layers", "default.layer"), "utf-8")).toBe("");
+    expect(r.content[0].text).toContain("parent world already has a game mode and a faction manager");
+  });
+
+  it("stops on a parent chain that loops, and on a link that cannot be read", () => {
+    const loop = addon2("P5", {
+      "Worlds/A.ent": 'SubScene {\n Parent "{1111111111111111}Worlds/B.ent"\n}',
+      "Worlds/B.ent": 'SubScene {\n Parent "{1111111111111111}Worlds/A.ent"\n}',
+      "Worlds/C.ent": 'SubScene {\n Parent "{1111111111111111}Worlds/Gone.ent"\n}',
+    });
+    const read = (n: string) => readParentWorld(config, join(loop, "addon.gproj"), `{1111111111111111}Worlds/${n}.ent`);
+    expect(read("A")?.match(/SubScene/g)).toHaveLength(2); // A and B once each, then the walk ends
+    expect(parentWorldHas(read("A")!)).toEqual({ gameMode: false, factionManager: false });
+    expect(read("C")).toBeNull();
   });
 
   it("writes both and says why when the parent world cannot be read", async () => {

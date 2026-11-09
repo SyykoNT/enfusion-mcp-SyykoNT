@@ -121,6 +121,8 @@ describe("addonDepsReport", () => {
       symlinkSync(projects, link, "junction"); // on POSIX the type is ignored and this is a symlink
       expect(samePath(link, projects)).toBe(true);
       expect(samePath(link, ws)).toBe(false);
+      expect(samePath("bad\0path", "bad\0path")).toBe(true); // a path realpath cannot read falls back to the typed spelling
+      expect(samePath("bad\0path", "other\0path")).toBe(false);
       expect(samePath(join(root, "no", "such"), join(root, "NO", "such"))).toBe(process.platform === "win32"); // a missing path still compares, case-blind on Windows only
     } finally {
       rmSync(holder, { recursive: true, force: true });

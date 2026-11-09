@@ -264,7 +264,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 | `wb_undo_redo` | Undo or redo in the World Editor |
 | `wb_open_resource` | Open a resource in its Workbench editor |
 | `wb_execute_action` | Run a Workbench menu action by path |
-| `wb_reload` | Reload game scripts with Workbench's built-in `ReloadScripts` call, plugins through menu actions (see Known limitations) |
+| `wb_reload` | Reload game scripts with Workbench's built-in `ReloadScripts` call, plugins through one menu action (see Known limitations) |
 | `wb_projects` | List, locate or open loaded projects |
 
 ### World Editor (NET API)

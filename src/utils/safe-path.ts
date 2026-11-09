@@ -83,6 +83,15 @@ export function realPathOf(p: string): string {
   }
 }
 
+/** Whether a and b are the same real path (junctions, 8.3 names, case on Windows); whenUnreadable is the answer when a part of either cannot be read. */
+export function sameRealPath(a: string, b: string, whenUnreadable = false): boolean {
+  try {
+    return realPathOf(a) === realPathOf(b);
+  } catch {
+    return whenUnreadable;
+  }
+}
+
 /** Folders no tool writes into: game and Tools installs, both Workshop caches, ENFUSION_FORBIDDEN_DIRS. */
 export function forbiddenRoots(config: Config): string[] {
   const roots = [

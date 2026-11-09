@@ -7,7 +7,7 @@ import { appendFileSync, constants, copyFileSync, mkdirSync, readdirSync, statSy
 import { basename, join } from "node:path";
 import type { Config } from "../config.js";
 import { buildStack } from "../pak/stack.js";
-import { gitOrNull } from "../release/git.js";
+import { gitFailure, gitOrNull } from "../release/git.js";
 import { realPathOf } from "../utils/safe-path.js";
 import { argValue, type ProcInfo } from "../utils/process.js";
 import { PROGRAM_METHODS, crashFiles, programCommand, type AuthDialog, type AuthLog, type CrashLog } from "./signals.js";
@@ -59,7 +59,9 @@ export function gitReport(clones: { name: string; root: string }[]): string {
         const stat = (gitOrNull(root, ["diff", "--stat", "--", GEAR_LIST]) ?? "").trim().split("\n").pop()?.trim();
         return `${name}: ${changed} changed files, GearScriptsConfigList.json ${stat || "unchanged"}`;
       } catch (e) {
-        return `${name}: git not available (${String((e as Error).message ?? e).split("\n")[0]})`; // gitOrNull throws when git is not on PATH; the press must still be logged
+        // gitOrNull throws "git not found on PATH" when git is missing; any other failure is named as it is. The press must still be logged.
+        const why = gitFailure(e);
+        return `${name}: ${/^git not found/.test(why) ? "git not available" : "git failed"} (${why})`;
       }
     })
     .join("; ");

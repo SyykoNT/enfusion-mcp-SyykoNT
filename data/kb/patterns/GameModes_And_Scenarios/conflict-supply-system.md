@@ -16,13 +16,13 @@ The modern supply system uses `SCR_ResourceComponent` internally. The older `SCR
 Harbor / Airfield (source base)
     → every 300s: +2500 supplies distributed to connected friendly bases
 
-HQ / MOB
+HQ / MOB / supply hub
     → every 5s: +40 supplies (m_iRegularSuppliesIncome)
-    → each connected relay radio: +4 extra/tick
+    → no radio extra (the extra is for non-HQ bases only)
 
 Regular contested base (only while m_bSuppliesAutoRegenerationEnabled is on)
     → every 5s: +4 supplies (m_iRegularSuppliesIncomeBase)
-    → each connected relay radio: +4 extra/tick
+    → each friendly base in radio range, up to 5: +4 extra/tick (m_iRegularSuppliesIncomeExtra)
 
 Quick replenish (when below threshold)
     → income × 2.0 multiplier (m_fQuickSuppliesReplenishMultiplier)
@@ -39,9 +39,9 @@ Auto-replenish ceiling: 1000 supplies (m_iSuppliesReplenishThreshold)
 ### Income
 | Attribute | Default | Description |
 |---|---|---|
-| `m_iRegularSuppliesIncome` | `40` | Supplies replenished periodically in HQs |
-| `m_iRegularSuppliesIncomeBase` | `4` | Supplies replenished periodically in non-HQ bases; applied only while `m_bSuppliesAutoRegenerationEnabled` is on (default off), otherwise a non-HQ base gets 0 |
-| `m_iRegularSuppliesIncomeExtra` | `4` | Bonus per connected relay radio per tick |
+| `m_iRegularSuppliesIncome` | `40` | Supplies replenished periodically in HQs and supply hubs |
+| `m_iRegularSuppliesIncomeBase` | `4` | Supplies replenished periodically in non-HQ bases; applied only while `m_bSuppliesAutoRegenerationEnabled` is on (default off), otherwise a regular base gets 0 (supply hubs take the HQ income, source bases set their own) |
+| `m_iRegularSuppliesIncomeExtra` | `4` | Bonus per tick for each friendly base in radio range (up to 5); non-HQ bases only, and only while `m_bSuppliesAutoRegenerationEnabled` is on |
 | `m_iRegularSuppliesIncomeSource` | `2500` | Source base (harbor/airfield) income per distribution |
 | `m_iSuppliesArrivalInterval` | `5` | Seconds between base income ticks |
 | `m_iSuppliesArrivalIntervalSource` | `300` | Seconds between source base distributions |
@@ -181,7 +181,7 @@ base.GetOnReservedSupplyAmountChanged();
 SCR_GameModeCampaign gm = SCR_GameModeCampaign.Cast(GetGame().GetGameMode());
 int hqIncome  = gm.GetRegularSuppliesIncome();        // 40 default
 int baseIncome = gm.GetRegularSuppliesIncomeBase();    // 4 default
-int relayBonus = gm.GetRegularSuppliesIncomeExtra();   // 4 per relay
+int relayBonus = gm.GetRegularSuppliesIncomeExtra();   // 4 per friendly base in range, auto regeneration only
 int sourceIncome = gm.GetRegularSuppliesIncomeSource(); // 2500 default
 int replenishCap = gm.GetSuppliesReplenishThreshold();  // 1000 default
 ```
@@ -221,5 +221,5 @@ modded class SCR_GameModeCampaign
 **Balance tips from production mods:**
 - MOBs at 500 starting (not 3000) — forces players to manage supply chains from day 1
 - Quick replenish threshold (200) prevents bases from going completely dry during heavy combat
-- Relay radios (+4/tick each) reward radio network expansion
+- Radio coverage over friendly bases adds +4/tick per base in range (up to 5) to regular bases, only with auto regeneration on
 - Source bases make harbors strategically important — place them at map extremes
