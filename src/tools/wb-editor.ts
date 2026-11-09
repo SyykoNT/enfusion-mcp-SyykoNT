@@ -249,7 +249,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         "Open a resource file in the appropriate Workbench editor (e.g., a .et prefab in the Prefab Editor, a .c script in the Script Editor). " +
         "Opening a world (.ent) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it. " +
         "The tool refuses a world open when the World Editor title shows unsaved changes (local Workbench on Windows only) and opens with a warning when it cannot check. " +
-        "A world whose only unsaved change is a new layer is not detected (B-112). " +
+        "A world whose only unsaved change is a new layer is not detected. " +
         "Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
         path: z
