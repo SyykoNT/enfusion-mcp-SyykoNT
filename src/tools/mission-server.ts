@@ -29,6 +29,8 @@ export const MIN_FREE_GB_CLIENT = 4;
 /** A peer whose log has not been written for this long, and is not counted yet, looks hung (run 2: silent from 01:18:04 on). */
 const STALL_SEC = 60;
 const DEFAULT_JOIN_SEC = 120;
+/** With no peers there is no join wait, so the reply waits this long after "online": live runs logged the script exception 0.12 s and crash.log 0.13 s after that line. */
+export const SETTLE_MS = 3000;
 
 /** The last "Players connected" count in a server log, 0 when there is none yet. */
 export function playersConnected(log: string): number {
@@ -396,6 +398,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             peers.push(`Peer ${p.n}: PID ${p.pid}${p.pinned === undefined ? "" : " (pinned)"}`);
             await sleep(2000);
           }
+          if (a.peers === 0 && isAlive(pid)) await sleep(SETTLE_MS);
           const joined = a.peers > 0 && (await waitPlayers(w.file!, offset, a.peers, pid, a.joinTimeoutSec));
           // Before stopOwn: the peers it ends itself are not "exited" waits.
           const ended = a.peers > 0 && !joined ? await exitedStates(portDir(port), [pid, ...startedPeers.map((p) => p.pid)], started) : "";

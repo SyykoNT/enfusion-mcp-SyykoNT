@@ -23,6 +23,9 @@ const sys = vi.hoisted(() => ({
   /** Every sleep(500) is one poll of the wait after an exit; onPoll runs inside it with the poll's number. */
   polls: 0,
   onPoll: undefined as undefined | ((n: number) => void),
+  /** Every other sleep (the settle, the pause between peers): recorded, and onSleep runs inside it with its length. */
+  sleeps: [] as number[],
+  onSleep: undefined as undefined | ((ms: number) => void),
   // The real startProcWatcher runs with this spawn: it records the watcher's argv and starts nothing.
   watcherSpawns: [] as { args: string[]; instanceThere: boolean }[],
   platform: "win32",
@@ -60,11 +63,14 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
     if (ms === 500) {
       sys.polls++;
       sys.onPoll?.(sys.polls);
+    } else {
+      sys.sleeps.push(ms);
+      sys.onSleep?.(ms);
     }
   },
 }));
 
-const { planRun, serverArgs, peerArgs, checkExtra, cpuMasks, peerProblems, playersConnected, registerMissionServer, MISSION_ROOT } = await import("../../src/tools/mission-server.js");
+const { planRun, serverArgs, peerArgs, checkExtra, cpuMasks, peerProblems, playersConnected, registerMissionServer, MISSION_ROOT, SETTLE_MS } = await import("../../src/tools/mission-server.js");
 const { SERVER_DOWNLOAD_DIR } = await import("../../src/config.js");
 const { PROC_WATCH_DIR } = await import("../../src/watchdog/proc-watch.js");
 const { INSTANCE_FILE, OWNER } = await import("../../src/utils/instances.js");
@@ -138,6 +144,8 @@ beforeEach(() => {
   sys.cores = 16;
   sys.polls = 0;
   sys.onPoll = undefined;
+  sys.sleeps = [];
+  sys.onSleep = undefined;
   sys.watcherSpawns = [];
   sys.platform = "win32";
 });
@@ -667,6 +675,65 @@ describe("-noThrow on every process the tools start, and the script error report
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("**Server not ready** (the server exited)");
     expectReport(r.content[0].text);
+  });
+
+  it("start with no peers waits a settle after the online line: a script exception and crash.log written just after it are in the reply", async () => {
+    const t = addon();
+    const at = VME_LOG.indexOf("12:14:18.032");
+    let dir = "";
+    sys.onSpawn = (args) => {
+      if (!args.includes("-server")) return;
+      dir = join(args[args.indexOf("-profile") + 1], "logs", "logs_2026-11-09_12-14-01");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "console.log"), VME_LOG.slice(0, at));
+    };
+    // Written during the settle, like the live runs (0.12 s after the online line).
+    sys.onSleep = (ms) => {
+      if (ms !== SETTLE_MS) return;
+      appendFileSync(join(dir, "console.log"), VME_LOG.slice(at));
+      writeFileSync(join(dir, "crash.log"), CRASH_LOG);
+    };
+    const r = await start(t, 2566);
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("**Server online**");
+    expectReport(r.content[0].text);
+    expect(sys.sleeps).toEqual([SETTLE_MS]);
+  });
+
+  it("start waits no settle when the server is not online, or exited after the online line", async () => {
+    const online = "12:00:00.000 DEFAULT      : Entered online game state.\r\n";
+    const cases: [string, string, boolean, string][] = [
+      ["failure line", "01:23:09.071 ENGINE    (F): Application hangs (force crash) 305 s\r\n", false, "**Server not ready** (stopped on:"],
+      ["exited before online", "00:00:01.000 ENGINE       : loading\r\n", true, "**Server not ready** (the server exited)"],
+      ["exited after online", online, true, "**Server online**"],
+    ];
+    let port = 2567;
+    for (const [why, log, exits, reply] of cases) {
+      sys.killed = [];
+      sys.sleeps = [];
+      serverWrites(log, false, exits);
+      const r = await start(addon(), port++);
+      expect(r.content[0].text, why).toContain(reply);
+      expect(sys.sleeps, why).not.toContain(SETTLE_MS);
+    }
+  });
+
+  it("start with peers keeps the join wait and the pause between peers, and adds no settle", async () => {
+    const t = addon();
+    writeFileSync(join(home, "ArmaReforgerServerDiag.exe"), "");
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+    let log = "";
+    sys.onSpawn = (args) => {
+      const profile = args[args.indexOf("-profile") + 1];
+      if (args.includes("-server")) {
+        log = join(profile, "logs", "logs_x", "console.log");
+        mkdirSync(dirname(log), { recursive: true });
+        writeFileSync(log, "12:00:00.000 DEFAULT      : Entered online game state.\r\n");
+      } else appendFileSync(log, "12:00:09.000   NETWORK      : Players connected: 1 / 1\r\n");
+    };
+    const r = await handler(registerMissionServer, config(home))({ action: "start", world: t.world, port: 2570, peers: 1, addonsDirs: [t.root], timeoutSec: 10, joinTimeoutSec: 2 });
+    expect(r.content[0].text).toContain("All 1 peer(s) joined");
+    expect(sys.sleeps).toEqual([2000]);
   });
 
   it("join and status print the report for the server and each peer; a clean run prints nothing new", async () => {
