@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
 import { decodeResponse, encodePascalString } from "../../src/workbench/protocol.js";
@@ -108,8 +111,10 @@ describe("wb_reload", () => {
 });
 
 describe("notifyFailure (the tuning server's reply when its post-write call throws)", () => {
-  // tuner.html shows its warning banner when the text has "not reachable" or "not notified".
-  const warns = (s: string) => s.includes("not reachable") || s.includes("not notified");
+  // The page's own rule (the `reached` line in tuner.html's writeChanges), read from the file so the two cannot drift.
+  const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../src/tuning-server/public/tuner.html"), "utf8");
+  const reached = new Function("wb", `return ${html.match(/const reached = (.*);/)![1]}`) as (wb: string) => boolean;
+  const warns = (s: string) => !reached(s);
 
   it("a Workbench API error says Workbench answered, not that it is unreachable, and still warns", () => {
     const s = notifyFailure(new WorkbenchError("Workbench error: Compilation failed", "API_ERROR"));

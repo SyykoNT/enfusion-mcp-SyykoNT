@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,14 +13,16 @@ type El = Record<string, any>;
 function loadPage(fetchStub: (url: string, init?: { method?: string }) => Promise<unknown>) {
   const els = new Map<string, El>();
   const el = (id: string): El => {
-    if (!els.has(id)) els.set(id, { disabled: false, checked: false, textContent: "", className: "", innerHTML: "" });
+    if (!els.has(id)) els.set(id, { disabled: false, checked: false, textContent: "", className: "", innerHTML: "", appendChild: () => {} });
     return els.get(id)!;
   };
   el("autoWatch").checked = true;
   el("allowWrite").checked = true;
   const noop = () => {};
+  const listeners = new Map<string, (e: unknown) => void>();
+  const edited: El[] = []; // stand-ins for the rows the page marks as edited
   const ctx = vm.createContext({
-    document: { getElementById: el, addEventListener: noop },
+    document: { getElementById: el, addEventListener: (type: string, fn: (e: unknown) => void) => listeners.set(type, fn), createElement: () => ({}), querySelectorAll: (sel: string) => (sel === ".sr.edited" ? edited : []) },
     window: { addEventListener: noop, location: { search: "" } },
     fetch: fetchStub,
     setInterval: noop,
@@ -33,10 +35,20 @@ function loadPage(fetchStub: (url: string, init?: { method?: string }) => Promis
   // One vehicle with one edited value, so there is a change to apply
   run(`cur = { rel: "Prefabs/Vehicles/X.et", body: {} }; lastMtime = 1;
        rows.set("engine.MaxPower", { target: { part: "engine", key: "MaxPower" }, loaded: 100, value: 120, touched: true });`);
-  return { el, run };
+  return { el, run, edited, fire: (type: string, e: unknown) => listeners.get(type)!(e) };
 }
 
 const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+
+/** A page whose POST succeeds with `reply` and whose later GETs answer with `get`; `done` is the write. */
+function afterWrite(get: () => Promise<unknown>, reply: Record<string, unknown>) {
+  let posted = false;
+  const page = loadPage((url, init) => {
+    if (init?.method === "POST") { posted = true; return Promise.resolve(json({ status: "ok", written: ["a.et"], ...reply })); }
+    return posted ? get() : Promise.resolve(json({ status: "ok", vehicles: [], mtimeMs: 1, fields: {} }));
+  });
+  return { ...page, done: page.run("writeChanges()") as Promise<void> };
+}
 
 describe("tuner.html while a write is in flight", () => {
   it("keeps Apply disabled whatever the user edits, and lets go after the reply", async () => {
@@ -112,6 +124,112 @@ describe("tuner.html while a write is in flight", () => {
     expect(page.el("banner").className).toBe("banner warn");
     expect(page.el("banner").textContent).toContain("Wrote a.et");
     expect(page.el("banner").textContent).toContain("could not reload");
-    expect(page.el("writeBtn").disabled).toBe(false);
+    expect(page.el("panels").disabled).toBe(false); // the write lock is released; Apply stays off because the edits are written
+  });
+
+  it("keeps the server's message and the Workbench line on the warn banner when the reload after a good write fails", async () => {
+    const page = afterWrite(() => Promise.reject(new Error("down")), { message: "Saved ok", workbench: "Workbench not notified (x)" });
+    await page.done;
+    expect(page.el("banner").className).toBe("banner warn");
+    expect(page.el("banner").textContent).toContain("Saved ok");
+    expect(page.el("banner").textContent).toContain("Workbench not notified (x)");
+  });
+
+  it("warns, and no longer counts the edits as unsaved, when the reload after a good write answers not ok", async () => {
+    const page = afterWrite(() => Promise.resolve(json({ status: "error", message: "gone" })), { message: "m" });
+    const editedRow = { classList: { remove: vi.fn() } };
+    page.edited.push(editedRow);
+    await page.done;
+    const banner = page.el("banner");
+    expect(banner.className).toBe("banner warn");
+    expect(banner.textContent).toContain("Wrote a.et");
+    expect(banner.textContent).toContain("could not reload");
+    expect(page.run("changedRows().length")).toBe(0);
+    expect(page.el("writeBtn").textContent).toBe("Apply to prefab");
+    expect(editedRow.classList.remove).toHaveBeenCalledWith("edited");
+  });
+
+  describe("a failed load shows a warn banner instead of an unhandled rejection", () => {
+    // Macrotask waits: a rejection that nobody awaits only surfaces after the microtask queue drains.
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const down = () => Promise.reject(new Error("down"));
+    const list = json({ status: "ok", vehicles: [{ path: "Prefabs/Vehicles/X.et" }] });
+    /** A page whose startup works; each vehicle GET after that takes the next function in `replies`. */
+    const started = async () => {
+      const replies: (() => Promise<unknown>)[] = [];
+      const page = loadPage((url) => (url === "/api/vehicles" ? Promise.resolve(list) : (replies.shift() ?? (() => Promise.resolve(json({ status: "ok", mtimeMs: 1, fields: {} }))))()));
+      await tick();
+      return { page, replies };
+    };
+
+    it("the poll's reload after a Workbench save", async () => {
+      const { page, replies } = await started();
+      page.run("rows.clear(); lastMtime = 1");
+      replies.push(() => Promise.resolve(json({ status: "ok", mtimeMs: 2, fields: {} })), down); // the poll sees a save, the reload fails
+      await page.run("pollForChanges()");
+      await tick();
+      expect(page.el("banner").className).toBe("banner warn");
+      expect(page.el("banner").textContent).toContain("Could not load");
+    });
+
+    it("the vehicle select", async () => {
+      const { page, replies } = await started();
+      replies.push(down);
+      page.el("vehicle").value = "Prefabs/Vehicles/X.et";
+      page.el("vehicle").onchange();
+      await tick();
+      expect(page.el("banner").className).toBe("banner warn");
+      expect(page.el("banner").textContent).toMatch(/Could not load Prefabs\/Vehicles\/X\.et: .*down/);
+    });
+
+    it("the Reload button", async () => {
+      const { page, replies } = await started();
+      replies.push(down);
+      await page.el("reloadBtn").onclick();
+      await tick();
+      expect(page.el("banner").className).toBe("banner warn");
+      expect(page.el("banner").textContent).toContain("Could not load");
+    });
+
+    it("the startup vehicle list", async () => {
+      const page = loadPage(down);
+      await tick();
+      expect(page.el("banner").className).toBe("banner warn");
+      expect(page.el("banner").textContent).toMatch(/Could not list the vehicle prefabs: .*down/); // the page's Error is another realm's, so the text may carry "Error: "
+    });
+
+    it("the vehicle load at startup", async () => {
+      const page = loadPage((url) => (url === "/api/vehicles" ? Promise.resolve(list) : down()));
+      page.el("vehicle").value = "Prefabs/Vehicles/X.et";
+      await tick();
+      expect(page.el("banner").className).toBe("banner warn");
+      expect(page.el("banner").textContent).toMatch(/Could not load Prefabs\/Vehicles\/X\.et: .*down/);
+    });
+  });
+});
+
+describe("tuner.html number boxes", () => {
+  /** Types `text` into the number box of the edited row. */
+  const type = (text: string) => {
+    const page = loadPage(() => Promise.resolve(json({ status: "ok", mtimeMs: 1, fields: {} })));
+    page.el("banner").textContent = "";
+    const sr = { dataset: { id: "engine.MaxPower" }, querySelectorAll: () => [{ min: "0", max: "10", value: "" }, { value: "" }], classList: { toggle: () => {} } };
+    page.fire("input", { target: { dataset: {}, value: text, closest: () => sr } });
+    return page;
+  };
+
+  it("warns when a typed number does not survive being stored as a JavaScript number, and keeps the stored value", () => {
+    const page = type("123456789012345678901");
+    expect(page.el("banner").className).toBe("banner warn");
+    expect(page.el("banner").textContent).toContain("123456789012345678901 cannot be stored exactly");
+    expect(page.run('rows.get("engine.MaxPower").value')).toBe(123456789012345680000);
+  });
+
+  it.each(["1.50", "0.1", "-2.5e3", "007", "0", "0.000", "1e-7", "123456789012345", "9007199254740991"])("stays quiet for %s", (text) => {
+    expect(type(text).el("banner").textContent).toBe("");
+  });
+
+  it.each(["9007199254740993", "0.12345678901234567890123", "1.00000000000000000001", "1e-400"])("warns for %s", (text) => {
+    expect(type(text).el("banner").className).toBe("banner warn");
   });
 });

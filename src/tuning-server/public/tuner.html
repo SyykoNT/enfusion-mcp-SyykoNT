@@ -429,6 +429,22 @@ function setRow(sr, v, touched) {
   sr.classList.toggle("unset", !touched && r.loaded === null);
 }
 
+/** Digits and decimal exponent of a plain number text, so "1.50" and "15e-1" compare equal ("0" for zero). */
+function digitsOf(s) {
+  const m = /^[+-]?(\d*)\.?(\d*)(?:e([+-]?\d+))?$/i.exec(s.trim());
+  if (!m) return null;
+  const all = m[1] + m[2], lead = /^0*/.exec(all)[0].length, d = all.slice(lead).replace(/0+$/, "");
+  return d ? d + "e" + (Number(m[3] || 0) + m[1].length - lead) : "0";
+}
+
+/** True when v, stored the way JavaScript does, still reads as the text that was typed. */
+function exact(text, v) {
+  const d = digitsOf(text);
+  if (d === null || d === "0") return true;
+  const n = d.indexOf("e");
+  return n <= 100 && digitsOf(v.toPrecision(n)) === d;
+}
+
 document.addEventListener("input", (e) => {
   const t = e.target;
   if (t.dataset.in) {
@@ -445,6 +461,7 @@ document.addEventListener("input", (e) => {
   if (!sr) return;
   const v = parseFloat(t.value);
   if (!Number.isFinite(v)) return;
+  if (!exact(t.value, v)) showBanner("warn", `${t.value} cannot be stored exactly; it will be written as ${v}.`);
   setRow(sr, v, true);
   refreshWriteState();
   redraw();
@@ -479,14 +496,14 @@ async function loadVehicleList() {
     opt.textContent = v.path.replace("Prefabs/Vehicles/", "") + (v.hasEngineBlock ? "" : "  (no own Engine block)");
     select.appendChild(opt);
   }
-  select.onchange = () => loadVehicle(select.value);
+  select.onchange = () => tryLoad(select.value);
   // ?vehicle=<addon-relative path> opens that prefab directly.
   const wanted = new URLSearchParams(window.location.search).get("vehicle");
   if (wanted) {
     if (body.vehicles.some((v) => v.path === wanted)) select.value = wanted;
     else deepLinkMiss = wanted;
   }
-  loadVehicle(select.value);
+  tryLoad(select.value);
 }
 
 async function loadVehicle(rel, manual) {
@@ -495,7 +512,7 @@ async function loadVehicle(rel, manual) {
   const body = await res.json();
   if (body.status !== "ok") {
     showBanner("err", body.message || "Failed to load " + rel);
-    return;
+    return false;
   }
   cur = { rel, body };
   lastMtime = body.mtimeMs;
@@ -510,6 +527,19 @@ async function loadVehicle(rel, manual) {
   const msg = `${manual ? "Reloaded" : "Loaded"} ${rel} at ${new Date().toLocaleTimeString()}.`;
   if (deepLinkMiss) showBanner("err", `Requested vehicle ${deepLinkMiss} was not found in this addon. ${msg}`);
   else showBanner("ok", msg);
+  return true;
+}
+
+const why = (e) => (e instanceof Error ? e.message : String(e));
+
+/** loadVehicle for timers and handlers: a failure becomes a warn banner, never an unhandled rejection. Returns whether the page now shows the file. */
+async function tryLoad(rel, manual) {
+  try {
+    return await loadVehicle(rel, manual);
+  } catch (e) {
+    showBanner("warn", `Could not load ${rel}: ${why(e)}`);
+    return false;
+  }
 }
 
 // A Workbench save bumps the mtime; re-read then, unless that would throw away edits.
@@ -523,7 +553,7 @@ async function pollForChanges() {
     if (pending) {
       lastMtime = body.mtimeMs;
       showBanner("warn", `${cur.rel} changed on disk. Reload to see it; your ${pending} change(s) not yet applied would be lost.`);
-    } else loadVehicle(cur.rel);
+    } else await tryLoad(cur.rel);
   } catch {
     // server down or file mid-write; try again next tick
   }
@@ -542,7 +572,7 @@ async function writeChanges() {
       res = await fetch(apiUrl(cur.rel), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes }) });
       body = await res.json();
     } catch (e) {
-      showBanner("err", "The request failed: " + (e instanceof Error ? e.message : String(e)));
+      showBanner("err", "The request failed: " + why(e));
       return;
     }
     if (!res.ok || body.status !== "ok") {
@@ -552,25 +582,26 @@ async function writeChanges() {
     }
     const wb = body.workbench || "";
     const reached = wb.indexOf("not reachable") === -1 && wb.indexOf("not notified") === -1;
-    try {
-      await loadVehicle(cur.rel);
-    } catch {
-      showBanner("warn", `Wrote ${(body.written || []).join(", ")} to ${cur.rel}, but the page could not reload the values. Reload the page.`);
+    const wrote = `Wrote ${(body.written || []).join(", ")} to ${cur.rel}`, tail = `\n${body.message || ""}${wb ? "\n" + wb : ""}`;
+    if (!(await tryLoad(cur.rel))) {
+      // The file is written, so the edits are no longer unsaved even though the page could not show it.
+      for (const r of changedRows()) r.loaded = r.value;
+      for (const e of document.querySelectorAll(".sr.edited")) e.classList.remove("edited");
+      showBanner("warn", `${wrote}, but the page could not reload the values. Reload the page.${tail}`);
       return;
     }
-    showBanner(wb && !reached ? "warn" : "ok",
-      `Wrote ${(body.written || []).join(", ")} to ${cur.rel}.\n${body.message || ""}${wb ? "\n" + wb : ""}`);
+    showBanner(wb && !reached ? "warn" : "ok", `${wrote}.${tail}`);
   } finally {
     writing = false;
     refreshWriteState();
   }
 }
 
-$("reloadBtn").onclick = () => cur && loadVehicle(cur.rel, true);
+$("reloadBtn").onclick = () => cur && tryLoad(cur.rel, true);
 $("allowWrite").onchange = refreshWriteState;
 $("writeBtn").onclick = writeChanges;
 window.addEventListener("resize", redraw);
-loadVehicleList();
+loadVehicleList().catch((e) => showBanner("warn", `Could not list the vehicle prefabs: ${why(e)}`));
 </script>
 </body>
 </html>
