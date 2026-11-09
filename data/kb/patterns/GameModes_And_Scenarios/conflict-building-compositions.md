@@ -128,7 +128,7 @@ Compositions are categorized by slot type. Costs are in supplies (CAMPAIGN budge
 
 ## Relay Radio (`ConflictRelayRadio.et`)
 
-The relay radio is the most strategically important buildable. It extends radio coverage. It gets no supply income itself (the income loop runs only for `BASE` and `SOURCE_BASE` types) and is not counted for the radio extra (+4 supplies/tick, `m_iRegularSuppliesIncomeExtra`, which counts friendly `BASE`-type bases that receive HQ radio traffic in a non-HQ base's radio range, up to 5, only while `m_bSuppliesAutoRegenerationEnabled` is on, default off). It still matters for supplies: a base other than a source base gets income only while it has two-way HQ radio coverage, and a powered relay on the HQ radio's encryption key passes that coverage on.
+The relay radio is the most strategically important buildable. It extends radio coverage. It gets no supply income itself (the income loop runs only for `BASE` and `SOURCE_BASE` types) and is not counted for the radio extra (`m_iRegularSuppliesIncomeExtra`, +4 supplies/tick by script default and 1 in the vanilla `GameMode_Campaign.et`, which counts friendly `BASE`-type bases that receive HQ radio traffic in a non-HQ base's radio range, up to 5, only while `m_bSuppliesAutoRegenerationEnabled` is on; script default off, but `GameMode_Campaign.et` and a campaign mission header left at its default turn it on, see `conflict-supply-system.md`). It still matters for supplies: a base other than a source base gets income only while it has two-way HQ radio coverage, and a powered relay on the HQ radio's encryption key passes that coverage on.
 
 **Prefab GUID:** `{522DCD528AE27052}Prefabs/Systems/MilitaryBase/ConflictRelayRadio.et`
 
@@ -216,7 +216,7 @@ provider.ClearAccumulatedBudgetChanges();
 
 ## Scenario Design Notes
 
-- **Relay radios extend HQ radio coverage**: a non-HQ base's spawn point needs two-way HQ radio coverage, and so does supply income for every base other than a source base, so a faction that builds relay chains extends both. Relays are not counted for the radio extra (+4 per friendly `BASE`-type base in range, non-HQ bases only, auto regeneration on). Design maps with radio range gaps to incentivize building.
+- **Relay radios extend HQ radio coverage**: a non-HQ base's spawn point needs two-way HQ radio coverage, and so does supply income for every base other than a source base, so a faction that builds relay chains extends both. Relays are not counted for the radio extra (`m_iRegularSuppliesIncomeExtra`, script default 4, per friendly `BASE`-type base in range that receives HQ radio traffic, up to 5, for non-HQ bases with an income loop, not relays, auto regeneration on). Design maps with radio range gaps to incentivize building.
 - **Fortification slots** define what can be built at a base. Production mods place `SlotFlat*` and `SlotRoad*` entities inside `BaseLogic.layer` compositions.
 - **Master provider at MOB** — always set the MOB as `m_bIsMasterProvider`. All other service providers at the same base should use `m_bUseMasterProvider`.
 - **Building radius** — default 50m. Increase for large airfield/harbour bases.

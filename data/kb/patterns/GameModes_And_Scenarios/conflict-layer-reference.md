@@ -211,7 +211,7 @@ m_aExcludedEditableEntityLabels {
 | Standard base | omit | omit |
 | MOB (fully stocked) | `3000` | `3000` |
 
-**Note:** Production mods typically give MOBs only `500` starting supplies, not `3000`. The `3000` max applies to the cap.
+**Note:** Production mods typically write these values, but 1.9.0.37 reads neither for a base (only the component's own obsolete methods read them): an HQ starts with the game mode's `m_iHQStartingSupplies` or the mission header's `m_iStartingHQSupplies`, and a base's max is the stored supply containers in its resource range (see `conflict-supply-system.md`).
 
 ### `SCR_CoverageRadioComponent` (radio range by role)
 
@@ -240,9 +240,9 @@ The base's range is the `"Transmitting Range"` of its `RelayTransceiver` (inside
 - Prevents lag from exceeding the AI world limit silently
 
 ### Supply scarcity design
-- MOBs start with `500` supplies (not `3000`) — forces supply management from day 1
-- Control points: `3000` max — high capture reward
-- Regular bases: often no `SCR_CampaignSuppliesComponent` (non-HQ bases take the game mode's `m_iRegularSuppliesIncomeBase`, only while `m_bSuppliesAutoRegenerationEnabled` is on; `m_iRegularSuppliesIncome` is HQ income)
+- MOBs start with `500` supplies (not `3000`) to force supply management from day 1; in 1.9.0.37 set that through the game mode's `m_iHQStartingSupplies` or the header's `m_iStartingHQSupplies` (`m_iSupplies` is not read)
+- Control points: mods write a `3000` max as a high capture reward, but 1.9.0.37 does not read `m_iSuppliesMax`; the cap is the stored supply containers in the base's resource range
+- Regular bases: often no `SCR_CampaignSuppliesComponent` (regular bases, not HQs, supply hubs or source bases, take the game mode's `m_iRegularSuppliesIncomeBase`, only while `m_bSuppliesAutoRegenerationEnabled` is on; `m_iRegularSuppliesIncome` is HQ and supply hub income)
 
 ### Seeding restriction zones
 `IRON_SeedingRestrictionZoneEntity : "{801DADF0D6C316B9}PrefabsEditable/RestrictionZone/E_SeedingRestrictionZoneBase.et"` — restricts players to MOB area during seeding. Add as child entity to MOB with `m_bAutoSizeToHQ 1`.

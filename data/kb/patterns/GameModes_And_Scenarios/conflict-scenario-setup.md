@@ -147,7 +147,7 @@ All bases use **`ConflictMilitaryBase.et`** (`{1391CE8C0E255636}`) in a `$grp Ge
 |---|---|
 | Standard town/small base | `SCR_CampaignSeizingComponent` enabled, no CAH, no `m_bCanBeHQ` |
 | Major base (harbour, port) | `SCR_CampaignSeizingComponent` with a larger `m_iRadius`, `m_bIsControlPoint 1`, `m_bIsSupplyHub 1`. 1.9.0.37 has no property that ties a base to CAH areas (the three the old text used are declared by no script) |
-| MOB / HQ | `SCR_CampaignSeizingComponent Enabled 0`, `m_bCanBeHQ 1`, `m_bIsSupplyHub 1`, radio `m_bIsSource 1`, `SCR_CampaignSuppliesComponent m_iSupplies 500` (starting), radio range 1000m |
+| MOB / HQ | `SCR_CampaignSeizingComponent Enabled 0`, `m_bCanBeHQ 1`, `m_bIsSupplyHub 1`, radio `m_bIsSource 1`, `SCR_CampaignSuppliesComponent m_iSupplies 500` (not read in 1.9.0.37; an HQ starts with the game mode's `m_iHQStartingSupplies` or the header's `m_iStartingHQSupplies`), radio range 1000m |
 | Relay radio tower | Use `ConflictRelayRadio.et` — different prefab, just radio + base name component |
 
 **Radio range by role (from production mods).** The range is the `"Transmitting Range"` of the base's `RelayTransceiver` (1.9.0.37: `SCR_CampaignMilitaryBaseComponent.c` `GetRelayRadioRange`; `ConflictMilitaryBase.et` sets `"Transmitting Range" 1000`):
@@ -161,7 +161,7 @@ Key `SCR_CampaignMilitaryBaseComponent` properties:
 - `m_sBaseNameUpper` — uppercase version for UI display
 - `m_bCanBeHQ 1` — MOB/HQ flag
 - `m_bIsControlPoint 1` — marks as numbered capture objective on map
-- `m_bIsSupplyHub 1` — allows supply delivery
+- `m_bIsSupplyHub 1`: supply income only. The base takes HQ income (`m_iRegularSuppliesIncome`, or its own `m_iRegularSuppliesIncomeBase` if not -1 while auto regeneration is off) and always ticks on its own `m_iSuppliesArrivalInterval`, else `m_iSuppliesArrivalIntervalSource`, never the game mode's `m_iSuppliesArrivalInterval`. The flag does not remove the replenish ceiling or the radio extra (only an HQ loses those). A source base ignores the flag (its own income and tick getters replace these two). Nothing else in 1.9.0.37 reads it (`SCR_CampaignMilitaryBaseComponent.c:829`, `:854`; `SCR_CampaignSourceBaseComponent.c:31-54`). See `conflict-supply-system.md`
 - Radio range: the `RelayTransceiver` `"Transmitting Range"` (see above); 1470 is the common default from mod analysis
 - Randomization: no per-base property in 1.9.0.37. The game mode flag `m_bRandomizeSupplies` (`SCR_GameModeCampaign.c`, default 1, "Randomized starting supplies in small bases") applies only to bases of type `BASE` (`SCR_CampaignMilitaryBaseManager.c`), so MOBs, relays and source bases are not randomized
 
@@ -288,7 +288,7 @@ SCR_LoadoutManager : "{58FBD035E53D95C1}Prefabs/MP/Campaign/CampaignLoadoutManag
 - `m_iControlPointsThreshold` — bases enemy must hold to start victory timer (default 2-5)
 - `m_fVictoryTimer` — seconds after threshold reached before win (default 300)
 - `m_fAutoReloadTime` — mission restart delay after end (default 30)
-- `m_iRegularSuppliesIncome`: supplies replenished periodically in HQs (default 40; `SCR_GameModeCampaign.c:29-30`, desc "How many supplies are periodically replenished in HQs."). Non-HQ bases use `m_iRegularSuppliesIncomeBase` (default 4), applied only while `m_bSuppliesAutoRegenerationEnabled` is on (default off)
+- `m_iRegularSuppliesIncome`: supplies replenished periodically in HQs (default 40; `SCR_GameModeCampaign.c:29-30`, desc "How many supplies are periodically replenished in HQs."); supply hubs that are not source bases take it too (`SCR_CampaignMilitaryBaseComponent.c:829`). Regular bases (not HQs, supply hubs or source bases) use `m_iRegularSuppliesIncomeBase` (default 4), applied only while `m_bSuppliesAutoRegenerationEnabled` is on (script default off; `GameMode_Campaign.et` and a campaign mission header left at its default turn it on, see `conflict-supply-system.md`)
 - `m_bEstablishingBasesEnabled 0` — disable for simple scenarios
 
 ---
@@ -982,7 +982,7 @@ bool LoadProgress()
 
 **AI world limits:** Always check AI count before spawning patrols/defenders (`SCR_AIWorld.GetAILimit()`). Exceeding the limit causes spawning to silently fail.
 
-**Spawn supply validation:** Conflict checks base supplies before allowing player spawn. If a base has 0 supplies, players cannot spawn there. MOBs need `m_iSupplies 3000`; regular bases need `m_iRegularSuppliesIncomeBase`.
+**Spawn supply validation:** Conflict checks base supplies before allowing player spawn. If a base has 0 supplies, players cannot spawn there. An HQ starts with the game mode's `m_iHQStartingSupplies`, or the mission header's `m_iStartingHQSupplies` when that is not -1; `m_iSupplies` on the obsolete `SCR_CampaignSuppliesComponent` is not read for a base. A regular base gets income only while `m_bSuppliesAutoRegenerationEnabled` is on, and then the game mode's `m_iRegularSuppliesIncomeBase` plus the radio extra; the base's own `m_iRegularSuppliesIncomeBase` is never read for it (`SCR_CampaignMilitaryBaseComponent.c:829-843`). The vanilla game mode prefabs and the mission header change these values (see `conflict-supply-system.md`).
 
 **Base name mismatch:** `m_aCampaignCustomBaseList.m_sBaseName` must exactly match `SCR_CampaignMilitaryBaseComponent.m_sBaseName` — case-sensitive. Mismatches silently hide the base.
 

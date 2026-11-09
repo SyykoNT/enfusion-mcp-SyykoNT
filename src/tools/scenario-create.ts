@@ -193,7 +193,8 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
             "Supplies replenished periodically in HQs and supply hubs (m_iRegularSuppliesIncome, default 50; the game's own default is 40). " +
             "Regular bases use m_iRegularSuppliesIncomeBase (game default 4) only while m_bSuppliesAutoRegenerationEnabled is on " +
             "(game default off); this tool writes neither, so the game mode gives generated regular bases no income. Source bases set their own. " +
-            "The radio extra (m_iRegularSuppliesIncomeExtra, per friendly base in radio range) applies only to non-HQ bases with auto regeneration on."
+            "The radio extra (m_iRegularSuppliesIncomeExtra, 1 in GameMode_Campaign.et, script default 4, for each friendly BASE-type base in this base's radio range that receives HQ radio traffic, up to 5) " +
+            "applies only to non-HQ bases with auto regeneration on (a relay has no income loop)."
           ),
         seedingEnabled: z
           .boolean()
