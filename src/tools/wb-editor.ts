@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { dirname } from "node:path";
-import { WorkbenchError, type WorkbenchClient } from "../workbench/client.js";
+import { WorkbenchError, isWorldPath, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 import { diffSnapshots, snapshotDir } from "../workbench/files.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
@@ -247,7 +247,9 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
     {
       description:
         "Open a resource file in the appropriate Workbench editor (e.g., a .et prefab in the Prefab Editor, a .c script in the Script Editor). " +
-        "Opening a world (.ent) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it, and the script API cannot tell whether the world has unsaved changes. " +
+        "Opening a world (.ent) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it. " +
+        "The tool refuses a world open when the World Editor title shows unsaved changes (local Workbench on Windows only) and opens with a warning when it cannot check. " +
+        "A world whose only unsaved change is a new layer is not detected (B-112). " +
         "Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
         path: z
@@ -256,7 +258,12 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       },
     },
     async ({ path }) => {
+      let warn = "";
       try {
+        const guard = isWorldPath(path) ? await client.checkWorldOpen(path) : undefined;
+        if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
+        if (guard) warn = `\n\n${guard.warn}`;
+
         const result = await client.call<Record<string, unknown>>("EMCP_WB_EditorControl", {
           action: "openResource",
           path,
@@ -266,7 +273,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
           content: [
             {
               type: "text" as const,
-              text: `**Resource Opened**\n\nOpened: ${path}${result.message ? `\n${result.message}` : ""}${formatConnectionStatus(client)}`,
+              text: `**Resource Opened**\n\nOpened: ${path}${result.message ? `\n${result.message}` : ""}${warn}${formatConnectionStatus(client)}`,
             },
           ],
         };
@@ -275,11 +282,11 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         // Only a world open raises "Loading world"; skip it when the client's probe found a different dialog
         const found = e instanceof WorkbenchError ? (e.dialogs ?? []).flatMap((p) => ("dialogs" in p ? p.dialogs : [])) : [];
         const hint =
-          e instanceof WorkbenchError && e.code === "TIMEOUT" && /\.ent$/i.test(path) && (found.length === 0 || found.some((w) => w.text === "Loading world"))
+          e instanceof WorkbenchError && e.code === "TIMEOUT" && isWorldPath(path) && (found.length === 0 || found.some((w) => w.text === "Loading world"))
             ? "\n\nA timeout here usually means Workbench is showing the \"Loading world\" dialog (the current world has unsaved changes). Ask the user to answer it in Workbench; use wb_save before opening another world."
             : "";
         return {
-          content: [{ type: "text" as const, text: `Error opening resource: ${msg}${hint}${formatConnectionStatus(client)}` }],
+          content: [{ type: "text" as const, text: `Error opening resource: ${msg}${hint}${warn}${formatConnectionStatus(client)}` }],
         isError: true,
         };
       }

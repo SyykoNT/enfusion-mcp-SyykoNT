@@ -183,6 +183,21 @@ export function portOwner(netstat: string, port: number): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
+export type UnsavedWorld = { state: "unsaved"; world: string } | { state: "clean" } | { state: "unknown" };
+
+/** The World Editor title Workbench 1.9.0.37 shows with unsaved changes: `World Editor - <addon>/<path>.ent*` (B-089 T1). Other windows and a `*` elsewhere do not count. */
+const UNSAVED_TITLE = /^World Editor - (.+)\*$/;
+
+/** Unsaved state from the window titles of one Workbench. No window at all is "unknown" (the owner may run in another Windows session); the titles are data, only compared. */
+export function unsavedWorld(wins: { text: string }[]): UnsavedWorld {
+  if (wins.length === 0) return { state: "unknown" };
+  for (const w of wins) {
+    const m = UNSAVED_TITLE.exec(w.text);
+    if (m) return { state: "unsaved", world: m[1] };
+  }
+  return { state: "clean" };
+}
+
 export type WatchStateName = "ok" | "busy" | "blocked_dialog" | "not_responding" | "stalled" | "exited" | "crashed";
 export type Dismiss = "owned" | "watched" | "never";
 

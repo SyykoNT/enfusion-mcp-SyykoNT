@@ -18,12 +18,15 @@ type Handler = (a: Record<string, unknown>) => Promise<Result>;
 function setup() {
   const client = new WorkbenchClient("127.0.0.1", 1, {} as Config);
   const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
+  // The .ent open runs the unsaved-world check; stub it so the test does not run netstat or read windows.
+  const netstat = vi.fn(async () => "Active Connections\r\n");
+  client.worldProbe = { netstat, titles: async () => ({ unavailable: "not reached" }) };
   const tools: Record<string, Handler> = {};
   const fake = { registerTool: (name: string, _d: unknown, h: Handler) => { tools[name] = h; } } as unknown as McpServer;
   for (const register of [registerWbState, registerWbConnect, registerWbEntityTools, registerWbReadProps, registerWbTerrain, registerWbValidate, registerWbLayers, registerWbEditorTools]) {
     register(fake, client, {} as Config);
   }
-  return { tools, launch };
+  return { tools, launch, netstat };
 }
 
 describe("wb_* tools other than wb_launch with Workbench down", () => {
@@ -38,10 +41,11 @@ describe("wb_* tools other than wb_launch with Workbench down", () => {
     ["wb_layers", { action: "list" }], // read action of a gated tool
     ["wb_open_resource", { path: "Worlds/x.ent" }], // ungated mutating tool
   ])("%s returns an error and starts nothing", async (name, args) => {
-    const { tools, launch } = setup();
+    const { tools, launch, netstat } = setup();
     const result = await tools[name](args);
     expect(result.isError).toBe(true);
     expect(launch).not.toHaveBeenCalled();
+    expect(netstat).toHaveBeenCalledTimes(name === "wb_open_resource" ? 1 : 0); // only the .ent open reaches the (stubbed) unsaved-world check
     if (name !== "wb_connect") expect(result.content[0].text).toContain("Tools do not start Workbench");
     else expect(result.content[0].text).toContain("start it with wb_launch after checking that nobody else is using Workbench");
   });

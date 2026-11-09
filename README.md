@@ -262,7 +262,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 | `wb_play` / `wb_stop` | Enter and leave play mode |
 | `wb_save` | Save the world, optionally to a new path |
 | `wb_undo_redo` | Undo or redo in the World Editor |
-| `wb_open_resource` | Open a resource in its Workbench editor |
+| `wb_open_resource` | Open a resource in its Workbench editor. A world (`.ent`) open is refused when the World Editor title shows unsaved changes (local Workbench on Windows only), and goes ahead with a warning when that cannot be checked; a world whose only unsaved change is a new layer is not detected |
 | `wb_execute_action` | Run a Workbench menu action by path |
 | `wb_reload` | Reload game scripts with Workbench's built-in `ReloadScripts` call, plugins through one menu action, Plugins > Reload (see Known limitations) |
 | `wb_projects` | List, locate or open loaded projects |

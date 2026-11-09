@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { WorkbenchClient } from "../workbench/client.js";
+import { isWorldPath, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 
 export function registerWbProjects(server: McpServer, client: WorkbenchClient): void {
@@ -20,6 +20,7 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
       },
     },
     async ({ action, name }) => {
+      let warn = "";
       try {
         if (action === "open") {
           if (!name) {
@@ -34,6 +35,10 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
             };
           }
 
+          const guard = isWorldPath(name) ? await client.checkWorldOpen(name) : undefined;
+          if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
+          if (guard) warn = `\n\n${guard.warn}`;
+
           const result = await client.call<Record<string, unknown>>("EMCP_WB_EditorControl", {
             action: "openResource",
             path: name,
@@ -43,7 +48,7 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
             content: [
               {
                 type: "text" as const,
-                text: `**Project Opened**\n\nLoaded: ${name}${result.message ? `\n${result.message}` : ""}${formatConnectionStatus(client)}`,
+                text: `**Project Opened**\n\nLoaded: ${name}${result.message ? `\n${result.message}` : ""}${warn}${formatConnectionStatus(client)}`,
               },
             ],
           };
@@ -111,7 +116,7 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
           content: [
             {
               type: "text" as const,
-              text: `Error querying projects (${action}): ${msg}${formatConnectionStatus(client)}`,
+              text: `Error querying projects (${action}): ${msg}${warn}${formatConnectionStatus(client)}`,
             },
           ],
           isError: true,

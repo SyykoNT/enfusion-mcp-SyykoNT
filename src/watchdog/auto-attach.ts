@@ -34,9 +34,9 @@ export interface AttachResult {
   text: string;
 }
 
-const LOCAL_HOSTS = ["127.0.0.1", "localhost", "::1"];
+export const LOCAL_HOSTS = ["127.0.0.1", "localhost", "::1"];
 
-const netstat = () =>
+export const netstat = () =>
   new Promise<string>((done) => execFile("netstat", ["-ano", "-p", "TCP"], { windowsHide: true, timeout: 10_000 }, (err, out) => done(err ? "" : String(out))));
 
 export function attachDeps(config: Config): AttachDeps {

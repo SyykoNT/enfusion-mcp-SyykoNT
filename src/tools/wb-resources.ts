@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { WorkbenchClient } from "../workbench/client.js";
+import { isWorldPath, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 export function registerWbResources(server: McpServer, client: WorkbenchClient): void {
@@ -27,6 +27,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
       },
     },
     async ({ action, path, buildRuntime }) => {
+      let warn = "";
       try {
         // Mutating actions require edit mode
         if (action === "register" || action === "rebuild") {
@@ -66,6 +67,10 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
           return { content: [{ type: "text" as const, text: lines.join("\n") + formatConnectionStatus(client) }] };
         }
 
+        const guard = action === "open" && isWorldPath(path) ? await client.checkWorldOpen(path) : undefined;
+        if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
+        if (guard) warn = `\n\n${guard.warn}`;
+
         // register, rebuild, open all use EMCP_WB_Resources
         const params: Record<string, unknown> = { action, path };
         if (buildRuntime !== undefined) params.buildRuntime = buildRuntime;
@@ -77,7 +82,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
         if (falseReturn?.test(String(result.message ?? ""))) {
           const label = action === "register" ? "Not registered" : "Not opened";
           return {
-            content: [{ type: "text" as const, text: `**${label}: ${path}**\n\n${result.message}${formatConnectionStatus(client)}` }],
+            content: [{ type: "text" as const, text: `**${label}: ${path}**\n\n${result.message}${warn}${formatConnectionStatus(client)}` }],
             isError: true,
           };
         }
@@ -92,7 +97,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
           content: [
             {
               type: "text" as const,
-              text: `**${actionLabels[action]}**${result.message && action !== "rebuild" ? `\n\n${result.message}` : ""}${formatConnectionStatus(client)}`,
+              text: `**${actionLabels[action]}**${result.message && action !== "rebuild" ? `\n\n${result.message}` : ""}${warn}${formatConnectionStatus(client)}`,
             },
           ],
         };
@@ -102,7 +107,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
           content: [
             {
               type: "text" as const,
-              text: `Error managing resource "${path}" (${action}): ${msg}${formatConnectionStatus(client)}`,
+              text: `Error managing resource "${path}" (${action}): ${msg}${warn}${formatConnectionStatus(client)}`,
             },
           ],
           isError: true,

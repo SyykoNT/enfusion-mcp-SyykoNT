@@ -51,6 +51,8 @@ afterEach(async () => {
 function setup(handler: (apiFunc: string, params: Record<string, unknown>) => unknown) {
   mock = mockWorkbench(handler);
   const client = new WorkbenchClient("127.0.0.1", mock.port);
+  // A .ent open runs the unsaved-world check; a netstat listing without the port owner skips it, so no test reads real windows.
+  client.worldProbe = { netstat: async () => "Active Connections\r\n", titles: async () => ({ unavailable: "not reached" }) };
   const tools: Record<string, { description: string; run: Handler }> = {};
   registerWbEditorTools(
     { registerTool: (n: string, d: { description: string }, h: Handler) => (tools[n] = { description: d.description, run: h }) } as unknown as McpServer,

@@ -126,6 +126,36 @@ Say ([ordered]@{ wins = $wins })
 `;
 
 /**
+ * Needs $WbPid. One run: class and title of every visible top-level window of that PID (B-089 unsaved-world check). It has its own
+ * small C# block with five getters only, so it cannot post, focus, show or automate anything; the shared WIN32 block is not used.
+ */
+export const TITLES_SCRIPT = `$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type @"
+using System; using System.Text; using System.Runtime.InteropServices; using System.Collections.Generic;
+public class EmcpTitles {
+  public delegate bool P(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(P f, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  public static List<string[]> Top(uint pid) {
+    var r = new List<string[]>();
+    EnumWindows((h, l) => {
+      uint p; GetWindowThreadProcessId(h, out p);
+      if (p == pid && IsWindowVisible(h)) { var t = new StringBuilder(4096); GetWindowText(h, t, 4096); var c = new StringBuilder(256); GetClassName(h, c, 256); r.Add(new string[] { c.ToString(), t.ToString() }); }
+      return true;
+    }, IntPtr.Zero);
+    return r;
+  }
+}
+"@
+$wins = @(foreach ($w in [EmcpTitles]::Top([uint32]$WbPid)) { [ordered]@{ cls = $w[0]; text = $w[1] } })
+[Console]::Out.WriteLine(([ordered]@{ wins = $wins } | ConvertTo-Json -Compress -Depth 5))
+`;
+
+/**
  * Needs $WbPid, $Hwnd, $Choice (1 Yes, 2 No, 3 Yes to All) and $TextHash. Presses one button of the "Script Authorization Required"
  * dialog with UI Automation Invoke, only after checking again that $Hwnd is a visible window of $WbPid with exactly that title, that
  * its text still hashes to $TextHash (textHash() in signals.ts) and that exactly one button has the exact name for $Choice.
@@ -199,6 +229,21 @@ export function probeDialogs(pids: number[], run: PsRunner = runPs): Promise<Dia
       }
     })
   );
+}
+
+export type TitleProbe = { wins: { cls: string; text: string }[] } | { unavailable: string };
+
+/** Titles of the visible windows of Workbench `pid`, one read-only PowerShell run. Never throws: a failed run is "unavailable". */
+export async function probeTitles(pid: number, run: PsRunner = runPs): Promise<TitleProbe> {
+  try {
+    const r = await run(withArgs(TITLES_SCRIPT, { WbPid: pid }), DIALOG_TIMEOUT_MS);
+    if (r.code !== 0) return { unavailable: `the title read failed or took over ${DIALOG_TIMEOUT_MS / 1000} s (exit ${r.code})` };
+    const wins = (JSON.parse(r.out.trim().split("\n").pop()!) as { wins?: unknown }).wins;
+    if (!Array.isArray(wins)) return { unavailable: "the title read gave no window list" };
+    return { wins: wins.filter((w): w is { cls: string; text: string } => typeof w?.text === "string") };
+  } catch (e) {
+    return { unavailable: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** Press Yes (1), No (2) or Yes to All (3) on the Script Authorization dialog `hwnd` of Workbench `pid`. Returns "answered <button>" or "refused: <why>". */

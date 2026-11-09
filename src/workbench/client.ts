@@ -20,9 +20,9 @@ import { findPids, isAlive } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { crashLogsDir, workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher, sweepForStart } from "../watchdog/wb-watch.js";
-import { attachDeps, ensureWatched, type AttachResult } from "../watchdog/auto-attach.js";
-import { probeDialogs } from "../watchdog/probe.js";
-import { dialogKind, formatDialogs, type DialogProbe } from "../watchdog/signals.js";
+import { LOCAL_HOSTS, attachDeps, ensureWatched, netstat, type AttachResult } from "../watchdog/auto-attach.js";
+import { probeDialogs, probeTitles, type TitleProbe } from "../watchdog/probe.js";
+import { dialogKind, formatDialogs, portOwner, unsavedWorld, type DialogProbe } from "../watchdog/signals.js";
 import type { Config } from "../config.js";
 import { generateGproj } from "../templates/gproj.js";
 import { git, gitOrNull } from "../release/git.js";
@@ -188,6 +188,9 @@ export class WorkbenchError extends Error {
   }
 }
 
+/** A world file path. Opening one while the open world has unsaved changes raises Workbench's blocking "Loading world" prompt. */
+export const isWorldPath = (path: string) => /\.ent$/i.test(path);
+
 /** Workbench answered, but the requested NET API handler is not registered. */
 function isUndefinedHandler(err: unknown): boolean {
   return (
@@ -202,6 +205,11 @@ export class WorkbenchClient {
   private _state: WorkbenchState = { connected: false, mode: "unknown", lastUpdated: 0 };
   /** Public so tests can stub it: the real one starts PowerShell. */
   dialogProbe: (pids: number[]) => Promise<DialogProbe[]> = (pids) => probeDialogs(pids);
+  /** What checkWorldOpen reads. Public so tests can stub it: the real ones run netstat and PowerShell, and only on Windows. */
+  worldProbe = {
+    netstat: (): Promise<string> => (process.platform === "win32" ? netstat() : Promise.reject(new Error("only Windows can be checked"))),
+    titles: (pid: number): Promise<TitleProbe> => probeTitles(pid),
+  };
   /** The automatic watch check (B-093). Public so tests can stub it: the real one runs netstat and PowerShell. */
   watchCheck: () => Promise<AttachResult> = () => ensureWatched(this.port, this.host, attachDeps(this.config!));
   /** How long a timeout reply waits for the watch check. Public so tests can shorten it. */
@@ -266,6 +274,38 @@ export class WorkbenchClient {
         }
       }
       throw err;
+    }
+  }
+
+  /**
+   * Before a world (.ent) open (B-089): read the window titles of the local Workbench that owns this client's port.
+   * refuse: its World Editor title ends in * (unsaved changes), so the open would raise the blocking "Loading world" prompt; send nothing.
+   * warn: the check could not run, send the open and add the line. undefined: clean, or nothing listens (the open then reports the connection error).
+   * Never throws.
+   */
+  async checkWorldOpen(path: string): Promise<{ refuse: string } | { warn: string } | undefined> {
+    const cannot = (why: string) => ({
+      warn: `Could not check for unsaved changes (${why}); if the current world has unsaved edits, Workbench will show a blocking "Loading world" prompt.`,
+    });
+    if (!LOCAL_HOSTS.includes(this.host.toLowerCase())) return cannot(`the NET API host ${this.host} is not this PC`);
+    try {
+      const out = await this.worldProbe.netstat();
+      if (!out) return cannot("the netstat query failed");
+      const pid = portOwner(out, this.port);
+      if (!pid) return undefined;
+      const probe = await this.worldProbe.titles(pid);
+      if ("unavailable" in probe) return cannot(probe.unavailable);
+      const w = unsavedWorld(probe.wins);
+      if (w.state === "unknown") return cannot(`no window of Workbench PID ${pid} is visible to this MCP, for example because it runs in another Windows session`);
+      if (w.state === "clean") return undefined;
+      return {
+        refuse:
+          `Refused: the world open in Workbench (${w.world}) has unsaved changes (its World Editor title ends in *). ` +
+          `Opening ${path} now would show Workbench's "Loading world" save prompt, which blocks every MCP call until a person answers it. ` +
+          "Run wb_save first, or save or discard the changes in Workbench, then try again.",
+      };
+    } catch (e) {
+      return cannot(e instanceof Error ? e.message : String(e));
     }
   }
 
