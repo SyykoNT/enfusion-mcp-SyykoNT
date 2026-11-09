@@ -39,8 +39,11 @@ describe("tuning server write guard", () => {
   });
 
   it("refuses an addon inside a Workshop cache", () => {
-    const cached = addon(join(myGamesDir(), "ArmaReforgerWorkbench", "addons", "SomeMod"), "2222222222222222");
+    // Checked before anything is created: a path outside the fake home could be a real Workbench addons folder.
+    const cached = join(myGamesDir(), "ArmaReforgerWorkbench", "addons", "SomeMod");
+    expect(root.startsWith(tmpdir())).toBe(true);
     expect(cached.startsWith(join(root, "home"))).toBe(true);
+    addon(cached, "2222222222222222");
     expect(writeRefusal(config, cached)).toMatch(/^Refused: .* is inside/);
   });
 
@@ -62,6 +65,7 @@ describe("tuning server write guard", () => {
         timeout: 20000,
         env: {
           ...process.env,
+          ENFUSION_TUNING_READONLY: "", // a shell with =1 would skip the guard by design
           USERPROFILE: join(root, "home"),
           HOME: join(root, "home"),
           ENFUSION_PROJECT_PATH: projects,
