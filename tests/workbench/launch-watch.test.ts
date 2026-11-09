@@ -13,14 +13,14 @@ process.env.USERPROFILE = process.env.HOME = home;
 const sys = vi.hoisted(() => ({
   spawnEnv: [] as NodeJS.ProcessEnv[], spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][], alive: true,
   // what the crash sweep and the spawn did, in order, and what the sweep returns
-  order: [] as string[], sweepArgs: [] as unknown[][], saved: [] as { folder: string; dest: string }[],
+  order: [] as string[], sweepArgs: [] as unknown[][], saved: [] as { folder: string; dest: string }[], errors: [] as string[],
 }));
 vi.mock("../../src/watchdog/crash-sweep.js", async (orig) => ({
   ...(await orig<typeof import("../../src/watchdog/crash-sweep.js")>()),
   saveCrashFolders: vi.fn((...a: unknown[]) => {
     sys.order.push("sweep");
     sys.sweepArgs.push(a);
-    return { saved: sys.saved, errors: [], capped: false };
+    return { saved: sys.saved, errors: sys.errors, capped: false };
   }),
 }));
 vi.mock("node:child_process", async (orig) => ({
@@ -49,6 +49,7 @@ vi.mock("../../src/utils/game-paths.js", async (orig) => ({
 const { WorkbenchClient, WorkbenchError } = await import("../../src/workbench/client.js");
 const { isOwned, readInstance, pidInstanceFile, WORKBENCH_INSTANCES } = await import("../../src/utils/instances.js");
 const { registerWbLaunch } = await import("../../src/tools/wb-launch.js");
+const { logger } = await import("../../src/utils/logger.js");
 
 const crashRoot = join(home, "Crash Logs");
 
@@ -75,6 +76,7 @@ beforeEach(() => {
   sys.order = [];
   sys.sweepArgs = [];
   sys.saved = [];
+  sys.errors = [];
 });
 
 describe("launchWorkbench records and watches what it starts", () => {
@@ -236,6 +238,34 @@ describe("launchWorkbench saves crash folders before it starts Workbench (B-044)
     registerWbLaunch({ registerTool: (n: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>) => { tools[n] = h; } } as unknown as McpServer, {} as Config, c);
     const text = (await tools.wb_launch({ gprojPath: gproj })).content[0].text;
     expect(text.split(savedLine).length - 1).toBe(1);
+  });
+
+  it("files the sweep could not save add one line to the start note and to the wb_launch reply, also when nothing was saved", async () => {
+    const errLine = "Could not save 2 crash file(s); see the MCP log";
+    sys.errors = ["logs_a: a.mdmp unreadable (EBUSY)", "logs_b: not saved after 3 copies: console.log size changed"];
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      sys.saved = two;
+      const a = client();
+      expect(await a.c.ensureRunning(a.gproj)).toBe(`${savedLine}\n${errLine}`);
+      sys.saved = [];
+      const b = client();
+      expect(await b.c.ensureRunning(b.gproj)).toBe(errLine); // nothing new written: no Saved line
+      expect(warn).toHaveBeenCalledWith(`Crash folder sweep: ${sys.errors.join("; ")}`);
+
+      const { c, gproj } = client();
+      let calls = 0; // the tool pings once, then launchWorkbench pings again: both refused, then the NET API answers
+      vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockImplementation(async () => {
+        if (calls++ < 2) throw new Error("refused");
+        return {};
+      });
+      const tools: Record<string, (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>> = {};
+      registerWbLaunch({ registerTool: (n: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>) => { tools[n] = h; } } as unknown as McpServer, {} as Config, c);
+      const text = (await tools.wb_launch({ gprojPath: gproj })).content[0].text;
+      expect(text.split(errLine).length - 1).toBe(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("a refused launch saves nothing: protected addon without handlers, forbidden root, bad worldPath, a Workbench that already answers", async () => {

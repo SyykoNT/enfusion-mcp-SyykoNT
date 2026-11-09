@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { eventLines, watchAlerts } from "../../src/workbench/status.js";
 import { alerts, claimWatch, createWatcher, findLogDir, recentStates, runWatcher, type WatchOpts, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
+import { logger } from "../../src/utils/logger.js";
 
 // The crash folder sweep asks which Workbenches run; no real process list is read (B-044).
 vi.mock("../../src/utils/process.js", async (orig) => ({ ...(await orig<typeof import("../../src/utils/process.js")>()), findPids: () => [] }));
@@ -394,6 +395,18 @@ describe("crash folder sweep at attach (B-044)", () => {
     expect(crash[0].action).toMatch(/^SWEEP \d\d:\d\d:\d\d PID 19524: Saved 2 crash folder\(s\) to /);
     expect(crash[0].action.endsWith(crashDir)).toBe(true);
     expect(eventLines(t.stateDir, 0).lines).toHaveLength(1);
+  });
+
+  it("logs the sweep's errors with logger.warn instead of dropping them", async () => {
+    const t = setup();
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const sweep = vi.fn(() => ({ saved: [], errors: ["logs_a: a.mdmp unreadable (EBUSY)", "logs_b: not saved after 3 copies: console.log size changed"], capped: false }));
+      expect(await runWatcher(t.opts({ crashDir: join(t.root, "Crash Logs") }), { probe: () => ({ stop: vi.fn() }), sweep, ...twoTicks() })).toBe(0);
+      expect(warn).toHaveBeenCalledWith("Crash folder sweep: logs_a: a.mdmp unreadable (EBUSY); logs_b: not saved after 3 copies: console.log size changed");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not run after a failed claim", async () => {

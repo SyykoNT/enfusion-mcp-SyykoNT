@@ -3,8 +3,8 @@
  * log folders, so a crash nobody watched is gone by the next start. Copy only: nothing in the logs folder is moved or deleted.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, rmdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, rmdirSync, statSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { copyCrashFiles } from "./auth.js";
 import { LEAK_TEXT, crashFiles, parseCrashLog } from "./signals.js";
 
@@ -20,7 +20,7 @@ export interface SweepOpts {
 
 export interface SweepResult {
   saved: { folder: string; dest: string }[];
-  /** Files that could not be read or copied. */
+  /** Files that could not be read or copied, and folders still not saved after the last allowed copy. */
   errors: string[];
   capped: boolean;
 }
@@ -40,6 +40,22 @@ const sameBytes = (a: string, b: string) => {
   }
 };
 const norm = (p: string) => resolve(p).toLowerCase();
+/** Why a file cannot be read now (locked, a folder in its place, an offline cloud file), or undefined when it can. */
+const unreadable = (path: string): string | undefined => {
+  try {
+    const fd = openSync(path, "r");
+    try {
+      readSync(fd, Buffer.alloc(1), 0, 1, 0); // opening alone succeeds on a folder
+    } finally {
+      closeSync(fd);
+    }
+    return undefined;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+};
+// A file that never copies whole (unreadable, still growing) would otherwise get a new full copy on every sweep.
+const MAX_COPIES = 3;
 
 /** True when some entry of a crash.log has a Reason other than the leak assert (entries are split as parseCrashLog splits them). */
 const hasCrashEntry = (text: string) =>
@@ -94,17 +110,34 @@ export function saveCrashFolders(logsRoot: string, destRoot: string, o: SweepOpt
       const dumps = files.filter((f) => /\.mdmp$/i.test(f)).sort();
       const log = files.find((f) => f.toLowerCase() === "crash.log");
       if (!dumps.length && !(log && hasCrashEntry(readFileSync(join(src, log), "utf-8")))) continue;
-      // Saved only when ONE copy folder holds every file a copy would take (same name and size) and the key file has the same bytes:
+      const all = crashFiles(files).copy;
+      // A file that cannot be read now is reported and left out of the match below, so the rest is saved once; a later sweep may still get it.
+      const bad = all.flatMap((f) => {
+        const why = unreadable(join(src, f));
+        return why ? [[f, why] as const] : [];
+      });
+      res.errors.push(...bad.map(([f, why]) => `${folder}: ${f} unreadable (${why})`));
+      const ok = all.filter((f) => !bad.some(([b]) => b === f));
+      // Saved only when ONE copy folder holds every readable file (same name and size) and the key file has the same bytes:
       // a copy that missed a dump (disk full, locked file) is copied again.
-      const key = (log ?? dumps[0])!;
-      const want = crashFiles(files).copy.map((f) => [f.toLowerCase(), statSync(join(src, f)).size] as const);
-      const twin = (index ??= savedIndex(destRoot)).some((c) => want.every(([f, size]) => c.files.get(f) === size) && sameBytes(join(src, key), join(c.dir, key)));
-      if (twin) continue;
+      const key = [log, ...dumps].find((f) => f !== undefined && ok.includes(f));
+      const want = ok.map((f) => [f, statSync(join(src, f)).size] as const);
+      const copies = (index ??= savedIndex(destRoot));
+      const has = (c: (typeof copies)[number]) => want.every(([f, size]) => c.files.get(f.toLowerCase()) === size) && (!key || sameBytes(join(src, key), join(c.dir, key)));
+      if (copies.some(has)) continue;
+      const last = `${folder}_${MAX_COPIES}`;
+      if (existsSync(join(destRoot, last))) {
+        const c = copies.find((x) => basename(x.dir).toLowerCase() === last.toLowerCase());
+        const off = want.find(([f, size]) => c?.files.get(f.toLowerCase()) !== size)?.[0];
+        const why = !off ? `${key ?? "its files"} changed` : c?.files.has(off.toLowerCase()) ? `${off} size changed` : `${off} unreadable`;
+        res.errors.push(`${folder}: not saved after ${MAX_COPIES} copies: ${why}`);
+        continue;
+      }
       let name = folder;
       for (let n = 2; existsSync(join(destRoot, name)); n++) name = `${folder}_${n}`;
       const copy = copyCrashFiles(src, destRoot, "", 0, name);
-      // copyCrashFiles lists a failed copy as "<file> (<reason>)" and a normal absentee (script.log) as a bare name.
-      res.errors.push(...copy.missing.filter((m) => /\(.+\)$/.test(m)).map((m) => `${folder}: ${m}`));
+      // copyCrashFiles lists a failed copy as "<file> (<reason>)" and a normal absentee (script.log) as a bare name; unreadable files are listed above.
+      res.errors.push(...copy.missing.filter((m) => /\(.+\)$/.test(m) && !bad.some(([f]) => m.startsWith(`${f} (`))).map((m) => `${folder}: ${m}`));
       if (copy.copied.length) res.saved.push({ folder, dest: copy.dir! });
       else {
         try {

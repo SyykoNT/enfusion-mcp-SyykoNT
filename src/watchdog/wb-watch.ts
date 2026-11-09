@@ -281,6 +281,7 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
       const t = deps.now();
       try {
         const r = run();
+        if (r?.errors.length) logger.warn(`Crash folder sweep: ${r.errors.join("; ")}`);
         const line = r && o.crashDir ? sweepLine(r, o.crashDir) : undefined;
         if (line) note(t, `SWEEP ${hms(t)} PID ${o.pid}: ${line}`, "crash");
       } catch (e) {
@@ -492,15 +493,17 @@ export function sweepCrashes(
 
 /**
  * Before any Workbench start (B-044): copy the crash folders of earlier runs to the crash logs folder, because a start prunes older log folders.
- * Returns the reply line when something was saved, or one line saying why nothing can be; never throws, so a failing sweep cannot block a start.
+ * Returns the reply line when something was saved, one more when some files could not be (the details go to the MCP log), or one line saying
+ * why nothing can be; never throws, so a failing sweep cannot block a start.
  */
 export function sweepForStart(config: Config): string | undefined {
   const root = crashLogsDir(config);
   if (!root) return "Crash folders were not saved: no usable crash logs folder (env_check says why). Set ENFUSION_CRASH_LOGS_DIR to a folder of your own.";
   try {
     const r = sweepCrashes(join(workbenchProfileDir(config), "logs"), root);
-    if (r.errors.length) logger.warn(`Crash folder sweep: ${r.errors.join("; ")}`);
-    return sweepLine(r, root);
+    if (!r.errors.length) return sweepLine(r, root);
+    logger.warn(`Crash folder sweep: ${r.errors.join("; ")}`);
+    return [sweepLine(r, root), `Could not save ${r.errors.length} crash file(s); see the MCP log`].filter(Boolean).join("\n");
   } catch (e) {
     logger.warn(`Crash folder sweep failed: ${e instanceof Error ? e.message : String(e)}`);
     return undefined;

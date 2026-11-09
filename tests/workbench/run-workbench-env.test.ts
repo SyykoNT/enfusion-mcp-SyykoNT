@@ -13,7 +13,7 @@ afterAll(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true }))
 // spawn is a stub that exits at once: no Workbench starts. The crash sweep is a recording stub: nothing is copied.
 const sys = vi.hoisted(() => ({
   env: [] as NodeJS.ProcessEnv[], order: [] as string[], sweepArgs: [] as unknown[][], noExe: false,
-  saved: [] as { folder: string; dest: string }[],
+  saved: [] as { folder: string; dest: string }[], errors: [] as string[],
 }));
 vi.mock("node:child_process", async (orig) => ({
   ...(await orig<typeof import("node:child_process")>()),
@@ -29,7 +29,7 @@ vi.mock("../../src/watchdog/crash-sweep.js", async (orig) => ({
   saveCrashFolders: vi.fn((...a: unknown[]) => {
     sys.order.push("sweep");
     sys.sweepArgs.push(a);
-    return { saved: sys.saved, errors: [], capped: false };
+    return { saved: sys.saved, errors: sys.errors, capped: false };
   }),
 }));
 vi.mock("../../src/utils/game-paths.js", async (orig) => ({
@@ -37,7 +37,8 @@ vi.mock("../../src/utils/game-paths.js", async (orig) => ({
   findWorkbenchExe: () => (sys.noExe ? undefined : "C:\\Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe"),
 }));
 
-const { runWorkbench } = await import("../../src/workbench/cli.js");
+const { compileAddon, packAddon, runWorkbench } = await import("../../src/workbench/cli.js");
+const { logger } = await import("../../src/utils/logger.js");
 
 function config(extra: Partial<Config> = {}) {
   const root = mkdtempSync(join(tmpdir(), "emcp-rw-"));
@@ -69,6 +70,27 @@ describe("headless runs save crash folders before they start (B-044)", () => {
 
     sys.saved = [];
     expect((await runWorkbench(c, ["-wbSilent"], 5000)).savedCrashes).toBeUndefined();
+  });
+
+  it("files the sweep could not save add one line to the run, compile and pack results, also when nothing was saved", async () => {
+    const errLine = "Could not save 1 crash file(s); see the MCP log";
+    sys.errors = ["logs_a: a.mdmp unreadable (EBUSY)"];
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const { root, config: c } = config();
+      expect(root.startsWith(tmpdir())).toBe(true); // MCP-0071: pack makes its out folder; temp only
+      sys.saved = [{ folder: "logs_b", dest: "d" }];
+      expect((await runWorkbench(c, ["-wbSilent"], 5000)).savedCrashes).toBe(`Saved 1 crash folder(s) to ${join(root, "Crash Logs")}\n${errLine}`);
+      sys.saved = [];
+      expect((await runWorkbench(c, ["-wbSilent"], 5000)).savedCrashes).toBe(errLine);
+      expect((await compileAddon(c, join(root, "projects", "A", "addon.gproj"))).run.savedCrashes).toBe(errLine);
+      expect((await packAddon(c, join(root, "projects", "A", "addon.gproj"), join(root, "packed"))).run.savedCrashes).toBe(errLine);
+      expect(warn).toHaveBeenCalledWith("Crash folder sweep: logs_a: a.mdmp unreadable (EBUSY)");
+    } finally {
+      warn.mockRestore();
+      sys.errors = [];
+      sys.saved = [];
+    }
   });
 
   it("with no usable crash logs folder it copies nothing and the result says so", async () => {

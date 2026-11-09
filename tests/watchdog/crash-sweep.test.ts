@@ -1,6 +1,6 @@
 import { afterAll, describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveCrashFolders, sweepLine } from "../../src/watchdog/crash-sweep.js";
@@ -89,6 +89,84 @@ describe("saveCrashFolders", () => {
     expect(r.saved.map((s) => s.dest)).toEqual([join(t.dest, `${name(10)}_2`)]);
     expect(listing(join(t.dest, `${name(10)}_2`))).toEqual(["a.mdmp", "b.mdmp", "console.log"]);
     expect(saveCrashFolders(t.logs, t.dest).saved).toEqual([]); // the full copy is recognised now
+  });
+
+  it("a copy with every file but one of a different size is not saved: a longer console.log, a shorter b.mdmp; each gets _2", () => {
+    const t = setup();
+    t.folder(name(10), { "crash.log": OUT_OF_WORLD, "a.mdmp": "first", "console.log": "console, then more lines" });
+    t.folder(name(11), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "a.mdmp": "first", "b.mdmp": "second dump, finished" });
+    const copy = (n: string, files: Record<string, string>) => {
+      mkdirSync(join(t.dest, n), { recursive: true });
+      for (const [f, text] of Object.entries(files)) writeFileSync(join(t.dest, n, f), text);
+    };
+    copy(name(10), { "crash.log": OUT_OF_WORLD, "a.mdmp": "first", "console.log": "console" });
+    copy(name(11), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "a.mdmp": "first", "b.mdmp": "second" }); // the right name, fewer bytes
+    const r = saveCrashFolders(t.logs, t.dest);
+    expect(r.saved.map((s) => s.dest).sort()).toEqual([join(t.dest, `${name(10)}_2`), join(t.dest, `${name(11)}_2`)]);
+    expect(readFileSync(join(t.dest, `${name(11)}_2`, "b.mdmp"), "utf-8")).toBe("second dump, finished");
+    expect(saveCrashFolders(t.logs, t.dest).saved).toEqual([]);
+  });
+
+  it("two copy folders that only together hold every file do not count as saved", () => {
+    const t = setup();
+    t.folder(name(10), { "crash.log": OUT_OF_WORLD, "a.mdmp": "first", "b.mdmp": "second" });
+    for (const [n, dump] of [["20261101_100500_4242", "a.mdmp"], [name(10), "b.mdmp"]]) {
+      mkdirSync(join(t.dest, n), { recursive: true });
+      writeFileSync(join(t.dest, n, "crash.log"), OUT_OF_WORLD);
+      writeFileSync(join(t.dest, n, dump), dump === "a.mdmp" ? "first" : "second");
+    }
+    const r = saveCrashFolders(t.logs, t.dest);
+    expect(r.saved.map((s) => s.dest)).toEqual([join(t.dest, `${name(10)}_2`)]);
+    expect(listing(join(t.dest, `${name(10)}_2`))).toEqual(["a.mdmp", "b.mdmp", "crash.log"]);
+  });
+
+  it("a file unreadable on every sweep is reported each time; the rest is copied once and later sweeps save nothing", () => {
+    const t = setup();
+    t.folder(name(10), { "b.mdmp": "dump-b", "console.log": "c" });
+    mkdirSync(join(t.logs, name(10), "a.mdmp")); // a folder in place of the first dump: it opens but never reads (MCP-0040)
+    const runs = [1, 2, 3, 4, 5].map(() => saveCrashFolders(t.logs, t.dest));
+    expect(listing(t.dest)).toEqual([name(10)]); // at most 3 copies; here one, since the readable files are all in it
+    expect(listing(join(t.dest, name(10)))).toEqual(["b.mdmp", "console.log"]);
+    expect(runs[0].saved.map((s) => s.folder)).toEqual([name(10)]);
+    for (const r of runs.slice(1)) {
+      expect(r.saved).toEqual([]);
+      expect(sweepLine(r, t.dest)).toBeUndefined(); // nothing new written: no Saved line
+    }
+    for (const r of runs) {
+      expect(r.errors).toHaveLength(1);
+      expect(r.errors[0].startsWith(`${name(10)}: a.mdmp unreadable (`)).toBe(true);
+    }
+  });
+
+  it("a file that keeps growing (no running Workbench seen) gets at most 3 copies, then one error per sweep", () => {
+    const t = setup();
+    const stateDir = join(t.root, "watch");
+    mkdirSync(stateDir);
+    const src = t.folder(name(10), { "FREEZE_x.mdmp": "hang", "console.log": "c" });
+    const runs = [1, 2, 3, 4, 5].map(() => {
+      const r = sweepCrashes(t.logs, t.dest, stateDir, { pids: () => [] });
+      appendFileSync(join(src, "console.log"), " more");
+      return r;
+    });
+    expect(listing(t.dest)).toEqual([name(10), `${name(10)}_2`, `${name(10)}_3`]);
+    expect(runs.slice(0, 3).map((r) => [r.saved.length, r.errors.length])).toEqual([[1, 0], [1, 0], [1, 0]]);
+    for (const r of runs.slice(3)) {
+      expect(r.saved).toEqual([]);
+      expect(sweepLine(r, t.dest)).toBeUndefined();
+      expect(r.errors).toEqual([`${name(10)}: not saved after 3 copies: console.log size changed`]);
+    }
+  });
+
+  it("after 3 copies that each missed a file, the error names that file as unreadable", () => {
+    const t = setup();
+    t.folder(name(10), { "a.mdmp": "dump", "console.log": "c" });
+    for (const n of [name(10), `${name(10)}_2`, `${name(10)}_3`]) {
+      mkdirSync(join(t.dest, n), { recursive: true });
+      writeFileSync(join(t.dest, n, "a.mdmp"), "dump"); // console.log failed to copy each time
+    }
+    const r = saveCrashFolders(t.logs, t.dest);
+    expect(r).toEqual({ saved: [], errors: [`${name(10)}: not saved after 3 copies: console.log unreadable`], capped: false });
+    expect(listing(t.dest)).toHaveLength(3);
   });
 
   it("a name clash gets _2 and then _3, and the folder already there is not touched", () => {
