@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseScriptIssues, readGproj, workbenchProfileDir } from "../../src/workbench/cli.js";
+import { crashLogsDir, crashLogsFolder, parseScriptIssues, readGproj, workbenchProfileDir } from "../../src/workbench/cli.js";
 import type { Config } from "../../src/config.js";
 
 // Lines copied from a real `-wbSilent` run on Arma Reforger Tools 1.8 with a broken addon script
@@ -58,5 +58,54 @@ describe("workbenchProfileDir", () => {
       if (saved === undefined) delete process.env.ENFUSION_WORKBENCH_PROFILE;
       else process.env.ENFUSION_WORKBENCH_PROFILE = saved;
     }
+  });
+});
+
+describe("crashLogsFolder", () => {
+  const saved = process.env.ENFUSION_WORKBENCH_PROFILE;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ENFUSION_WORKBENCH_PROFILE;
+    else process.env.ENFUSION_WORKBENCH_PROFILE = saved;
+  });
+
+  function setup(profileUnder?: "game") {
+    const root = mkdtempSync(join(tmpdir(), "emcp-crash-"));
+    const game = join(root, "game");
+    const workshop = join(root, "workshop");
+    mkdirSync(join(workshop, "Mod"), { recursive: true });
+    mkdirSync(game);
+    const profile = join(profileUnder === "game" ? game : root, "Workbench");
+    mkdirSync(join(profile, "logs"), { recursive: true });
+    process.env.ENFUSION_WORKBENCH_PROFILE = profile;
+    const config = { gamePath: game, workbenchPath: join(root, "tools"), workshopPath: workshop, projectPath: join(root, "projects") } as Config;
+    return { root, game, workshop, config, fallback: join(profileUnder === "game" ? game : root, "Workbench Crash Logs") };
+  }
+
+  it("keeps an allowed setting, also when it does not exist yet (checked through its nearest existing parent)", () => {
+    const { root, config } = setup();
+    const want = join(root, "out", "a", "b");
+    expect(crashLogsFolder({ ...config, crashLogsDir: want })).toEqual({ dir: want });
+    mkdirSync(join(root, "out"));
+    expect(crashLogsDir({ ...config, crashLogsDir: want })).toBe(want);
+  });
+
+  it("refuses a setting inside the game folder, even a folder that does not exist yet, and uses the default beside the profile", () => {
+    const { game, config, fallback } = setup();
+    const bad = join(game, "Crashes", "new");
+    expect(crashLogsFolder({ ...config, crashLogsDir: bad })).toEqual({ dir: fallback, refused: { setting: bad, root: game } });
+    expect(crashLogsDir({ ...config, crashLogsDir: bad })).toBe(fallback);
+  });
+
+  it("refuses a setting inside a Workshop cache", () => {
+    const { workshop, config, fallback } = setup();
+    const bad = join(workshop, "Mod", "crash");
+    expect(crashLogsFolder({ ...config, crashLogsDir: bad })).toEqual({ dir: fallback, refused: { setting: bad, root: workshop } });
+  });
+
+  it("returns no folder when the default is refused too", () => {
+    const { game, config } = setup("game");
+    const bad = join(game, "Crashes");
+    expect(crashLogsFolder({ ...config, crashLogsDir: bad })).toEqual({ dir: undefined, refused: { setting: bad, root: game } });
+    expect(crashLogsDir(config)).toBeUndefined();
   });
 });

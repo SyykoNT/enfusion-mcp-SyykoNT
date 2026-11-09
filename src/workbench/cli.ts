@@ -48,10 +48,25 @@ export function workbenchProfileDir(config: Config): string {
   return candidates.find((d) => existsSync(join(d, "logs"))) ?? resolve(config.projectPath, "..");
 }
 
-/** Where a crashed Workbench's log files are copied: the setting, else "Workbench Crash Logs" beside the profile folder (a new Workbench start deletes older log folders). */
-export function crashLogsDir(config: Config): string {
-  return config.crashLogsDir ?? join(dirname(workbenchProfileDir(config)), "Workbench Crash Logs");
+export interface CrashLogsFolder {
+  dir?: string;
+  /** the setting was refused: it lies inside this forbidden root */
+  refused?: { setting: string; root: string };
 }
+
+/**
+ * Where a crashed Workbench's log files are copied: the setting, else "Workbench Crash Logs" beside the profile folder
+ * (a new Workbench start deletes older log folders). A folder inside a forbidden root (game, Tools, Workshop cache) is never used; none is left when both are refused.
+ */
+export function crashLogsFolder(config: Config): CrashLogsFolder {
+  const setting = config.crashLogsDir;
+  const root = setting ? forbiddenRoot(config, setting) : null;
+  if (setting && !root) return { dir: setting };
+  const dir = join(dirname(workbenchProfileDir(config)), "Workbench Crash Logs");
+  return { dir: forbiddenRoot(config, dir) ? undefined : dir, ...(setting && root ? { refused: { setting, root } } : {}) };
+}
+
+export const crashLogsDir = (config: Config): string | undefined => crashLogsFolder(config).dir;
 
 /** cwd is the game folder, so without these Steam counts Workbench as the game (its steam_appid.txt says 1874880). */
 export const workbenchEnv = (): NodeJS.ProcessEnv => ({ ...process.env, SteamAppId: "1874910", SteamGameId: "1874910" });

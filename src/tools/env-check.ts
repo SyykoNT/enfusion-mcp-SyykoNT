@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import { findWorkbenchExe, findGproj } from "../utils/game-paths.js";
 import { findPids, serverProcesses, clientProcesses } from "../utils/process.js";
-import { workbenchProfileDir } from "../workbench/cli.js";
+import { crashLogsFolder } from "../workbench/cli.js";
+import { peFileVersion } from "../utils/pe-version.js";
 import { gameGuidMap } from "../pak/rdb.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 
@@ -50,19 +51,19 @@ export function registerEnvCheck(server: McpServer, config: Config, client: Work
       const serverExe = join(config.serverPath, process.platform === "win32" ? "ArmaReforgerServer.exe" : "ArmaReforgerServer");
       const steamcmd = join(config.steamcmdPath, process.platform === "win32" ? "steamcmd.exe" : "steamcmd.sh");
 
-      let version = "";
-      const wbLogs = join(workbenchProfileDir(config), "logs");
-      try {
-        const latest = existsSync(wbLogs) ? readdirSync(wbLogs).sort().reverse().find((d) => existsSync(join(wbLogs, d, "console.log"))) : undefined;
-        if (latest) version = readFileSync(join(wbLogs, latest, "console.log"), "utf-8").match(/version (\d+\.\d+\.\d+\.\d+)/)?.[1] ?? "";
-      } catch { /* ignore */ }
+      const ver = (exe: string) => { const v = peFileVersion(exe); return v ? ` (v${v})` : ""; };
+      const crash = crashLogsFolder(config);
+      const crashLine = crash.refused
+        ? `${ok(false)} Crash logs folder: ENFUSION_CRASH_LOGS_DIR (crashLogsDir) "${crash.refused.setting}" is refused, it is inside ${crash.refused.root}; ${crash.dir ? `using ${crash.dir}` : "no crash logs folder is set"}`
+        : `${ok(!!crash.dir)} Crash logs folder: ${crash.dir ?? "none (its default location is not allowed): set ENFUSION_CRASH_LOGS_DIR"}`;
 
       lines.push(
-        `${ok(existsSync(gameExe))} Game: ${config.gamePath}${version ? ` (v${version})` : ""}`,
+        `${ok(existsSync(gameExe))} Game: ${config.gamePath}${ver(gameExe)}`,
         `${ok(existsSync(gameDiag))} Game Diag exe (needed for game launch connect/world)`,
         `${ok(!!wbExe)} Workbench: ${wbExe ?? `${config.workbenchPath}: install "Arma Reforger Tools" from Steam`}`,
-        `${ok(existsSync(serverExe))} Dedicated server: ${existsSync(serverExe) ? config.serverPath : "not installed: `server install`"}`,
+        `${ok(existsSync(serverExe))} Dedicated server: ${existsSync(serverExe) ? `${config.serverPath}${ver(serverExe)}` : "not installed: `server install`"}`,
         `${ok(existsSync(steamcmd))} SteamCMD: ${existsSync(steamcmd) ? config.steamcmdPath : "not downloaded (server install does it)"}`,
+        crashLine,
       );
       let guidCount = 0;
       try { guidCount = gameGuidMap(config.gamePath).size; } catch { /* ignore */ }

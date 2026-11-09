@@ -108,7 +108,7 @@ describe("ENFUSION_CRASH_LOGS_DIR", () => {
     mkdirSync(join(profile, "Workbench", "logs"), { recursive: true });
     const config = { projectPath: join(profile, "Workbench", "addons") } as Config;
     expect(crashLogsDir(config)).toBe(join(profile, "Workbench Crash Logs"));
-    expect(crashLogsDir({ ...config, crashLogsDir: "D:\\Crashes" })).toBe("D:\\Crashes");
+    expect(crashLogsDir({ ...config, crashLogsDir: join(profile, "Crashes") })).toBe(join(profile, "Crashes"));
   });
 
   it("the environment variable sets it", () => {
