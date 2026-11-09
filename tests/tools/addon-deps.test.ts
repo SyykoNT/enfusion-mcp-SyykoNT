@@ -1,9 +1,9 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import type { Config } from "../../src/config.js";
-import { addonDepsReport, type Finding } from "../../src/tools/addon-deps.js";
+import { addonDepsReport, samePath, type Finding } from "../../src/tools/addon-deps.js";
 import { buildTestPak, buildRdb } from "../pak/test-pak.js";
 
 const V = "58D0FB3206B6F859";
@@ -112,6 +112,19 @@ describe("addonDepsReport", () => {
     expect(j.findings.map((x: Finding) => x.id)).not.toContain("D4");
     expect(addonDepsReport(config, { addonName: "Target", files: ["Prefabs/T2.et"] }).text).toContain("files set: script use and D4 skipped");
     expect(snapshot(root)).toEqual(before);
+  });
+
+  it("samePath (D11) compares real paths: a junction to the folder is the same folder (B-042)", () => {
+    const holder = mkdtempSync(join(tmpdir(), "emcp-deps-link-"));
+    try {
+      const link = join(holder, "ProjectsLink");
+      symlinkSync(projects, link, "junction"); // on POSIX the type is ignored and this is a symlink
+      expect(samePath(link, projects)).toBe(true);
+      expect(samePath(link, ws)).toBe(false);
+      expect(samePath(join(root, "no", "such"), join(root, "NO", "such"))).toBe(process.platform === "win32"); // a missing path still compares, case-blind on Windows only
+    } finally {
+      rmSync(holder, { recursive: true, force: true });
+    }
   });
 
   it("names the missing addon and a missing Workshop cache", () => {

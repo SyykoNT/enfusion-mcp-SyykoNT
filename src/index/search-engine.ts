@@ -332,7 +332,7 @@ export class SearchEngine {
 
     // Fuzzy fallback: only activate when strict matching returns < 3 results
     if (results.length < 3) {
-      const seen = new Set(results.map((r) => r.result.method.name));
+      const seen = new Set(results.map((r) => r.result.method.name.toLowerCase())); // methodIndex keys are lower case
       for (const [methodName, entries] of this.methodIndex) {
         if (seen.has(methodName)) continue;
         const score = fuzzyNameScore(methodName, q);
@@ -497,7 +497,7 @@ export class SearchEngine {
       }
 
       const seenMethods = new Set(
-        combined.filter((r) => r.type === "method" && r.methodResult).map((r) => r.methodResult!.method.name)
+        combined.filter((r) => r.type === "method" && r.methodResult).map((r) => r.methodResult!.method.name.toLowerCase())
       );
       for (const [methodName, entries] of this.methodIndex) {
         if (seenMethods.has(methodName)) continue;

@@ -25,4 +25,11 @@ describe("wb_resources rebuild", () => {
     const r = await setup("done")({ action: "register", path: "Prefabs/A.et" });
     expect(r.content[0].text).toContain("**Registered resource: Prefabs/A.et**\n\ndone");
   });
+
+  it("register reports a false return from RegisterResourceFile as a failure, not as registered", async () => {
+    const r = await setup("RegisterResourceFile returned false for: Prefabs/A.et")({ action: "register", path: "Prefabs/A.et" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("**Not registered: Prefabs/A.et**");
+    expect(r.content[0].text).not.toMatch(/Registered resource/);
+  });
 });

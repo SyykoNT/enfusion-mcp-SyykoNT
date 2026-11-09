@@ -72,6 +72,14 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
 
         const result = await client.call<Record<string, unknown>>("EMCP_WB_Resources", params);
 
+        // the handler replies status "ok" with this message when RegisterResourceFile returns false
+        if (action === "register" && /returned false/.test(String(result.message ?? ""))) {
+          return {
+            content: [{ type: "text" as const, text: `**Not registered: ${path}**\n\n${result.message}${formatConnectionStatus(client)}` }],
+            isError: true,
+          };
+        }
+
         const actionLabels: Record<string, string> = {
           register: `Registered resource: ${path}`,
           rebuild: `Rebuild requested for: ${path}. Workbench reports the result only in console.log.`,

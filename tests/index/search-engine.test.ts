@@ -432,5 +432,11 @@ describe("SearchEngine", () => {
       const results = engine.searchMethods("GetPositon");
       expect(results.length).toBeGreaterThan(0);
     });
+
+    it("lists a mixed-case method once when the fuzzy fallback runs after a strict hit", () => {
+      const once = (xs: unknown[]) => expect(new Set(xs).size).toBe(xs.length);
+      once(engine.searchMethods("RemoveExplicitlyRetargetedEntity", "all", 50));
+      once(engine.searchAny("RemoveExplicitlyRetargetedEntity", "all", 50).map((r) => r.methodResult ?? r.classInfo));
+    });
   });
 });

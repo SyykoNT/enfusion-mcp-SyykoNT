@@ -8,6 +8,7 @@ import { parseResourceDatabase } from "../pak/rdb.js";
 import { classifyRefs, collectRefs, metaGuids, type ClassifiedRef } from "../release/refs.js";
 import { addonScripts, baseGameNames, declaredNames, usedNames } from "../release/script-use.js";
 import { resolveGproj, workbenchProfileDir } from "../workbench/cli.js";
+import { realPathOf } from "../utils/safe-path.js";
 
 /**
  * Offline dependency report for an addon: names, versions and sources of its dependencies,
@@ -43,7 +44,14 @@ const LIST = 20;
 
 const label = (a: AddonInfo) => `${a.name} {${a.guid}}`;
 const majorMinor = (v: string) => v.match(/^(\d+\.\d+)/)?.[1] ?? "";
-const samePath = (a: string, b: string) => resolve(a).toLowerCase() === resolve(b).toLowerCase();
+// real paths, so a junction or an 8.3 spelling of the same folder matches; an unreadable path falls back to the typed spelling
+export const samePath = (a: string, b: string) => {
+  try {
+    return realPathOf(a) === realPathOf(b);
+  } catch {
+    return resolve(a).toLowerCase() === resolve(b).toLowerCase();
+  }
+};
 const inDocs = (file: string) => file.split("/").some((s) => s.startsWith("!Docs"));
 
 /** Game version from the newest Workbench console.log (the Tools build; equal to the game while both are one release). */
