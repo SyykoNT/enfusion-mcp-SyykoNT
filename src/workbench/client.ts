@@ -19,6 +19,7 @@ import { forbiddenRoot, sameRealPath } from "../utils/safe-path.js";
 import { argValue, findPids, isAlive, netstat, processInfoAsync, type ProcInfo } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, isOwned, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { DIALOG_CHECK_AFTER_MS, DIALOG_CHECK_EVERY_MS, workbenchEnv, workbenchProfileDir } from "./cli.js";
+import { duplicateAddonError } from "../pak/stack.js";
 import { startWatcher, sweepForStart, watcherBase } from "../watchdog/wb-watch.js";
 import { LOCAL_HOSTS, attachDeps, ensureWatched, type AttachResult } from "../watchdog/auto-attach.js";
 import { probeDialogs, probeTitles, type TitleProbe } from "../watchdog/probe.js";
@@ -832,6 +833,9 @@ export class WorkbenchClient {
       );
     }
     let resolvedGproj = gprojPath || this.findFallbackGproj();
+    // Before any handler copy: a second copy of the addon or a dependency in -addonsDir makes Workbench load both.
+    const dup = resolvedGproj ? duplicateAddonError([resolvedGproj], (this.config?.addonsDir ?? "").split(",")) : null;
+    if (dup) throw new WorkbenchError(dup, "LAUNCH_FAILED");
     // Built before any handler copy, so a bad worldPath is refused with nothing written.
     let args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir: this.config?.addonsDir, unattended, worldPath });
     let gitNote: string | undefined;

@@ -297,3 +297,67 @@ export function buildStack(config: Config, target: string): Stack {
   const { order, missing, warnings } = closure(config, target);
   return { layers: order.map(makeLayer), missing, warnings };
 }
+
+/**
+ * Why a launch would load two folders with the same addon GUID, or null. Checked: the opened addons (`gprojs`, plus any addon in
+ * the listed folders whose ID is in `ids`) and everything they depend on, among the opened folders and the addon folders directly
+ * under `dirs` (what -addonsDir lists). Workshop downloads (ServerData.json) are never counted. A folder opened and listed is one
+ * folder (real paths); a junction and its target under two listed folders count as two (unverified: whether Workbench mounts them once).
+ * Reads only; call it before anything is written or started.
+ */
+export function duplicateAddonError(
+  gprojs: string[],
+  dirs: string[],
+  opts: { ids?: string[]; via?: "ENFUSION_ADDONS_DIR" | "addonsDirs" } = {}
+): string | null {
+  const real = (p: string) => {
+    try {
+      return realPathOf(p);
+    } catch {
+      return resolve(p).toLowerCase();
+    }
+  };
+  const folders: { root: string; info: Info }[] = [];
+  const openedKeys = new Set<string>();
+  for (const g of gprojs) {
+    const key = real(dirname(g));
+    if (!openedKeys.has(key)) { openedKeys.add(key); folders.push({ root: dirname(g), info: readInfo(g) }); }
+  }
+  const targets = folders.map((f) => f.info.guid);
+  const listedDirs = new Set<string>();
+  for (const d of dirs.map((x) => x.trim()).filter(Boolean)) {
+    if (listedDirs.has(real(d))) continue;
+    listedDirs.add(real(d));
+    for (const root of subdirs(d)) {
+      const gproj = findGproj(root);
+      if (!gproj || existsSync(join(root, "ServerData.json")) || openedKeys.has(real(root))) continue;
+      const info = readInfo(gproj);
+      folders.push({ root, info });
+      if (opts.ids?.some((id) => id.toLowerCase() === info.id.toLowerCase())) targets.push(info.guid);
+    }
+  }
+  const seen = new Set<string>();
+  const visit = (guid: string): string | null => {
+    if (!guid || seen.has(guid)) return null;
+    seen.add(guid);
+    const hits = folders.filter((f) => f.info.guid === guid);
+    if (hits.length > 1) {
+      const fix = opts.via === "addonsDirs" ? "pass addonsDirs with" : "set ENFUSION_ADDONS_DIR to";
+      return (
+        `Refused: addon GUID ${guid} (${hits[0].info.id}) is in ${hits.length} folders, so Workbench or the server would load more than one copy: ` +
+        `${hits.map((h) => h.root).join(", ")}. Nothing was started. To launch, ${fix} the folder that holds only the copy you want ` +
+        `(for example ${dirname(folders[0].root)}).`
+      );
+    }
+    for (const d of hits[0]?.info.deps ?? []) {
+      const e = visit(d);
+      if (e) return e;
+    }
+    return null;
+  };
+  for (const t of targets) {
+    const e = visit(t);
+    if (e) return e;
+  }
+  return null;
+}

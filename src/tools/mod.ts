@@ -13,6 +13,7 @@ import { parse, getProperty } from "../formats/enfusion-text.js";
 
 import { checkPackOutput, compileAddon, handlerFiles, packAddon, pakSummary, readGproj, resolveGproj } from "../workbench/cli.js";
 import { findPids, workbenchCommandLines } from "../utils/process.js";
+import { duplicateAddonError } from "../pak/stack.js";
 
 // ─── create helpers ───────────────────────────────────────────────────────────
 
@@ -353,7 +354,8 @@ export function registerMod(
         "'compile' checks every script of the addon and lists errors with file:line; 'pack' produces the " +
         "loadable addon (data.pak + .gproj + resourceDatabase.rdb) for the game / dedicated server; " +
         "'build' = compile then pack (stops on script errors); 'create' scaffolds a new addon; " +
-        "'validate' runs static checks without Workbench.",
+        "'validate' runs static checks without Workbench. " +
+        "build, compile and pack are refused, before Workbench starts, when the addon or one of its dependencies exists as two copies with the same GUID in the ENFUSION_ADDONS_DIR folders.",
       inputSchema: {
         action: z
           .enum(["build", "compile", "pack", "create", "validate"])
@@ -435,6 +437,8 @@ export function registerMod(
             isError: true,
           };
         }
+        const dup = duplicateAddonError([gproj], (config.addonsDir ?? "").split(","));
+        if (dup) return { content: [{ type: "text", text: dup }], isError: true };
         const addonDir = dirname(gproj);
         const project = readGproj(gproj);
         const outDir = outputPath || join(config.packedPath, project.id || basename(addonDir));

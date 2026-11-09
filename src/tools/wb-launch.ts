@@ -25,7 +25,8 @@ export function registerWbLaunch(
         "the NET API, nothing is started or closed. When gprojPath is a different project than the one that Workbench has open, " +
         "wb_launch refuses and names it (PID, project, started by this MCP or not). With the same project, or without gprojPath, " +
         "it shares that Workbench and says which one answers. If the project it has open cannot be read, it shares it and says " +
-        "\"project unknown\". If one is running but not answering it refuses to start another. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
+        "\"project unknown\". If one is running but not answering it refuses to start another. A launch is refused, before anything is written or started, when the " +
+        "project or one of its dependencies exists as two copies with the same GUID in the ENFUSION_ADDONS_DIR folders. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
       inputSchema: {
         gprojPath: z

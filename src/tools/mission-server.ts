@@ -5,7 +5,8 @@ import { availableParallelism, freemem } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
-import { readGproj } from "../workbench/cli.js";
+import { addonsDirsError, readGproj } from "../workbench/cli.js";
+import { duplicateAddonError } from "../pak/stack.js";
 import { DISABLE_CRASH_REPORTER, NO_THROW, argValue, clientProcesses, isAlive, killPids, limitProcess, newestDir, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, instanceTable, isUnder, planStop, scan, writeInstance, type Entry } from "../utils/instances.js";
 import { DEFAULT_FAIL_PATTERNS, resolveLogFile, runErrors, waitFor } from "../utils/logwatch.js";
@@ -154,8 +155,8 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addo
       : [config.projectPath, join(myGames(), "ArmaReforgerWorkbench", "addons")].filter((d) => existsSync(d)));
   // The world's own addon must be found: add its parent folder when no listed folder holds it.
   if (!dirs.some((d) => isUnder(found.addon!, d))) dirs.push(dirname(found.addon));
-  const bad = dirs.find((d) => !isAbsolute(d) || /[",\r\n]/.test(d) || !existsSync(d));
-  if (bad) return `addonsDirs must be existing absolute folders without quotes or commas: ${bad}`;
+  const bad = addonsDirsError(dirs);
+  if (bad) return bad;
   return { port: a.port, gproj, world, header, addonsDirs: dirs, addons };
 }
 
@@ -274,6 +275,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         "its Mission Header, with unpacked addons from -addonsDir, on its own loopback port and profile, plus Diag game clients that join it. " +
         "start (server, waits until it accepts clients, then peers), join (one more client, the guide's Start only clients), status, stop (only its own processes). " +
         "Starts processes: ask the user (or the Workbench lock owner) first, and keep within the CPU and port slots they give. " +
+        "A start is refused, before anything is spawned, when the world's addon, an addon in addons or one of their dependencies exists as two copies with the same GUID in the listed folders. " +
         "Every client needs at least 4 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
         "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority. " +
         "The Crash Reporter is switched off for everything it starts (-disableCrashReporter), and every server and client it starts runs with -noThrow (no error dialogs). " +
@@ -301,7 +303,9 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           if (!a.world) return text("start needs world", true);
           const planned = planRun({ world: a.world, missionHeader: a.missionHeader, addons: a.addons, addonsDirs: a.addonsDirs, port }, config);
           if (typeof planned === "string") return text(planned, true);
-          const cpu = cpuMasks(a.serverCpuMask, a.clientCpuMask);
+          const dup = duplicateAddonError([planned.gproj], planned.addonsDirs, { ids: planned.addons, via: "addonsDirs" });
+          if (dup) return text(dup, true);
+          const cpu =cpuMasks(a.serverCpuMask, a.clientCpuMask);
           if (typeof cpu === "string") return text(cpu, true);
           const run: Run = { ...planned, cpu };
           const extraErr = checkExtra(a.extraArgs ?? []);

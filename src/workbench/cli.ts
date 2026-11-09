@@ -12,7 +12,7 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Config } from "../config.js";
 import { findWorkbenchExe, myGamesDir } from "../utils/game-paths.js";
 import { newestDir } from "../utils/process.js";
@@ -202,6 +202,12 @@ export async function packAddon(config: Config, gprojPath: string, outDir: strin
   const packLog = run.console.slice(Math.max(0, run.console.indexOf("Packaging project started")));
   const errors = [...packLog.matchAll(/^.*\(E\): (.+)$/gm)].map((m) => m[1].trim());
   return { ok, run, outDir, files, errors };
+}
+
+/** Why a list of -addonsDir folders is unusable (each goes into a process argument), or null. */
+export function addonsDirsError(dirs: string[]): string | null {
+  const bad = dirs.find((d) => !isAbsolute(d) || /[",\r\n]/.test(d) || !existsSync(d));
+  return bad ? `addonsDirs must be existing absolute folders without quotes or commas: ${bad}` : null;
 }
 
 /** Read ID / GUID / TITLE from a .gproj. */
