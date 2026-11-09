@@ -140,7 +140,8 @@ export function registerWbLaunch(
       description:
         "Close a Workbench this MCP session started (recorded at launch); any other Workbench is refused and left running. " +
         "By default saves the open world first and exits cleanly through the NET API (skipped while another Workbench runs, " +
-        "because that one may own the NET API port); force=true kills the owned process if it does not exit.",
+        "because that one may own the NET API port); force=true kills the owned process if it does not exit. " +
+        "With save=false it refuses, without closing, a world with unsaved changes (local Workbench on Windows only), because Workbench would ask to save and that dialog blocks every MCP call.",
       inputSchema: {
         save: z.boolean().default(true).describe("Save the open world before exiting (default true)"),
         force: z.boolean().default(false).describe("Kill the process if it does not exit on its own (unsaved work is lost)"),
@@ -160,8 +161,11 @@ export function registerWbLaunch(
       if (!owned.length) {
         return { content: [{ type: "text" as const, text: `**Not closed.**${untouched}` }], isError: true };
       }
+      // Only a close that discards the world can raise Workbench's save prompt; the default saves first.
+      const guard = save === false ? await client.checkUnsaved("Closing Workbench", "save-changes prompt") : undefined;
+      if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
       const alive = () => findPids(image).filter((pid) => owned.includes(pid));
-      const notes: string[] = [];
+      const notes: string[] = guard ? [guard.warn] : [];
       if (others.length) {
         notes.push("NET API exit skipped (another Workbench may be the one answering on the NET API port).");
       } else {

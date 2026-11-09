@@ -26,7 +26,8 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       description:
         "Switch Workbench to game (play) mode. Compiles scripts and launches the world for testing. Equivalent to pressing Play in the World Editor. Requires edit mode. " +
         "Refuses, without playing, an unnamed world and a world with no writable file (inside a .pak, the game or Tools folders, or the Workshop cache): " +
-        "play may ask to save it and Save would write into those folders. Play a sub-scene of it in your own test addon.",
+        "play may ask to save it and Save would write into those folders. Play a sub-scene of it in your own test addon. " +
+        "Also refuses, without playing, a world with unsaved changes (local Workbench on Windows only), because Workbench asks \"World needs to be saved\" and that dialog blocks every MCP call; run wb_save first. It plays with a warning when it cannot check.",
       inputSchema: {
         debugMode: z
           .boolean()
@@ -61,6 +62,9 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
             "Play may ask to save it, and Save would write into the game or Workshop folders. Play a sub-scene of it in your own test addon. Play was not started."
         );
       }
+      const guard = await client.checkUnsaved("Starting play", '"World needs to be saved" prompt');
+      if (guard && "refuse" in guard) return refuse(guard.refuse);
+      const warn = guard ? `\n\n${guard.warn}` : "";
       try {
         const params: Record<string, unknown> = { action: "play" };
         if (debugMode !== undefined) params.debugMode = debugMode;
@@ -73,14 +77,14 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
           content: [
             {
               type: "text" as const,
-              text: `**Play Mode Started**\n\nWorkbench is now compiling and entering game mode.${result.message ? `\n${result.message}` : ""}${formatConnectionStatus(client)}`,
+              text: `**Play Mode Started**\n\nWorkbench is now compiling and entering game mode.${result.message ? `\n${result.message}` : ""}${warn}${formatConnectionStatus(client)}`,
             },
           ],
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return {
-          content: [{ type: "text" as const, text: `Error starting play mode: ${msg}${formatConnectionStatus(client)}` }],
+          content: [{ type: "text" as const, text: `Error starting play mode: ${msg}${warn}${formatConnectionStatus(client)}` }],
         isError: true,
         };
       }
@@ -194,6 +198,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
           ? reply(`Save() returned true but no file under ${folder} changed. Check terrain files and the world path.`, true)
           : reply("Save() returned false and no file changed. Workbench may have had nothing to save (unverified meaning of false).");
       }
+      client.clearLayerMark();
       return reply(
         `**World saved**\nWorld: ${worldPath}\n` +
           `Written (${w.files.length}) under ${folder}: ${w.files.join(", ")}\n` +
@@ -249,7 +254,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         "Open a resource file in the appropriate Workbench editor (e.g., a .et prefab in the Prefab Editor, a .c script in the Script Editor). " +
         "Opening a world (.ent) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it. " +
         "The tool refuses a world open when the World Editor title shows unsaved changes (local Workbench on Windows only) and opens with a warning when it cannot check. " +
-        "A world whose only unsaved change is a new layer is not detected. " +
+        "A layer this MCP created with wb_layers counts as unsaved until wb_save writes files. " +
         "Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
         path: z

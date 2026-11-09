@@ -76,7 +76,10 @@ describe("mode gate on wb_* tools", () => {
       if (f === "EMCP_WB_EditorControl") mode = p.action === "play" ? "game" : "edit";
       return { status: "ok" };
     });
-    const tools = editorTools(new WorkbenchClient("127.0.0.1", mock.port));
+    const client = new WorkbenchClient("127.0.0.1", mock.port);
+    // wb_play checks for unsaved changes; a netstat listing without the port owner skips it (no netstat, no windows read).
+    client.worldProbe = { netstat: async () => "Active Connections\r\n", titles: async () => ({ unavailable: "not reached" }) };
+    const tools = editorTools(client);
     expect((await tools.wb_play({})).isError).toBeUndefined();
     expect((await tools.wb_stop({})).isError).toBeUndefined();
   });

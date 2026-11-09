@@ -262,10 +262,10 @@ Script errors and dialogs in the servers and game clients the MCP starts (`serve
 | `wb_connect` / `wb_diagnose` | Test the connection; full diagnostic without launching, watchdog reports included |
 | `wb_watch` | Watchdog for Workbench: `status`, `start` (attach to a running Workbench now, or replace the automatic watcher; `authorizeScripts` picks which Workbench gets automatic Script Authorization answers), `stop` (that Workbench run is not watched again automatically), and `answer` (Yes or No on an open Script Authorization dialog, with the reason) |
 | `wb_state` | Mode, entity counts, selection, terrain bounds |
-| `wb_close` | Save the open world and exit Workbench |
+| `wb_close` | Save the open world and exit Workbench; with `save=false` it refuses a world that has unsaved changes |
 | `wb_cleanup` | Remove the handler scripts from an addon |
 | `wb_handlers` | `install`, `remove` and `status` of the server's own `EMCP_*` handler scripts in one addon; the only tool that writes them into a protected addon, such as a framework clone you share with others |
-| `wb_play` / `wb_stop` | Enter and leave play mode |
+| `wb_play` / `wb_stop` | Enter and leave play mode; `wb_play` refuses a world that has unsaved changes |
 | `wb_save` | Save the world, optionally to a new path |
 | `wb_undo_redo` | Undo or redo in the World Editor |
 | `wb_open_resource` | Open a resource in its Workbench editor. A world (`.ent`) open is refused when the World Editor title shows unsaved changes (local Workbench on Windows only), and goes ahead with a warning when that cannot be checked; a world whose only unsaved change is a new layer is not detected |
@@ -282,7 +282,7 @@ Script errors and dialogs in the servers and game clients the MCP starts (`serve
 | `wb_entity_select` | Select, deselect, clear or read the selection |
 | `wb_entity_duplicate` | Save a scene entity as a new prefab in an addon |
 | `wb_component` | Add, remove or list an entity's components |
-| `wb_layers` | List layers, create top-level layers, set and read the active layer, show layer info and toggle a layer's lock |
+| `wb_layers` | List layers, create top-level layers, set and read the active layer, show layer info and toggle a layer's lock; a new layer counts as unsaved until `wb_save` writes it |
 | `wb_clipboard` | Copy, cut, paste and duplicate entities |
 | `wb_terrain` | Terrain height at a point; world bounds |
 | `wb_prefabs` | Create templates, save prefabs, look up GUIDs, ancestors and paths |

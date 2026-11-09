@@ -166,12 +166,13 @@ describe("unsaved-world guard on a .ent open", () => {
     expect(s.call).not.toHaveBeenCalled();
   });
 
-  it("the tool description says it refuses on unsaved changes and does not detect a new layer alone", async () => {
+  it("the tool description says it refuses on unsaved changes and counts a layer this MCP created", async () => {
     let description = "";
     const server = { registerTool: (n: string, d: { description: string }) => n === "wb_open_resource" && (description = d.description) } as unknown as McpServer;
     registerWbEditorTools(server, new WorkbenchClient("127.0.0.1", PORT), {} as Config);
     expect(description).toContain("refuses a world open when the World Editor title shows unsaved changes");
-    expect(description).toContain("only unsaved change is a new layer is not detected");
+    expect(description).toContain("A layer this MCP created with wb_layers counts as unsaved until wb_save writes files");
+    expect(description).not.toContain("is not detected");
     expect(description).not.toContain("cannot tell whether the world has unsaved changes");
   });
 });

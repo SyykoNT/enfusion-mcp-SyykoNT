@@ -62,6 +62,8 @@ function setup(info: Record<string, unknown>, onSave: (folder: string) => unknow
     return onSave(folder);
   });
   const client = new WorkbenchClient("127.0.0.1", mock.port);
+  // wb_play checks for unsaved changes; a netstat listing without the port owner skips it, so no test runs netstat or reads windows.
+  client.worldProbe = { netstat: async () => "Active Connections\r\n", titles: async () => ({ unavailable: "not reached" }) };
   const tools: Record<string, Handler> = {};
   const descriptions: Record<string, string> = {};
   registerWbEditorTools(

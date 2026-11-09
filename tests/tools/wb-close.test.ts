@@ -30,10 +30,10 @@ const { WorkbenchClient } = await import("../../src/workbench/client.js");
 const { loadConfig } = await import("../../src/config.js");
 
 type Result = { content: { text: string }[]; isError?: boolean };
-function wbClose(): (a: Record<string, unknown>) => Promise<Result> {
+function wbClose(client = new WorkbenchClient("127.0.0.1", 1)): (a: Record<string, unknown>) => Promise<Result> {
   const tools: Record<string, (a: Record<string, unknown>) => Promise<Result>> = {};
   const fake = { registerTool: (name: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<Result>) => { tools[name] = h; } };
-  registerWbLaunch(fake as unknown as McpServer, loadConfig(), new WorkbenchClient("127.0.0.1", 1));
+  registerWbLaunch(fake as unknown as McpServer, loadConfig(), client);
   return tools.wb_close;
 }
 const killed = () => sys.taskkill.map((a) => Number(a[a.indexOf("/PID") + 1]));
@@ -78,5 +78,88 @@ describe.runIf(process.platform === "win32")("wb_close ownership", () => {
     killPids([7], true);
     killPids([8], true, true);
     expect(sys.taskkill).toEqual([["/PID", "7", "/F"], ["/PID", "8", "/T", "/F"]]);
+  });
+});
+
+// Closing without saving can raise Workbench's save prompt; the default close saves first and cannot. No test here runs netstat or reads a window.
+describe.runIf(process.platform === "win32")("wb_close without saving checks for unsaved changes", () => {
+  const LISTENING = "  TCP    0.0.0.0:1    0.0.0.0:0    LISTENING    500\r\n";
+  const DIRTY = { cls: "Qt683QWindowIcon", text: "World Editor - MCPParity/Worlds/MCPParity.ent*" };
+  const CLEAN = { cls: "Qt683QWindowIcon", text: "World Editor - MCPParity/Worlds/MCPParity.ent" };
+  const tail =
+    "Closing Workbench now would show Workbench's save-changes prompt, which blocks every MCP call until a person answers it. " +
+    "Run wb_save first, or save or discard the changes in Workbench, then try again.";
+
+  function setup(netstat: () => Promise<string>, wins: { cls: string; text: string }[]) {
+    const client = new WorkbenchClient("127.0.0.1", 1);
+    const net = vi.fn(netstat);
+    const titles = vi.fn(async () => ({ wins }));
+    client.worldProbe = { netstat: net, titles };
+    const call = vi.spyOn(client, "call").mockResolvedValue({ status: "ok" });
+    sys.alive = new Set([500]);
+    return { client, net, titles, call, close: wbClose(client) };
+  }
+
+  it("refuses an unsaved title with the world named, and sends and kills nothing", async () => {
+    const s = setup(async () => LISTENING, [CLEAN, DIRTY]);
+    const r = await s.close({ save: false, force: false });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe(
+      `Refused: the world open in Workbench (MCPParity/Worlds/MCPParity.ent) has unsaved changes (its World Editor title ends in *). ${tail}`
+    );
+    expect(s.call).not.toHaveBeenCalled();
+    expect(sys.taskkill).toEqual([]);
+    expect(sys.alive.has(500)).toBe(true);
+  });
+
+  it("refuses when only the layer mark is set, without reading a window", async () => {
+    const s = setup(async () => LISTENING, [CLEAN]);
+    await s.client.markLayerCreated();
+    const r = await s.close({ save: false, force: false });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe(
+      `Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world has unsaved changes. ${tail}`
+    );
+    expect(s.call).not.toHaveBeenCalled();
+    expect(s.titles).not.toHaveBeenCalled();
+    expect(sys.taskkill).toEqual([]);
+  });
+
+  it("a clean world closes as before, with no extra line", async () => {
+    const s = setup(async () => LISTENING, [CLEAN]);
+    const r = await s.close({ save: false, force: false });
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("**Workbench closed.**");
+    expect(r.content[0].text).not.toContain("Could not check");
+    expect(s.call).toHaveBeenCalledWith("EMCP_WB_Exit", { save: false }, { timeout: 20_000 });
+  });
+
+  it("cannot tell: it closes and adds one warning line", async () => {
+    const s = setup(async () => "", [DIRTY]);
+    const r = await s.close({ save: false, force: false });
+    expect(r.isError).toBeUndefined();
+    expect(s.call).toHaveBeenCalledTimes(1);
+    expect(r.content[0].text.split("Could not check for unsaved changes").length).toBe(2);
+    expect(r.content[0].text).toContain(
+      'Could not check for unsaved changes (the netstat query failed); if the current world has unsaved edits, Workbench will show a blocking save-changes prompt.'
+    );
+  });
+
+  it("the default close saves first, so it does not run the check", async () => {
+    const s = setup(async () => LISTENING, [DIRTY]);
+    await s.client.markLayerCreated();
+    s.net.mockClear();
+    const r = await s.close({ save: true, force: false });
+    expect(r.isError).toBeUndefined();
+    expect(s.net).not.toHaveBeenCalled();
+    expect(s.call).toHaveBeenCalledWith("EMCP_WB_Exit", { save: true }, { timeout: 20_000 });
+  });
+
+  it("a Workbench this MCP did not start is refused before any check", async () => {
+    const s = setup(async () => LISTENING, [DIRTY]);
+    sys.alive = new Set([600]);
+    const r = await s.close({ save: false, force: false });
+    expect(r.content[0].text).toContain("**Not closed.**");
+    expect(s.net).not.toHaveBeenCalled();
   });
 });

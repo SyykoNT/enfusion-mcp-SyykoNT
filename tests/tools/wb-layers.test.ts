@@ -11,10 +11,11 @@ function layers(answer: Record<string, unknown> | Error) {
     if (answer instanceof Error) throw answer;
     return answer;
   });
-  const client = { state: { connected: true, mode: "edit" }, probeMode: vi.fn(async () => "edit"), call };
+  const mark = vi.fn(async () => {});
+  const client = { state: { connected: true, mode: "edit" }, probeMode: vi.fn(async () => "edit"), call, markLayerCreated: mark };
   let tool!: (a: Record<string, unknown>) => Promise<Result>;
   registerWbLayers({ registerTool: (_n: string, _d: unknown, h: typeof tool) => (tool = h) } as unknown as McpServer, client as unknown as WorkbenchClient);
-  return { call, run: async (a: Record<string, unknown>) => (await tool(a)) };
+  return { call, mark, run: async (a: Record<string, unknown>) => (await tool(a)) };
 }
 
 describe("wb_layers", () => {
@@ -42,6 +43,18 @@ describe("wb_layers", () => {
     expect(t.call).toHaveBeenCalledWith("EMCP_WB_Layers", { action: "create", name: "_INIT" });
     expect(r.content[0].text).toContain("- **Layer:** _INIT\n");
     expect(r.content[0].text).toContain("Written to disk on the next wb_save.");
+  });
+
+  it("a layer create marks the world unsaved; a failed create, setActive and list do not", async () => {
+    const ok = layers({ status: "ok", layerPath: "_INIT", activeLayer: "default", layers: [] });
+    await ok.run({ action: "create", name: "_INIT" });
+    expect(ok.mark).toHaveBeenCalledTimes(1);
+    await ok.run({ action: "setActive", layerPath: "_INIT" });
+    await ok.run({ action: "list" });
+    expect(ok.mark).toHaveBeenCalledTimes(1);
+    const failed = layers(new Error("no sub-scene"));
+    await failed.run({ action: "create", name: "_INIT" });
+    expect(failed.mark).not.toHaveBeenCalled();
   });
 
   it("setActive prints the layer the handler read back", async () => {
