@@ -861,7 +861,7 @@ export class WorkbenchClient {
       );
     }
     const lowMemory = freeGb < WARN_FREE_GB
-      ? `**Warning:** ${freeGb.toFixed(1)} GB of memory free; a GUI Workbench used up to about 9 GB on the PC this was measured on. It may run slowly or be closed by Windows.`
+      ? `**Warning:** ${freeGb.toFixed(1)} GB of memory free; a GUI Workbench used up to about 9 GB on the PC this was measured on. It may run slowly, hang or crash.`
       : undefined;
     let gitNote: string | undefined;
     if (resolvedGproj && !isProtected) {
