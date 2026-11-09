@@ -194,8 +194,9 @@ sets one up), writes there are refused (see [COALITION missions](#coalition-miss
 | `ENFUSION_TEXT_STYLE` | | Unset. `strict` turns on the text style checks: `release_audit` T2 (en or em dashes, the words Claude or Anthropic in public text) and `workshop_info` (the same, plus non-ASCII characters and trailing spaces in Workshop text). Length limits are always checked |
 | `ENFUSION_LOG_ROOTS` | `logRoots` | None. Extra folders `log_watch` may read logs under (comma-separated), besides the server profile, client profiles, Workbench and game log folders |
 | `ENFUSION_COALITION_TOOLS` | `coalitionTools` | Off. `on`, `1` or `true` (any case; `true` in the config file) registers the nine COALITION mission-making tools, see [COALITION missions](#coalition-missions-optional). Unset or any other value leaves them off |
-| `ENFUSION_SCRIPT_AUTH` | `scriptAuth` | `rules`. How the watchdog answers Workbench's "Script Authorization Required" dialog, in a Workbench this server started or a `wb_watch` watches. `rules`: Yes for a script call from an addon that Workbench loaded, No for a script that is in none of them; a request to run a program (`Workbench.RunCmd`, `Workbench.RunProcess`) and a dialog it cannot read are left open and reported, for the agent to answer with `wb_watch answer`. `all`: Yes to All on every request, program runs included; set it only if you trust every addon you load. `off`: report only. Any other value is read as `rules` and logged once. The server never uses `-scriptAuthorizeAll` |
-| `ENFUSION_CRASH_LOGS_DIR` | `crashLogsDir` | `Workbench Crash Logs` beside the Workbench profile folder (for the default profile, `Documents\My Games\Workbench Crash Logs`). When a Workbench the server started or watches crashes, that run's crash and log files are copied here, because a new Workbench start removes the older log folders; then that Workbench's own CrashReporter is ended without sending a report |
+| `ENFUSION_SCRIPT_AUTH` | `scriptAuth` | `rules`. How the watchdog answers Workbench's "Script Authorization Required" dialog, in any Workbench the server watches. `rules`: Yes for a script call from an addon that Workbench loaded, No for a script that is in none of them; a request to run a program (`Workbench.RunCmd`, `Workbench.RunProcess`) and a dialog it cannot read are left open and reported, for the agent to answer with `wb_watch answer`. `all`: Yes to All on every request, program runs included; set it only if you trust every addon you load. `off`: report only. Any other value is read as `rules` and logged once. The server never uses `-scriptAuthorizeAll` |
+| `ENFUSION_CRASH_LOGS_DIR` | `crashLogsDir` | `Workbench Crash Logs` beside the Workbench profile folder (for the default profile, `Documents\My Games\Workbench Crash Logs`). When a Workbench the server watches crashes, that run's crash and log files are copied here, because a new Workbench start removes the older log folders; then that Workbench's own CrashReporter is ended without sending a report |
+| `ENFUSION_WB_AUTOWATCH` | `autoWatch` | On. Any live call attaches a watcher by itself to the Workbench on the NET API port of this PC, whoever started it. `off`, `0`, `false` or `no` (any case) turns that off; `on`, `1`, `true` and `yes` keep it on. Any other value is off, with one warning in the log |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
 
 The COALITION tools also read `ENFUSION_PYTHON`; see [COALITION missions](#coalition-missions-optional).
@@ -253,7 +254,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 |---|---|
 | `wb_launch` | Install the handler scripts into an addon, start Workbench and watch it |
 | `wb_connect` / `wb_diagnose` | Test the connection; full diagnostic without launching, watchdog reports included |
-| `wb_watch` | Watchdog for Workbench: `status`, `start` (attach to a running Workbench; `authorizeScripts` picks which Workbench gets automatic Script Authorization answers), `stop`, and `answer` (Yes or No on an open Script Authorization dialog, with the reason) |
+| `wb_watch` | Watchdog for Workbench: `status`, `start` (attach to a running Workbench now, or replace the automatic watcher; `authorizeScripts` picks which Workbench gets automatic Script Authorization answers), `stop` (that Workbench run is not watched again automatically), and `answer` (Yes or No on an open Script Authorization dialog, with the reason) |
 | `wb_state` | Mode, entity counts, selection, terrain bounds |
 | `wb_close` | Save the open world and exit Workbench |
 | `wb_cleanup` | Remove the handler scripts from an addon |
@@ -423,8 +424,10 @@ only read (apart from those git refs), so they are not affected. To write, name 
 - `server config` and `server start` replace only the server's own `<serverProfilePath>/server.json`; any other
   `configPath` must be a new file. A server started with local addons binds `127.0.0.1`. The generated
   `server.json` binds `0.0.0.0`.
-- `wb_launch` starts a watcher for each Workbench it starts, and `wb_watch start` attaches one to another
-  Workbench. A watcher never closes, kills or focuses a Workbench this server did not start. Its automatic actions
+- `wb_launch` starts a watcher for each Workbench it starts. Any live call also attaches one by itself to the
+  Workbench that owns the NET API port on this PC, whoever started it, including one started by hand or by a
+  launcher script; `ENFUSION_WB_AUTOWATCH=off` turns that off, and `wb_watch start` attaches one on request.
+  A watcher never closes, kills or focuses a Workbench this server did not start. Its automatic actions
   are: Ignore on the diag build's "Resources are leaking!" assert (`dismissLeakAssert=never` turns it off); answers
   to "Script Authorization Required" by `ENFUSION_SCRIPT_AUTH` (`authorizeScripts=never` turns it off for one watch),
   by pressing Yes, No or, in `all` mode, Yes to All with UI Automation, never `No to All` and never
@@ -444,8 +447,8 @@ only read (apart from those git refs), so they are not affected. To write, name 
 
 | Problem | What to do |
 |---|---|
-| Workbench stops on a "Script Authorization Required" dialog | Run `wb_watch status`. In the default mode the watcher answers Yes to a script from a loaded addon on its own. A request to run a program is left open and shown with the script, the line and the command read from the script's source: answer it with `wb_watch answer` (`yes` or `no`, with a reason) or in Workbench. Set `ENFUSION_SCRIPT_AUTH=all` to press Yes to All on every request, or `off` to answer only by hand. The watcher acts only on a Workbench this server started or a `wb_watch` watches |
-| Where crash logs go | When a Workbench this server started or watches crashes, that run's `crash.log`, any `.mdmp` dump, `console.log`, `error.log` and `script.log` are copied to the folder in `ENFUSION_CRASH_LOGS_DIR` (default: `Workbench Crash Logs` beside the Workbench profile folder), into a subfolder named `<date>_<time>_<PID>`. The originals stay where they are. Workbench removes older log folders when it starts again, so use the copy |
+| Workbench stops on a "Script Authorization Required" dialog | Run `wb_watch status`. In the default mode the watcher answers Yes to a script from a loaded addon on its own. A request to run a program is left open and shown with the script, the line and the command read from the script's source: answer it with `wb_watch answer` (`yes` or `no`, with a reason) or in Workbench. Set `ENFUSION_SCRIPT_AUTH=all` to press Yes to All on every request, or `off` to answer only by hand. The watcher acts on any Workbench it watches: one this server started, or one it attached to by itself or through `wb_watch start` (`ENFUSION_WB_AUTOWATCH=off` stops the automatic attach) |
+| Where crash logs go | When a Workbench the server watches crashes, that run's `crash.log`, any `.mdmp` dump, `console.log`, `error.log` and `script.log` are copied to the folder in `ENFUSION_CRASH_LOGS_DIR` (default: `Workbench Crash Logs` beside the Workbench profile folder), into a subfolder named `<date>_<time>_<PID>`. The originals stay where they are. Workbench removes older log folders when it starts again, so use the copy |
 
 ## Known limitations
 
