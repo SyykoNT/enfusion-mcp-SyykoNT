@@ -1,11 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { MCP_HOME, type Config } from "../../src/config.js";
+import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../../src/config.js";
 import { registerServer, unpack } from "../../src/tools/server.js";
+import { spawnDetached } from "../../src/utils/process.js";
+
+// The downloads folder moves to a temp path that does not exist yet, so start creating it is visible and the real home stays untouched.
+vi.mock("../../src/config.js", async (importActual) => {
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  return { ...(await importActual<typeof import("../../src/config.js")>()), SERVER_DOWNLOAD_DIR: join(tmpdir(), `emcp-srv-dl-${process.pid}-${Date.now()}`) };
+});
 
 // No real process is started or queried: start "spawns" a fake PID that is already gone.
 vi.mock("../../src/utils/process.js", async (importActual) => ({
@@ -128,5 +136,40 @@ describe("server start ports", () => {
     writeFileSync(join(cfg.serverProfilePath, "server.json"), JSON.stringify({ bindPort: 2402, game: {} }));
     const t = (await h({ action: "start" })).content[0].text;
     expect(t).toContain("connect=127.0.0.1:2402");
+  });
+
+  it("refuses the flags the tool sets, and the Workshop repair switches, in extraArgs; nothing is spawned (B-046)", async () => {
+    vi.mocked(spawnDetached).mockClear();
+    const forms = ["-config", "-server", "-addonsDir", "-addons", "-addr", "-addonsRepair", "-addonsVerify",
+      "-CONFIG", "--Server", "/addonsdir", "-ADDONS=x", "-addr:127.0.0.1:1", "-ADDONSREPAIR", "–addonsVerify", "​-addonsRepair"];
+    for (const form of forms) {
+      const r = await h({ action: "start", extraArgs: [form, "x"] });
+      expect(r.isError, form).toBe(true);
+      expect(r.content[0].text, form).toContain("extraArgs may not contain");
+      expect(r.content[0].text, form).toMatch(/-config or -server, -addr, -addonsDir, -addons and -addonDownloadDir/);
+    }
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it("-config mode and -server mode both pass -addonDownloadDir with the downloads folder, and create it (B-046)", async () => {
+    mkdirSync(cfg.serverProfilePath, { recursive: true });
+    writeFileSync(join(cfg.serverProfilePath, "server.json"), JSON.stringify({ bindPort: 2402, game: {} }));
+    const starts: Record<string, unknown>[] = [{ action: "start" }, { action: "start", addons: ["TestAddon"], scenarioId: "{ECC61978EDCC2B5A}Missions/23_Campaign.conf" }];
+    for (const start of starts) {
+      rmSync(SERVER_DOWNLOAD_DIR, { recursive: true, force: true });
+      vi.mocked(spawnDetached).mockClear();
+      await h(start); // the stub server "exits early", so the reply is an error either way
+      const argv = vi.mocked(spawnDetached).mock.calls[0][1];
+      expect(argv[argv.indexOf("-addonDownloadDir") + 1]).toBe(SERVER_DOWNLOAD_DIR);
+      expect(argv).toContain(start.addons ? "-server" : "-config");
+      expect(existsSync(SERVER_DOWNLOAD_DIR)).toBe(true);
+    }
+  });
+
+  it("the description sends Mission Header runs to mission_server; extraArgs names the refusals (B-046)", () => {
+    let def!: { description: string; inputSchema: { extraArgs: { description?: string } } };
+    registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, cfg);
+    expect(def.description).toContain("For a mission on unpacked addons that needs its Mission Header, use mission_server; `server` runs packed builds or a server.json.");
+    expect(def.inputSchema.extraArgs.description).toMatch(/Refused: -config, -server, -addr, -addonsDir, -addons .*-addonsRepair, -addonsVerify/);
   });
 });

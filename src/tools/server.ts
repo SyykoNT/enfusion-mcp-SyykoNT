@@ -3,7 +3,7 @@ import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { MCP_HOME, type Config } from "../config.js";
+import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../config.js";
 import { generateServerConfig, validateAgainstSchema } from "../templates/server-config.js";
 import { gameGuidMap } from "../pak/rdb.js";
 import { baseReader } from "./config-override.js";
@@ -22,6 +22,9 @@ const STEAMCMD_EXE = IS_WIN ? "steamcmd.exe" : "steamcmd.sh";
 const STEAMCMD_URL = IS_WIN
   ? "https://steamcdn-media.akamaihd.net/client/installer/steamcmd.zip"
   : "https://steamcdn-media.akamaihd.net/client/installer/steamcmd_linux.tar.gz";
+
+// Flags the tool sets itself, plus the Workshop repair and verify switches; extraArgs may not carry them.
+const OWN_FLAGS = /^-(config|server|addonsdir|addons|addr|addonsrepair|addonsverify)$/i;
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
 
@@ -115,7 +118,8 @@ export function registerServer(server: McpServer, config: Config): void {
         "Run an Arma Reforger dedicated server locally for testing mods: 'install'/'update' (SteamCMD, anonymous, app 1874900; " +
         "downloads SteamCMD itself), 'config' (write server.json from options, validated against the game's own schema), " +
         "'validate' (check any server.json), 'start' (with local packed addons and/or Workshop mods), 'stop', 'status', " +
-        "'logs' (tail / errors only), 'scenarios' (all scenario IDs of the game).",
+        "'logs' (tail / errors only), 'scenarios' (all scenario IDs of the game). " +
+        "For a mission on unpacked addons that needs its Mission Header, use mission_server; `server` runs packed builds or a server.json.",
       inputSchema: {
         action: z.enum(["install", "update", "config", "validate", "start", "stop", "status", "logs", "scenarios"]),
         configPath: z.string().optional().describe("(start/validate/config) server.json path. Default <serverProfilePath>/server.json. config/start replace only that default; any other path must not exist yet"),
@@ -138,7 +142,7 @@ export function registerServer(server: McpServer, config: Config): void {
         // start options
         addons: z.array(z.string()).optional()
           .describe("(start) Local addon folder names to load from their packed build (run `mod` build first)"),
-        extraArgs: z.array(z.string()).optional().describe("(start) Extra server CLI args, e.g. ['-maxFPS','60']"),
+        extraArgs: z.array(z.string()).optional().describe("(start) Extra server CLI args, e.g. ['-maxFPS','60']. Refused: -config, -server, -addr, -addonsDir, -addons (the tool sets them), -addonsRepair, -addonsVerify, and write-path flags such as -profile and -addonDownloadDir"),
         // stop/logs
         force: z.boolean().optional().describe("(stop) Kill at once instead of asking first. Still only servers this MCP started"),
         instance: z.string().optional().describe("(stop) Instance name; default all servers this MCP started (the single instance is 'default')"),
@@ -214,8 +218,8 @@ export function registerServer(server: McpServer, config: Config): void {
         }
 
         if (a.action === "start") {
-          const badArg = refusedArg(a.extraArgs ?? []);
-          if (badArg) return text(`extraArgs may not contain ${badArg}: write-path flags (-profile, -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg) and quotes are refused.`, true);
+          const badArg = refusedArg(a.extraArgs ?? [], OWN_FLAGS);
+          if (badArg) return text(`extraArgs may not contain ${badArg}: the tool sets -config or -server, -addr, -addonsDir, -addons and -addonDownloadDir itself; -addonsRepair, -addonsVerify, write-path flags (-profile, -logsDir, -addonTempDir, -saveDir, -cfg) and quotes are refused.`, true);
           if (!existsSync(exe)) return text(`Dedicated server not installed at ${config.serverPath}. Run \`server install\` first (or set ENFUSION_SERVER_PATH).`, true);
           // Every MCP session defaults to the same profile folder, so a server there from any session would be clobbered.
           const busy = scan(serverProcesses()).filter((e) => e.cls === "own" || sameDir(argValue(e.proc.cmd, "-profile"), config.serverProfilePath));
@@ -246,8 +250,10 @@ export function registerServer(server: McpServer, config: Config): void {
           } else {
             args.unshift("-config", cfgPath);
           }
-          args.push(...(a.extraArgs ?? []));
+          // Workshop mods a -config server downloads go to the MCP's own folder, not the game's Workshop cache.
+          args.push("-addonDownloadDir", SERVER_DOWNLOAD_DIR, ...(a.extraArgs ?? []));
           mkdirSync(config.serverProfilePath, { recursive: true });
+          mkdirSync(SERVER_DOWNLOAD_DIR, { recursive: true });
           const started = Date.now();
           // The Diag server matches the Diag client that `game launch` uses to connect (the server rejects a dev/retail mix).
           const diagExe = join(config.serverPath, SERVER_DIAG_EXE);

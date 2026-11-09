@@ -45,6 +45,7 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
 }));
 
 const { planRun, serverArgs, peerArgs, checkExtra, cpuMasks, peerProblems, playersConnected, registerMissionServer, MISSION_ROOT } = await import("../../src/tools/mission-server.js");
+const { SERVER_DOWNLOAD_DIR } = await import("../../src/config.js");
 const { INSTANCE_FILE, OWNER } = await import("../../src/utils/instances.js");
 const { registerServer } = await import("../../src/tools/server.js");
 const { registerGame } = await import("../../src/tools/game.js");
@@ -91,7 +92,7 @@ describe("mission_server run plan and command lines", () => {
     const profile = join(MISSION_ROOT, "2521", "server");
     expect(serverArgs(run, profile, ["-jobsysShortWorkerCount", "2"])).toEqual([
       "-gproj", join(t.dir, "addon.gproj"), "-server", "{1234567890ABCDEF}Missions/Map/Me_1102_TVT1_Test.conf",
-      "-addonsDir", t.root, "-addons", "TestMission", "-addr", "127.0.0.1:2521", "-profile", profile, "-nothrow", "-maxFPS", "60", "-disableCrashReporter", "-jobsysShortWorkerCount", "2",
+      "-addonsDir", t.root, "-addons", "TestMission", "-addr", "127.0.0.1:2521", "-profile", profile, "-nothrow", "-maxFPS", "60", "-disableCrashReporter", "-addonDownloadDir", SERVER_DOWNLOAD_DIR, "-jobsysShortWorkerCount", "2",
     ]);
     const peer = peerArgs(run, join(MISSION_ROOT, "2521", "peer1"));
     expect(peer.slice(peer.indexOf("-client"), peer.indexOf("-client") + 2)).toEqual(["-client", "127.0.0.1:2521"]);
@@ -119,6 +120,22 @@ describe("mission_server run plan and command lines", () => {
     expect(checkExtra(["-jobsysShortWorkerCount", "2"])).toBeUndefined();
     expect(checkExtra(["-PROFILE", "x"])).toMatch(/may not contain -PROFILE/);
     expect(checkExtra(['-x "y'])).toMatch(/may not contain/);
+  });
+});
+
+describe("mission_server never points a server at the Workshop cache (B-046)", () => {
+  it("refuses -config, -addonsDir, -addonsRepair and -addonsVerify in extraArgs, in any spelling", () => {
+    for (const bad of ["-config", "-addonsDir", "-addonsRepair", "-addonsVerify", "-ADDONSREPAIR", "--addonsVerify", "/addonsRepair", "-addonsVerify=1", "–addonsRepair"]) {
+      expect(checkExtra([bad])).toMatch(/may not contain/);
+    }
+    expect(checkExtra(["-addonsRepair"])).toContain("-addonsRepair or -addonsVerify");
+  });
+
+  it("serverArgs passes -addonDownloadDir with the MCP's downloads folder; peerArgs does not", () => {
+    const run = { port: 2521, gproj: "g.gproj", world: "w.ent", addonsDirs: ["a"], addons: ["x"] };
+    const server = serverArgs(run, "p");
+    expect(server[server.indexOf("-addonDownloadDir") + 1]).toBe(SERVER_DOWNLOAD_DIR);
+    expect(peerArgs(run, "p")).not.toContain("-addonDownloadDir");
   });
 });
 

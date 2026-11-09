@@ -3,7 +3,7 @@ import { z } from "zod";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism, freemem } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { MCP_HOME, type Config } from "../config.js";
+import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
 import { readGproj } from "../workbench/cli.js";
 import { DISABLE_CRASH_REPORTER, argValue, clientProcesses, isAlive, killPids, limitProcess, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
@@ -71,7 +71,7 @@ export function peerProblems(counted: number, peers: PeerState[], serverLog = "E
   return out;
 }
 // Flags the tool sets itself; extraArgs may not override them.
-const OWN_FLAGS = /^-(profile|addr|addonsdir|addons|server|client|gproj|config|missionheader|bindport)$/i;
+const OWN_FLAGS = /^-(profile|addr|addonsdir|addons|server|client|gproj|config|missionheader|bindport|addonsrepair|addonsverify)$/i;
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
 
@@ -113,7 +113,7 @@ export function serverArgs(r: Run, profile: string, extra: string[] = []): strin
   return [
     "-gproj", r.gproj, "-server", r.header ?? r.world,
     "-addonsDir", r.addonsDirs.join(","), "-addons", r.addons.join(","),
-    "-addr", `127.0.0.1:${r.port}`, "-profile", profile, "-nothrow", "-maxFPS", "60", DISABLE_CRASH_REPORTER, ...extra,
+    "-addr", `127.0.0.1:${r.port}`, "-profile", profile, "-nothrow", "-maxFPS", "60", DISABLE_CRASH_REPORTER, "-addonDownloadDir", SERVER_DOWNLOAD_DIR, ...extra,
   ];
 }
 
@@ -163,7 +163,7 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addo
 export function checkExtra(extra: string[]): string | undefined {
   const bad = refusedArg(extra, OWN_FLAGS);
   return bad
-    ? `extraArgs may not contain ${bad} (the tool sets -profile, -addr, -addonsDir, -addons, -server, -client, -gproj itself; no write-path flags such as -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg; no quotes)`
+    ? `extraArgs may not contain ${bad} (the tool sets -profile, -addr, -addonsDir, -addons, -server, -client, -gproj itself; no -addonsRepair or -addonsVerify; no write-path flags such as -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg; no quotes)`
     : undefined;
 }
 
@@ -292,6 +292,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
 
           const profile = join(portDir(port), "server");
           mkdirSync(profile, { recursive: true });
+          mkdirSync(SERVER_DOWNLOAD_DIR, { recursive: true });
           const args = serverArgs(run, profile, a.extraArgs);
           const started = Date.now();
           const pid = spawnDetached(exe, args, config.serverPath);

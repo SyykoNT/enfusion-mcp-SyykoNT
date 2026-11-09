@@ -83,6 +83,9 @@ const DEFAULT_WORKBENCH_PATH =
 
 export const MCP_HOME = join(homedir(), ".enfusion-mcp");
 
+/** Every dedicated server the MCP starts downloads Workshop mods here (-addonDownloadDir), never into the game's Workshop cache. */
+export const SERVER_DOWNLOAD_DIR = join(MCP_HOME, "server-downloads");
+
 const STEAM_SERVER_PATH = resolve(DEFAULT_WORKBENCH_PATH, "..", "Arma Reforger Server");
 
 const DEFAULTS: Config = {
