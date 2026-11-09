@@ -10,11 +10,11 @@ import { baseReader } from "./config-override.js";
 import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { protectedAddonOf } from "../utils/game-paths.js";
-import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
+import { findPids, killPids, limitProcess, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
 import { fenced, runErrors } from "../utils/logwatch.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
 import { procWatchLines } from "../watchdog/proc-watch.js";
-import { MISSION_ROOT, watchStarted } from "./mission-server.js";
+import { MISSION_ROOT, coreError, parseHexMask, watchStarted } from "./mission-server.js";
 
 const IS_WIN = process.platform === "win32";
 const SERVER_APP_ID = "1874900"; // Arma Reforger Dedicated Server (anonymous login)
@@ -122,6 +122,7 @@ export function registerServer(server: McpServer, config: Config): void {
         "'validate' (check any server.json), 'start' (with local packed addons and/or Workshop mods), 'stop', 'status', " +
         "'logs' (tail / errors only), 'scenarios' (all scenario IDs of the game). " +
         "Every server it starts runs with -noThrow (no error dialogs), and the start and status replies report the run's script exceptions (VM exceptions) and crash.log. " +
+        "start takes an optional hex cpuMask that pins the server to those cores at BelowNormal priority; the server is stopped if that fails. " +
         "On Windows a watcher is started for every server it starts: if a VM exception window stays open on it, that process (and only that one) is ended and its logs are saved; the status reply shows what the watcher did. " +
         "For a mission on unpacked addons that needs its Mission Header, use mission_server; `server` runs packed builds or a server.json.",
       inputSchema: {
@@ -146,6 +147,7 @@ export function registerServer(server: McpServer, config: Config): void {
         // start options
         addons: z.array(z.string()).optional()
           .describe("(start) Local addon folder names to load from their packed build (run `mod` build first)"),
+        cpuMask: z.string().optional().describe("(start) Hex CPU mask for the server, e.g. 0x3000: it runs on those cores at BelowNormal priority. Refused when it is not hex, is zero or names a core this PC does not have"),
         extraArgs: z.array(z.string()).optional().describe("(start) Extra server CLI args, e.g. ['-maxFPS','60']. Refused: -config, -server, -addr, -addonsDir, -addons (the tool sets them), -addonsRepair, -addonsVerify, and write-path flags such as -profile and -addonDownloadDir"),
         // stop/logs
         force: z.boolean().optional().describe("(stop) Kill at once instead of asking first. Still only servers this MCP started"),
@@ -194,6 +196,13 @@ export function registerServer(server: McpServer, config: Config): void {
           try { json = JSON.parse(readFileSync(cfgPath, "utf-8")); } catch (e) { return text(`Invalid JSON: ${e}`, true); }
           const errs = validateAgainstSchema(json, schema);
           return text(errs.length ? `**${errs.length} problem(s)** in ${cfgPath}\n\n${errs.map((e) => `- ${e}`).join("\n")}` : `**Valid**: ${cfgPath} matches the server schema.`, errs.length > 0);
+        }
+
+        // Before server.json is written or anything is spawned.
+        const pin = a.action === "start" && a.cpuMask !== undefined ? parseHexMask(a.cpuMask) : undefined;
+        if (pin !== undefined) {
+          const bad = pin ? coreError("cpuMask", pin) : "cpuMask must be given as a hex mask, for example 0x3000";
+          if (bad) return text(bad, true);
         }
 
         if (a.action === "config" || (a.action === "start" && (a.name || a.scenarioId || !existsSync(cfgPath)))) {
@@ -269,12 +278,21 @@ export function registerServer(server: McpServer, config: Config): void {
             startedAt: started, exe: runExe, port, profileDir: config.serverProfilePath,
           });
           watchStarted({ pid, kind: "server", instance, logsRoot: serverLogsDir(config) }, config);
+          if (pin && !limitProcess(pid, pin)) {
+            // Only this server's PID: it would otherwise run on all cores next to the other lanes.
+            killPids([pid], true, true);
+            for (let i = 0; i < 20 && isAlive(pid); i++) await sleep(500);
+            const gone = !isAlive(pid);
+            if (gone) rmSync(instance, { force: true });
+            return text(`**Server stopped**: cpuMask 0x${pin.toString(16)} could not be applied to server PID ${pid}.${gone ? "" : ` It is still running: server stop.`}`, true);
+          }
           await sleep(8000);
           const logDir = newestDir(serverLogsDir(config), started - 5000);
           const alive = isAlive(pid);
           const errors = logDir ? runErrors(logDir) : "";
           return text(
             `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
+            (pin ? `CPU: cpuMask 0x${pin.toString(16)} applied, BelowNormal\n` : "") +
             (logDir ? `Logs: ${logDir}\n\n${fenced(tail(join(logDir, "console.log"), 25))}` : "") +
             (errors && `\n\n${errors}`) +
             `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${port} (and the same local addons).${note}`,

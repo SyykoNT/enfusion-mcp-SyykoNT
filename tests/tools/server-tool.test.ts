@@ -7,7 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { crashLogsDir } from "../../src/workbench/cli.js";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../../src/config.js";
 import { registerServer, unpack } from "../../src/tools/server.js";
-import { isAlive, serverProcesses, spawnDetached } from "../../src/utils/process.js";
+import { isAlive, killPids, limitProcess, serverProcesses, spawnDetached } from "../../src/utils/process.js";
 import { INSTANCE_FILE, OWNER } from "../../src/utils/instances.js";
 import { PROC_WATCH_DIR } from "../../src/watchdog/proc-watch.js";
 import { MISSION_ROOT } from "../../src/tools/mission-server.js";
@@ -43,6 +43,13 @@ vi.mock("../../src/config.js", async (importActual) => {
   return { ...(await importActual<typeof import("../../src/config.js")>()), SERVER_DOWNLOAD_DIR: join(tmpdir(), `emcp-srv-dl-${process.pid}-${Date.now()}`) };
 });
 
+// A 16-core PC, so the cpuMask core check does not depend on the machine running the suite.
+vi.mock("node:os", async (orig) => {
+  const actual = await orig<typeof import("node:os")>();
+  const stubs = { availableParallelism: () => 16 };
+  return { ...actual, ...stubs, default: { ...actual, ...stubs } };
+});
+
 // No real process is started or queried: start "spawns" a fake PID that is already gone.
 vi.mock("../../src/utils/process.js", async (importActual) => ({
   ...(await importActual<typeof import("../../src/utils/process.js")>()),
@@ -51,6 +58,8 @@ vi.mock("../../src/utils/process.js", async (importActual) => ({
   findPids: vi.fn(() => []),
   isAlive: vi.fn(() => false),
   sleep: vi.fn(async () => {}),
+  limitProcess: vi.fn(() => true),
+  killPids: vi.fn(),
 }));
 
 const root = mkdtempSync(join(tmpdir(), "emcp-srv-"));
@@ -441,5 +450,81 @@ describe("server status: the process watcher states", () => {
     let def!: { description: string };
     registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config);
     expect(def.description).toMatch(/VM exception window stays open on it, that process \(and only that one\) is ended and its logs are saved/);
+  });
+});
+
+describe("server start: cpuMask", () => {
+  const cfg = { ...config, serverPath: join(root, "cpu-srv"), serverProfilePath: join(root, "cpu-prof"), packedPath: join(root, "cpu-packed") } as Config;
+  mkdirSync(cfg.serverPath, { recursive: true });
+  writeFileSync(join(cfg.serverPath, process.platform === "win32" ? "ArmaReforgerServer.exe" : "ArmaReforgerServer"), "");
+  let h!: Handler;
+  registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, cfg);
+  const instanceFile = join(cfg.serverProfilePath, INSTANCE_FILE);
+  beforeEach(() => {
+    vi.mocked(spawnDetached).mockClear();
+    vi.mocked(limitProcess).mockClear();
+    vi.mocked(limitProcess).mockImplementation(() => true);
+    vi.mocked(killPids).mockClear();
+    rmSync(cfg.serverProfilePath, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    vi.mocked(isAlive).mockImplementation(() => false);
+    rmSync(PROC_WATCH_DIR, { recursive: true, force: true });
+  });
+
+  it("applies the mask and BelowNormal to the server PID and says so", async () => {
+    const r = await h({ action: "start", cpuMask: "0x3000" });
+    expect(limitProcess).toHaveBeenCalledTimes(1);
+    expect(limitProcess).toHaveBeenCalledWith(424242, 0x3000);
+    expect(r.content[0].text).toContain("CPU: cpuMask 0x3000 applied, BelowNormal");
+    expect(killPids).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["not hex", "nonsense", /^cpuMask must be given as a hex mask, for example 0x3000$/],
+    ["zero", "0x0", /^cpuMask must be given as a hex mask/],
+    ["empty", "", /^cpuMask must be given as a hex mask/],
+    ["a core this PC lacks", "0x30000", /^cpuMask 0x30000 names core 17, but this PC has 16 logical cores \(0 to 15\)$/],
+  ])("refuses %s before anything is written or spawned", async (_why, cpuMask, msg) => {
+    const r = await h({ action: "start", cpuMask, name: "X" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(msg);
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(limitProcess).not.toHaveBeenCalled();
+    expect(existsSync(join(cfg.serverProfilePath, "server.json"))).toBe(false);
+  });
+
+  it("stops only the server's PID and returns an error when the mask cannot be applied", async () => {
+    vi.mocked(limitProcess).mockImplementation(() => false);
+    const r = await h({ action: "start", cpuMask: "0x3000" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe("**Server stopped**: cpuMask 0x3000 could not be applied to server PID 424242.");
+    expect(killPids).toHaveBeenCalledTimes(1);
+    expect(killPids).toHaveBeenCalledWith([424242], true, true);
+    expect(existsSync(instanceFile)).toBe(false);
+  });
+
+  it("says the server is still running, and keeps its instance file, when the kill did not end it", async () => {
+    vi.mocked(limitProcess).mockImplementation(() => false);
+    vi.mocked(isAlive).mockImplementation(() => true);
+    const r = await h({ action: "start", cpuMask: "0x3000" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("It is still running: server stop.");
+    expect(existsSync(instanceFile)).toBe(true);
+  });
+
+  it("without cpuMask nothing is applied, killed or added to the reply", async () => {
+    const r = await h({ action: "start" });
+    expect(limitProcess).not.toHaveBeenCalled();
+    expect(killPids).not.toHaveBeenCalled();
+    expect(r.content[0].text).not.toContain("CPU:");
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it("the description and the cpuMask parameter say what it does", () => {
+    let def!: { description: string; inputSchema: { cpuMask: { description?: string } } };
+    registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, cfg);
+    expect(def.description).toContain("start takes an optional hex cpuMask that pins the server to those cores at BelowNormal priority; the server is stopped if that fails.");
+    expect(def.inputSchema.cpuMask.description).toMatch(/Hex CPU mask for the server, e\.g\. 0x3000.*BelowNormal.*Refused when it is not hex, is zero or names a core this PC does not have/);
   });
 });

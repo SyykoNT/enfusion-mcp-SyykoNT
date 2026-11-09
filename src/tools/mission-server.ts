@@ -90,20 +90,27 @@ export interface Run {
   cpu?: { server: number; client: number };
 }
 
+/** A hex CPU mask ("0x3000") as a number, 0 when the text is not one. shortcut: 32-bit masks only, so no cores above 31. */
+export const parseHexMask = (v?: string) => (v && /^(0x)?[0-9a-f]{1,8}$/i.test(v) ? parseInt(v.replace(/^0x/i, ""), 16) : 0);
+
+/** The refusal for a mask that names a core this PC lacks, or undefined. Such a bit makes the pin fail (0x30000 on 16 cores). */
+export function coreError(name: string, m: number, cores = availableParallelism()): string | undefined {
+  const top = 31 - Math.clz32(m);
+  return top >= cores ? `${name} 0x${m.toString(16)} names core ${top}, but this PC has ${cores} logical cores (0 to ${cores - 1})` : undefined;
+}
+
 /**
  * serverCpuMask and clientCpuMask as hex ("0x3000"): both or neither, and no shared core. Game clients on the server's cores
- * starved each other in the 2026-11-02 Boat Patrol run. shortcut: 32-bit masks only, so no cores above 31.
+ * starved each other in the 2026-11-02 Boat Patrol run.
  */
 export function cpuMasks(server?: string, client?: string, cores = availableParallelism()): Run["cpu"] | string {
   if (server === undefined && client === undefined) return undefined;
-  const parse = (v?: string) => (v && /^(0x)?[0-9a-f]{1,8}$/i.test(v) ? parseInt(v.replace(/^0x/i, ""), 16) : 0);
-  const s = parse(server);
-  const c = parse(client);
+  const s = parseHexMask(server);
+  const c = parseHexMask(client);
   if (!s || !c) return "serverCpuMask and clientCpuMask must both be given as hex masks, for example 0x3000 and 0x0C00";
-  // A bit for a core this PC lacks makes the pin fail (0x30000 on 16 cores), which would leave the clients on the server's cores.
-  for (const [name, m] of [["serverCpuMask", s], ["clientCpuMask", c]] as const) {
-    if (31 - Math.clz32(m) >= cores) return `${name} 0x${m.toString(16)} names core ${31 - Math.clz32(m)}, but this PC has ${cores} logical cores (0 to ${cores - 1})`;
-  }
+  // A pin that fails would leave the clients on the server's cores.
+  const bad = coreError("serverCpuMask", s, cores) ?? coreError("clientCpuMask", c, cores);
+  if (bad) return bad;
   if (s & c) return `clientCpuMask 0x${c.toString(16)} shares cores with serverCpuMask 0x${s.toString(16)}: game clients must run on other cores`;
   return { server: s, client: c };
 }
