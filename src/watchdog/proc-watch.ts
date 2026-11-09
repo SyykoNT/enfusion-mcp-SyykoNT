@@ -4,16 +4,16 @@
  * answers, focuses or messages a window: its only action on a process is the force end of the PID it was started for.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { classify, readInstance, type Instance } from "../utils/instances.js";
+import { classify, isUnder, readInstance, type Instance } from "../utils/instances.js";
 import { isAlive, killPids, newestDir, processInfo, sleep, spawnDetached } from "../utils/process.js";
 import { copyCrashFiles } from "./auth.js";
 import { startProbe, type ProbeSample } from "./probe.js";
 import { dialogText, isDialog, parseCrashLog, type WinInfo } from "./signals.js";
-import { claimWatch, stamp, WATCH_DIR } from "./wb-watch.js";
+import { claimWatch, hms, stamp, WATCH_DIR } from "./wb-watch.js";
 
 export const PROC_WATCH_DIR = join(WATCH_DIR, "proc");
 const SELF = fileURLToPath(import.meta.url);
@@ -266,6 +266,70 @@ export function startProcWatcher(w: StartProcWatcher, spawn: typeof spawnDetache
   ];
   if (w.crashDir) args.push("--crash-dir", w.crashDir);
   return spawn(process.execPath, args, dirname(SELF), join(stateDir, `${w.pid}.log`));
+}
+
+const DAY_MS = 24 * 3600_000;
+const SHOWN = new Set<ProcWatchStateName>(["blocked_dialog", "ending_vme", "ended_vme", "end_failed"]);
+const FINAL = new Set<ProcWatchStateName>(["ended_vme", "end_failed"]);
+
+export interface ProcWatchQuery {
+  /** Only states whose instance file lies under this folder (the tool's own root). */
+  root: string;
+  /** Only these PIDs, from states written at or after `since`. */
+  pids?: number[];
+  since?: number;
+  /** Only ended_vme and end_failed. */
+  final?: boolean;
+  dir?: string;
+  now?: number;
+  alive?: (pid: number) => boolean;
+}
+
+const oneLine = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 200) : "");
+
+/**
+ * Report lines for the tools' status and exit replies: the watcher states of the last 24 h whose instance file lies under `root`.
+ * A state written by an earlier MCP process counts. blocked_dialog and ending_vme are shown only while their watcher lives (a dead
+ * watcher leaves its last word on disk), ended_vme and end_failed stay. The files are not ours to trust: a field of the wrong type drops the state.
+ */
+export function procWatchLines(q: ProcWatchQuery): string[] {
+  const dir = q.dir ?? PROC_WATCH_DIR;
+  const now = q.now ?? Date.now();
+  const alive = q.alive ?? isAlive;
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir).filter((n) => /^\d+_-?\d+\.json$/.test(n));
+  } catch {
+    // no watcher has run yet
+  }
+  const found: ProcWatchState[] = [];
+  for (const n of names) {
+    let s: ProcWatchState;
+    try {
+      s = JSON.parse(readFileSync(join(dir, n), "utf-8"));
+    } catch {
+      continue;
+    }
+    const ok = !!s && typeof s === "object" && SHOWN.has(s.state) && Number.isSafeInteger(s.pid) && s.pid > 0 && Number.isSafeInteger(s.watcherPid) && s.watcherPid > 0
+      && (s.kind === "server" || s.kind === "client") && typeof s.instance === "string" && isAbsolute(s.instance) && Number.isFinite(s.updated);
+    // Written as "not within" so a missing or NaN time drops the state too.
+    if (!ok || !(now - s.updated <= DAY_MS) || !isUnder(s.instance, q.root)) continue;
+    if (q.pids && !q.pids.includes(s.pid)) continue;
+    if (q.since !== undefined && !(s.updated >= q.since)) continue;
+    if (!FINAL.has(s.state) && (q.final || !alive(s.watcherPid))) continue;
+    found.push(s);
+  }
+  return found.sort((a, b) => a.updated - b.updated).map((s) => {
+    const title = oneLine(s.dialog?.title);
+    const what = {
+      blocked_dialog: `blocked by a dialog${title ? ` "${title}"` : ""}${s.why ? `, ${oneLine(s.why)}` : ", left open"}`,
+      ending_vme: `ending it: a VM exception window${title ? ` "${title}"` : ""} stayed open`,
+      ended_vme: `ended after a VM exception window${title ? ` "${title}"` : ""} stayed open${s.reason ? `; reason: ${oneLine(s.reason)}` : ""}`,
+      end_failed: `could not be ended after a VM exception window stayed open`,
+    }[s.state as "blocked_dialog" | "ending_vme" | "ended_vme" | "end_failed"];
+    const kept = s.saved ? `; logs saved to ${oneLine(s.saved)}` : s.note ? `; ${oneLine(s.note)}` : "";
+    return `- Process watcher, ${s.kind} PID ${s.pid}, ${hms(s.updated)}: ${what}${kept}`;
+  });
 }
 
 async function main(argv: string[]): Promise<number> {

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -20,7 +20,22 @@ const sys = vi.hoisted(() => ({
   failPins: new Set<number>(),
   freeBytes: 64 * 2 ** 30,
   cores: 16,
+  /** Every sleep(500) is one poll of the wait after an exit; onPoll runs inside it with the poll's number. */
+  polls: 0,
+  onPoll: undefined as undefined | ((n: number) => void),
+  // The real startProcWatcher runs with this spawn: it records the watcher's argv and starts nothing.
+  watcherSpawns: [] as { args: string[]; instanceThere: boolean }[],
+  platform: "win32",
 }));
+vi.mock("../../src/watchdog/proc-watch.js", async (importActual) => {
+  const actual = await importActual<typeof import("../../src/watchdog/proc-watch.js")>();
+  const fs = await import("node:fs");
+  return {
+    ...actual,
+    startProcWatcher: (w: Parameters<typeof actual.startProcWatcher>[0], spawn?: Parameters<typeof actual.startProcWatcher>[1], platform?: string) =>
+      actual.startProcWatcher(w, spawn ?? ((_exe, args) => (sys.watcherSpawns.push({ args, instanceThere: fs.existsSync(w.instance) }), 7777)), platform ?? sys.platform),
+  };
+});
 // Free RAM is a stub; the rest of node:os (tmpdir, homedir) is real.
 vi.mock("node:os", async (orig) => {
   const actual = await orig<typeof import("node:os")>();
@@ -41,11 +56,17 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
     return pid;
   },
   limitProcess: (pid: number, mask: number) => (sys.limited.push([pid, mask]), !sys.failPins.has(pid)),
-  sleep: async () => {},
+  sleep: async (ms: number) => {
+    if (ms === 500) {
+      sys.polls++;
+      sys.onPoll?.(sys.polls);
+    }
+  },
 }));
 
 const { planRun, serverArgs, peerArgs, checkExtra, cpuMasks, peerProblems, playersConnected, registerMissionServer, MISSION_ROOT } = await import("../../src/tools/mission-server.js");
 const { SERVER_DOWNLOAD_DIR } = await import("../../src/config.js");
+const { PROC_WATCH_DIR } = await import("../../src/watchdog/proc-watch.js");
 const { INSTANCE_FILE, OWNER } = await import("../../src/utils/instances.js");
 const { registerServer } = await import("../../src/tools/server.js");
 const { registerGame } = await import("../../src/tools/game.js");
@@ -115,7 +136,12 @@ beforeEach(() => {
   sys.failPins = new Set();
   sys.freeBytes = 64 * 2 ** 30;
   sys.cores = 16;
+  sys.polls = 0;
+  sys.onPoll = undefined;
+  sys.watcherSpawns = [];
+  sys.platform = "win32";
 });
+afterEach(() => rmSync(PROC_WATCH_DIR, { recursive: true, force: true }));
 
 describe("mission_server run plan and command lines", () => {
   it("builds the server and peer command lines: header as -server {GUID}path, our port, absolute profiles", () => {
@@ -688,6 +714,338 @@ describe("-noThrow on every process the tools start, and the script error report
       let def!: { description: string };
       register({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config(home));
       expect(def.description, tool).toMatch(/-noThrow.*script exceptions/);
+    }
+  });
+});
+
+describe("mission_server: the process watcher", () => {
+  const arg = (args: string[], name: string) => args[args.indexOf(name) + 1];
+  const exes = () => {
+    writeFileSync(join(home, "ArmaReforgerServerDiag.exe"), "");
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+  };
+  /** The watcher the tool started for `pid`: its argv names the PID, the kind, the instance file, this MCP and the logs root. */
+  const expectWatcher = async (w: { args: string[]; instanceThere: boolean }, pid: number, kind: string, instance: string, logsRoot: string) => {
+    expect(w.instanceThere, "the instance file is written before the watcher starts").toBe(true);
+    expect([arg(w.args, "--pid"), arg(w.args, "--kind"), arg(w.args, "--instance"), arg(w.args, "--owner-pid"), arg(w.args, "--owner-started"), arg(w.args, "--logs-root"), arg(w.args, "--state-dir")])
+      .toEqual([String(pid), kind, instance, String(OWNER.pid), String(OWNER.startedAt), logsRoot, PROC_WATCH_DIR]);
+    const { crashLogsDir } = await import("../../src/workbench/cli.js");
+    expect(w.args.includes("--crash-dir") ? arg(w.args, "--crash-dir") : undefined).toBe(crashLogsDir(config(home)));
+  };
+  /** A server that writes its log (online, or `online=false`: loading only) and shows as a process; each peer shows as a process and is counted by the server. */
+  function stubs(o: { online?: boolean; serverExits?: boolean; peerExits?: boolean } = {}) {
+    let serverLog = "";
+    let peers = 0;
+    sys.onSpawn = (args, pid) => {
+      const profile = args[args.indexOf("-profile") + 1];
+      const proc = { pid, ppid: 1, cmd: `x.exe -profile "${profile}"`, created: Date.now() };
+      if (args.includes("-server")) {
+        serverLog = join(profile, "logs", "logs_x", "console.log");
+        mkdirSync(dirname(serverLog), { recursive: true });
+        writeFileSync(serverLog, o.online === false ? "00:00:01.000 ENGINE       : loading\r\n" : "00:00:01.000 DEFAULT      : Entered online game state.\r\n");
+        sys.servers.push(proc);
+        if (o.serverExits) sys.killed.push(pid);
+      } else {
+        sys.clients.push(proc);
+        appendFileSync(serverLog, `00:00:09.000   NETWORK      : Players connected: ${++peers} / ${peers}\r\n`);
+        if (o.peerExits) sys.killed.push(pid);
+      }
+    };
+  }
+  const ready = { timeoutSec: 10, joinTimeoutSec: 2 };
+
+  it("start and join start one watcher for the server and one for each peer, with that PID, instance file, this MCP, the logs root and the kind", async () => {
+    exes();
+    const t = addon();
+    sys.pids = [801, 802, 803];
+    stubs();
+    const tool = handler2(config(home));
+    const r = await tool({ action: "start", world: t.world, port: 2581, peers: 1, addonsDirs: [t.root], ...ready });
+    expect(r.isError).toBeUndefined();
+    const dir = join(MISSION_ROOT, "2581");
+    expect(sys.watcherSpawns).toHaveLength(2);
+    await expectWatcher(sys.watcherSpawns[0], 801, "server", join(dir, "server", INSTANCE_FILE), join(dir, "server", "logs"));
+    await expectWatcher(sys.watcherSpawns[1], 802, "client", join(dir, "peer1", INSTANCE_FILE), join(dir, "peer1", "logs"));
+    const j = await tool({ action: "join", port: 2581, joinTimeoutSec: 2 });
+    expect(j.content[0].text).toContain("**Peer 2 joined** (PID 803)");
+    expect(sys.watcherSpawns).toHaveLength(3);
+    await expectWatcher(sys.watcherSpawns[2], 803, "client", join(dir, "peer2", INSTANCE_FILE), join(dir, "peer2", "logs"));
+    expect(sys.spawned).toHaveLength(3); // the watchers do not go through the process spawn the tool uses
+  });
+
+  it("starts none for a start that is refused or fails before the instance file is written", async () => {
+    exes();
+    const t = addon();
+    const same = addon(); // a second copy of the same addon GUID
+    const own = (pid: number, dir: string) => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, INSTANCE_FILE), JSON.stringify({ kind: "server", name: "s", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: Date.now(), exe: "x" }));
+      return { pid, ppid: 1, cmd: `x.exe -profile "${dir}"`, created: Date.now() };
+    };
+    sys.servers = [{ pid: 4242, ppid: 1, cmd: "ArmaReforgerServerDiag.exe -addr 127.0.0.1:2582 -profile C:\\other", created: 0 }, own(705, join(MISSION_ROOT, "2583", "server"))];
+    const go = (port: number, extra: Record<string, unknown> = {}, c = config(home)) =>
+      handler2(c)({ action: "start", world: t.world, port, peers: 0, addonsDirs: [t.root], timeoutSec: 10, ...extra });
+    const refused: [string, () => Promise<Result>][] = [
+      ["bad world", () => handler2(config(home))({ action: "start", world: "relative.ent", port: 2584 })],
+      ["extraArgs", () => go(2585, { extraArgs: ["-profile", "x"] })],
+      ["one cpu mask", () => go(2586, { serverCpuMask: "0x3000" })],
+      ["no exe", () => go(2587, {}, { ...config(home), serverPath: join(home, "nowhere") } as Config)],
+      ["port in use", () => go(2582)],
+      ["run still running", () => go(2583)],
+      ["duplicate addon", () => go(2588, { addonsDirs: [t.root, same.root] })],
+    ];
+    for (const [why, run] of refused) expect((await run()).isError, why).toBe(true);
+    expect(sys.spawned).toEqual([]);
+    expect(sys.watcherSpawns).toEqual([]);
+  });
+
+  it("starts no watcher for a peer that is refused for RAM, only the server's", async () => {
+    exes();
+    const t = addon();
+    sys.pids = [801];
+    stubs();
+    sys.freeBytes = 3.5 * 2 ** 30;
+    const r = await handler2(config(home))({ action: "start", world: t.world, port: 2589, peers: 1, addonsDirs: [t.root], ...ready });
+    expect(r.content[0].text).toContain("a peer could not start: Not enough free RAM");
+    expect(sys.watcherSpawns.map((w) => arg(w.args, "--kind"))).toEqual(["server"]);
+  });
+
+  it("starts none when the server's instance file cannot be written, although it was spawned", async () => {
+    exes();
+    const t = addon();
+    sys.pids = [801];
+    mkdirSync(join(MISSION_ROOT, "2590", "server", INSTANCE_FILE), { recursive: true }); // a folder where the file goes
+    const r = await handler2(config(home))({ action: "start", world: t.world, port: 2590, peers: 0, addonsDirs: [t.root], timeoutSec: 10 });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("mission_server failed");
+    expect(sys.spawned).toHaveLength(1);
+    expect(sys.watcherSpawns).toEqual([]);
+  });
+
+  it("on a platform other than Windows starts no watcher and the start reply is the same", async () => {
+    exes();
+    const t = addon();
+    const reply = async (port: number) => {
+      sys.pids = [801];
+      stubs();
+      return (await handler2(config(home))({ action: "start", world: t.world, port, peers: 0, addonsDirs: [t.root], timeoutSec: 10 })).content[0].text.replaceAll(String(port), "PORT");
+    };
+    const onWindows = await reply(2591);
+    expect(sys.watcherSpawns).toHaveLength(1);
+    sys.watcherSpawns = [];
+    sys.platform = "linux";
+    sys.servers = [];
+    expect(await reply(2592)).toBe(onWindows);
+    expect(sys.watcherSpawns).toEqual([]);
+  });
+
+  it("a watcher that cannot start does not fail the start", async () => {
+    exes();
+    const t = addon();
+    sys.pids = [801];
+    stubs();
+    mkdirSync(dirname(PROC_WATCH_DIR), { recursive: true });
+    writeFileSync(PROC_WATCH_DIR, "a file where the state folder goes");
+    const r = await handler2(config(home))({ action: "start", world: t.world, port: 2593, peers: 0, addonsDirs: [t.root], timeoutSec: 10 });
+    rmSync(PROC_WATCH_DIR);
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("**Server online**");
+    expect(existsSync(join(MISSION_ROOT, "2593", "server", INSTANCE_FILE))).toBe(true);
+  });
+});
+
+/** A watcher state file as the watcher writes it, into the watch folder the tools read. */
+let stateSeq = 0;
+function putState(instance: string, over: Record<string, unknown> = {}) {
+  const s = {
+    pid: 31820, kind: "server", instance, ownerPid: 99999, watcherPid: 4242, state: "ended_vme", since: Date.now(), samples: 3, updated: Date.now(),
+    dialog: { title: "Virtual machine exception", text: "NULL pointer to instance" }, saved: "C:\\crash\\server_x", ...over,
+  };
+  mkdirSync(PROC_WATCH_DIR, { recursive: true });
+  writeFileSync(join(PROC_WATCH_DIR, `${s.pid}_${stateSeq++}.json`), JSON.stringify(s));
+}
+const HOUR = 3600_000;
+
+describe("mission_server status: the process watcher states", () => {
+  it("shows each port's states of the last 24 h under that port, and nothing from another root, port or time", async () => {
+    const tool = handler2(config(home));
+    const a = join(MISSION_ROOT, "2594", "server");
+    const b = join(MISSION_ROOT, "2595", "server");
+    mkdirSync(a, { recursive: true });
+    mkdirSync(b, { recursive: true });
+    sys.killed.push(4343); // a dead watcher
+    const now = Date.now();
+    const inst = (dir: string) => join(dir, INSTANCE_FILE);
+    // Shown on 2594: live blocked and ending states, final states with a dead watcher, another owner, 23 h old.
+    putState(inst(a), { pid: 1001, state: "blocked_dialog", why: "not ended: it was not started by this MCP session", saved: undefined });
+    putState(inst(a), { pid: 1002, state: "ending_vme" });
+    putState(inst(a), { pid: 1003, watcherPid: 4343, ownerPid: 12345 });
+    putState(inst(a), { pid: 1004, watcherPid: 4343, state: "end_failed", saved: undefined });
+    putState(inst(join(MISSION_ROOT, "2594", "peer1")), { pid: 1005, kind: "client", watcherPid: 4343, updated: now - 23 * HOUR });
+    putState(inst(b), { pid: 1006 });
+    // Not shown: 25 h old; the server tool's root; a client folder; a non-final state whose watcher is dead; watching and exited states.
+    putState(inst(a), { pid: 2001, watcherPid: 4343, updated: now - 25 * HOUR });
+    putState(join(home, ".enfusion-mcp", "server-profile", INSTANCE_FILE), { pid: 2002 });
+    putState(join(home, ".enfusion-mcp", "client-profiles", `2003.${INSTANCE_FILE}`), { pid: 2003, kind: "client" });
+    putState(inst(a), { pid: 2004, watcherPid: 4343, state: "blocked_dialog" });
+    putState(inst(a), { pid: 2005, watcherPid: 4343, state: "ending_vme" });
+    putState(inst(a), { pid: 2006, state: "watching" });
+    putState(inst(a), { pid: 2007, state: "exited" });
+    const t = (await tool({ action: "status" })).content[0].text;
+    const part = (port: number) => t.split("\n- port ").find((x) => x.startsWith(`${port}:`)) ?? "";
+    for (const pid of [1001, 1002, 1003, 1004, 1005]) expect(part(2594), String(pid)).toMatch(new RegExp(`PID ${pid},`));
+    expect(part(2594)).not.toMatch(/PID 1006,/);
+    expect(part(2595)).toMatch(/server PID 1006,/);
+    for (const pid of [2001, 2002, 2003, 2004, 2005, 2006, 2007]) expect(t, String(pid)).not.toContain(`PID ${pid},`);
+    expect(part(2594)).toContain('ended after a VM exception window "Virtual machine exception" stayed open; logs saved to C:\\crash\\server_x');
+  });
+
+  it("the description says a VM exception window on a process it started ends that process and its logs are saved", () => {
+    let def!: { description: string };
+    registerMissionServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config(home));
+    expect(def.description).toMatch(/VM exception window stays open on one of them, that process \(and only that one\) is ended and its logs are saved/);
+  });
+});
+
+function handler2(c: Config) {
+  let h: (a: Record<string, unknown>) => Promise<Result> = async () => ({ content: [] });
+  registerMissionServer({ registerTool: (_n: string, _d: unknown, fn: typeof h) => (h = fn) } as unknown as McpServer, c);
+  return h;
+}
+
+describe("mission_server: the final state of a process that exited", () => {
+  const exes = () => {
+    writeFileSync(join(home, "ArmaReforgerServerDiag.exe"), "");
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+  };
+  const serverState = (port: number, over: Record<string, unknown> = {}) => putState(join(MISSION_ROOT, String(port), "server", INSTANCE_FILE), { pid: 901, ...over });
+  /** A server that logs only "loading" and is gone at once. */
+  const dyingServer = () => {
+    sys.pids = [901];
+    sys.onSpawn = (args, pid) => {
+      const log = join(args[args.indexOf("-profile") + 1], "logs", "logs_x", "console.log");
+      mkdirSync(dirname(log), { recursive: true });
+      writeFileSync(log, "00:00:01.000 ENGINE       : loading\r\n");
+      sys.killed.push(pid);
+    };
+  };
+  const start = (port: number) => {
+    exes();
+    const t = addon();
+    return handler2(config(home))({ action: "start", world: t.world, port, peers: 0, addonsDirs: [t.root], timeoutSec: 10 });
+  };
+
+  it("start shows the state a watcher writes 2 s after the exit, and the one written at 5 s", async () => {
+    for (const [port, at] of [[2596, 4], [2597, 10]] as const) {
+      dyingServer();
+      sys.polls = 0;
+      sys.onPoll = (n) => n === at && serverState(port);
+      const r = await start(port);
+      expect(r.content[0].text).toContain("**Server not ready** (the server exited)");
+      expect(r.content[0].text).toContain("- Process watcher, server PID 901,");
+      expect(r.content[0].text).toContain("ended after a VM exception window");
+      expect(sys.polls).toBe(at);
+    }
+  });
+
+  it("start gives no line and stops waiting after 5 s when no final state appears, or only a stale, live-only or other-PID one", async () => {
+    const now = Date.now();
+    // Every state but the first is written during the wait (poll 3), so only its own difference keeps it out.
+    const cases: [string, number, (port: number) => void, boolean][] = [
+      ["none", 2598, () => {}, false],
+      ["written before the process started", 2599, (p) => serverState(p, { updated: now - 60_000 }), false],
+      ["not final", 2600, (p) => serverState(p, { state: "ending_vme" }), true],
+      ["another PID", 2601, (p) => serverState(p, { pid: 902 }), true],
+      ["under another port", 2602, () => putState(join(MISSION_ROOT, "2999", "server", INSTANCE_FILE), { pid: 901 }), true],
+    ];
+    for (const [why, port, put, during] of cases) {
+      dyingServer();
+      sys.polls = 0;
+      if (during) sys.onPoll = (n) => n === 3 && put(port);
+      else put(port);
+      const r = await start(port);
+      expect(r.content[0].text, why).toContain("**Server not ready** (the server exited)");
+      expect(r.content[0].text, why).not.toContain("Process watcher");
+      expect(sys.polls, why).toBe(10);
+    }
+  });
+
+  it("start does not wait when the process is still running", async () => {
+    sys.pids = [903];
+    sys.onSpawn = (args) => {
+      const log = join(args[args.indexOf("-profile") + 1], "logs", "logs_x", "console.log");
+      mkdirSync(dirname(log), { recursive: true });
+      writeFileSync(log, "01:23:09.071 ENGINE    (F): Application hangs (force crash) 305 s\r\n");
+    };
+    const r = await start(2603);
+    expect(r.content[0].text).toContain("**Server not ready** (stopped on:");
+    expect(sys.polls).toBe(0);
+  });
+
+  it("start does not wait when the wait ended on a failure line, even if the process is gone by then", async () => {
+    sys.pids = [904];
+    sys.onSpawn = (args, pid) => {
+      const log = join(args[args.indexOf("-profile") + 1], "logs", "logs_x", "console.log");
+      mkdirSync(dirname(log), { recursive: true });
+      writeFileSync(log, "01:23:09.071 ENGINE    (F): Application hangs (force crash) 305 s\r\n");
+      sys.killed.push(pid);
+    };
+    const r = await start(2606);
+    expect(r.content[0].text).toContain("**Server not ready** (stopped on:");
+    expect(r.content[0].text).not.toContain("Process watcher");
+    expect(sys.polls).toBe(0);
+  });
+
+  it("start with peers that did not join includes a peer's final state", async () => {
+    exes();
+    const t = addon();
+    sys.pids = [801, 802];
+    let serverLog = "";
+    sys.onSpawn = (args, pid) => {
+      const profile = args[args.indexOf("-profile") + 1];
+      const proc = { pid, ppid: 1, cmd: `x.exe -profile "${profile}"`, created: Date.now() };
+      if (args.includes("-server")) {
+        serverLog = join(profile, "logs", "logs_x", "console.log");
+        mkdirSync(dirname(serverLog), { recursive: true });
+        writeFileSync(serverLog, "00:00:01.000 DEFAULT      : Entered online game state.\r\n");
+        sys.servers.push(proc);
+      } else {
+        sys.clients.push(proc);
+        sys.killed.push(pid); // the peer is gone: the watcher ended it
+      }
+    };
+    sys.onPoll = (n) => n === 4 && putState(join(MISSION_ROOT, "2604", "peer1", INSTANCE_FILE), { pid: 802, kind: "client" });
+    const r = await handler2(config(home))({ action: "start", world: t.world, port: 2604, peers: 1, addonsDirs: [t.root], timeoutSec: 10, joinTimeoutSec: 0 });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("Not all peers joined");
+    expect(r.content[0].text).toContain("- Process watcher, client PID 802,");
+  });
+
+  it("join shows the state of the server that exited while it waited, and none after 5 s", async () => {
+    exes();
+    const t = addon();
+    const port = 2605;
+    const serverDir = join(MISSION_ROOT, String(port), "server");
+    const log = join(serverDir, "logs", "logs_x", "console.log");
+    mkdirSync(dirname(log), { recursive: true });
+    mkdirSync(join(MISSION_ROOT, String(port), "peer1"), { recursive: true });
+    writeFileSync(log, "00:00:01.000 DEFAULT      : Entered online game state.\r\n00:00:09.000   NETWORK      : Players connected: 1 / 1\r\n");
+    writeFileSync(join(serverDir, INSTANCE_FILE), JSON.stringify({ kind: "server", name: `mission-${port}`, pid: 701, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: Date.now(), exe: "x" }));
+    writeFileSync(join(MISSION_ROOT, String(port), "run.json"), JSON.stringify({ port, gproj: join(t.dir, "addon.gproj"), world: "Worlds/Map/Me_TVT_Test.ent", addonsDirs: [t.root], addons: ["TestMission"] }));
+    // The peer starts and the server is gone.
+    for (const at of [4, undefined]) {
+      sys.killed = [];
+      sys.servers = [{ pid: 701, ppid: 1, cmd: `x.exe -profile "${serverDir}"`, created: Date.now() }];
+      sys.pids = [720];
+      sys.onSpawn = (_args, pid) => (sys.clients.push({ pid, ppid: 1, cmd: "x.exe", created: Date.now() }), sys.killed.push(701));
+      sys.polls = 0;
+      sys.onPoll = (n) => n === at && putState(join(serverDir, INSTANCE_FILE), { pid: 701 });
+      const j = await handler2(config(home))({ action: "join", port, joinTimeoutSec: 0 });
+      expect(j.isError).toBe(true);
+      if (at) expect(j.content[0].text).toContain("- Process watcher, server PID 701,");
+      else expect(j.content[0].text).not.toContain("Process watcher");
+      expect(sys.polls).toBe(at ?? 10);
+      rmSync(PROC_WATCH_DIR, { recursive: true, force: true });
     }
   });
 });

@@ -1,12 +1,40 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { crashLogsDir } from "../../src/workbench/cli.js";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../../src/config.js";
 import { registerServer, unpack } from "../../src/tools/server.js";
-import { spawnDetached } from "../../src/utils/process.js";
+import { isAlive, serverProcesses, spawnDetached } from "../../src/utils/process.js";
+import { INSTANCE_FILE, OWNER } from "../../src/utils/instances.js";
+import { PROC_WATCH_DIR } from "../../src/watchdog/proc-watch.js";
+import { MISSION_ROOT } from "../../src/tools/mission-server.js";
+
+// A fake home before any module loads: the watcher state folder, the downloads and the instance registry are temp folders.
+const home = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const h = fs.mkdtempSync(path.join(os.tmpdir(), "emcp-srv-home-"));
+  process.env.USERPROFILE = process.env.HOME = h;
+  return h;
+});
+afterAll(() => rmSync(home, { recursive: true, force: true }));
+
+// The real startProcWatcher runs, but its spawn is recorded here and the platform is set per test: no watcher process starts.
+const watch = vi.hoisted(() => ({ spawns: [] as { args: string[]; instanceThere: boolean }[], platform: "win32" }));
+vi.mock("../../src/watchdog/proc-watch.js", async (importActual) => {
+  const actual = await importActual<typeof import("../../src/watchdog/proc-watch.js")>();
+  const fs = await import("node:fs");
+  return {
+    ...actual,
+    startProcWatcher: (w: Parameters<typeof actual.startProcWatcher>[0], spawn?: Parameters<typeof actual.startProcWatcher>[1], platform?: string) =>
+      actual.startProcWatcher(w, spawn ?? ((_exe, args) => (watch.spawns.push({ args, instanceThere: fs.existsSync(w.instance) }), 7777)), platform ?? watch.platform),
+  };
+});
+const flag = (args: string[], name: string) => args[args.indexOf(name) + 1];
 
 // The downloads folder moves to a temp path that does not exist yet, so start creating it is visible and the real home stays untouched.
 vi.mock("../../src/config.js", async (importActual) => {
@@ -20,6 +48,7 @@ vi.mock("../../src/utils/process.js", async (importActual) => ({
   ...(await importActual<typeof import("../../src/utils/process.js")>()),
   spawnDetached: vi.fn(() => 424242),
   serverProcesses: vi.fn(() => []),
+  findPids: vi.fn(() => []),
   isAlive: vi.fn(() => false),
   sleep: vi.fn(async () => {}),
 }));
@@ -251,5 +280,154 @@ describe("server start and status: -noThrow once, and the script error report", 
     let def!: { description: string };
     registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, cfg);
     expect(def.description).toMatch(/runs with -noThrow.*report the run's script exceptions/);
+  });
+});
+
+/** A watcher state file as the watcher writes it, into the watch folder the tools read. */
+let stateSeq = 0;
+function putState(instance: string, over: Record<string, unknown> = {}) {
+  const s = {
+    pid: 31820, kind: "server", instance, ownerPid: 99999, watcherPid: 4242, state: "ended_vme", since: Date.now(), samples: 3, updated: Date.now(),
+    dialog: { title: "Virtual machine exception", text: "NULL pointer to instance" }, saved: "C:\\crash\\server_x", ...over,
+  };
+  mkdirSync(PROC_WATCH_DIR, { recursive: true });
+  writeFileSync(join(PROC_WATCH_DIR, `${s.pid}_${stateSeq++}.json`), JSON.stringify(s));
+}
+const HOUR = 3600_000;
+
+describe("server start: the process watcher", () => {
+  const mk = (name: string, exe = true) => {
+    const cfg = { ...config, serverPath: join(root, `${name}-srv`), serverProfilePath: join(root, `${name}-prof`), packedPath: join(root, `${name}-packed`) } as Config;
+    mkdirSync(cfg.serverPath, { recursive: true });
+    if (exe) writeFileSync(join(cfg.serverPath, process.platform === "win32" ? "ArmaReforgerServer.exe" : "ArmaReforgerServer"), "");
+    mkdirSync(join(cfg.packedPath, "TestAddon"), { recursive: true });
+    writeFileSync(join(cfg.packedPath, "TestAddon", "data.pak"), "");
+    writeFileSync(join(cfg.packedPath, "TestAddon", "addon.gproj"), "GameProject {\n ID \"TestAddon\"\n GUID \"1111111111111111\"\n}\n");
+    let h!: Handler;
+    registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, cfg);
+    return { cfg, h };
+  };
+  const SCENARIO = "{ECC61978EDCC2B5A}Missions/23_Campaign.conf";
+  beforeEach(() => {
+    watch.spawns.length = 0;
+    watch.platform = "win32";
+    vi.mocked(spawnDetached).mockClear();
+  });
+  afterEach(() => {
+    vi.mocked(isAlive).mockImplementation(() => false);
+    rmSync(PROC_WATCH_DIR, { recursive: true, force: true });
+  });
+
+  it("starts one watcher in -config mode and in -server mode: the PID, its instance file (already written), this MCP, the logs root and the kind", async () => {
+    const { cfg, h } = mk("w1");
+    for (const start of [{ action: "start" }, { action: "start", addons: ["TestAddon"], scenarioId: SCENARIO }]) {
+      watch.spawns.length = 0;
+      await h(start);
+      expect(watch.spawns).toHaveLength(1);
+      const { args, instanceThere } = watch.spawns[0];
+      expect(instanceThere).toBe(true);
+      expect(args.slice(args.indexOf("--pid"))).toEqual(expect.arrayContaining([
+        "--pid", "424242", "--kind", "server", "--instance", join(cfg.serverProfilePath, INSTANCE_FILE),
+        "--owner-pid", String(OWNER.pid), "--owner-started", String(OWNER.startedAt), "--logs-root", join(cfg.serverProfilePath, "logs"),
+      ]));
+      expect(flag(args, "--state-dir")).toBe(PROC_WATCH_DIR);
+      expect(args.includes("--crash-dir") ? flag(args, "--crash-dir") : undefined).toBe(crashLogsDir(cfg));
+    }
+  });
+
+  it("starts none for a start that is refused or fails before the instance file is written", async () => {
+    const a = mk("w2");
+    const refused: [string, Record<string, unknown>, Handler?][] = [
+      ["extraArgs", { action: "start", extraArgs: ["-config", "x"] }],
+      ["no packed build", { action: "start", addons: ["Missing"], scenarioId: SCENARIO }],
+      ["no exe", { action: "start" }, mk("w2b", false).h],
+    ];
+    for (const [why, args, handler] of refused) {
+      const r = await (handler ?? a.h)(args);
+      expect(r.isError, why).toBe(true);
+    }
+    // A server already running in the profile folder.
+    vi.mocked(serverProcesses).mockReturnValueOnce([{ pid: 55, ppid: 1, cmd: `ArmaReforgerServer.exe -profile "${a.cfg.serverProfilePath}"`, created: Date.now() }]);
+    const busy = await a.h({ action: "start" });
+    expect(busy.content[0].text).toContain("already running");
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(watch.spawns).toEqual([]);
+  });
+
+  it("starts none when the instance file cannot be written, although the server was spawned", async () => {
+    const { cfg, h } = mk("w3");
+    mkdirSync(join(cfg.serverProfilePath, INSTANCE_FILE), { recursive: true }); // a folder where the file goes
+    const r = await h({ action: "start" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("server start failed");
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+    expect(watch.spawns).toEqual([]);
+  });
+
+  it("on a platform other than Windows starts no watcher and the start reply is the same", async () => {
+    const { h } = mk("w4");
+    const onWindows = (await h({ action: "start" })).content[0].text;
+    expect(watch.spawns).toHaveLength(1);
+    watch.spawns.length = 0;
+    watch.platform = "linux";
+    const elsewhere = (await h({ action: "start" })).content[0].text;
+    expect(watch.spawns).toEqual([]);
+    expect(elsewhere).toBe(onWindows);
+  });
+
+  it("a watcher that cannot start does not fail the start", async () => {
+    const { cfg, h } = mk("w5");
+    rmSync(PROC_WATCH_DIR, { recursive: true, force: true });
+    mkdirSync(join(PROC_WATCH_DIR, ".."), { recursive: true });
+    writeFileSync(PROC_WATCH_DIR, "a file where the state folder goes");
+    const r = await h({ action: "start" });
+    rmSync(PROC_WATCH_DIR);
+    expect(r.content[0].text).toContain("(pid 424242)");
+    expect(existsSync(join(cfg.serverProfilePath, INSTANCE_FILE))).toBe(true);
+  });
+});
+
+describe("server status: the process watcher states", () => {
+  afterEach(() => {
+    vi.mocked(isAlive).mockImplementation(() => false);
+    rmSync(PROC_WATCH_DIR, { recursive: true, force: true });
+  });
+
+  it("shows the last 24 h of blocked_dialog, ending_vme, ended_vme and end_failed states under the server profile, and nothing else", async () => {
+    const cfg = { ...config, serverProfilePath: join(root, "w6-prof") } as Config;
+    let h!: Handler;
+    registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, cfg);
+    vi.mocked(isAlive).mockImplementation((pid) => pid === 4242);
+    const mine = join(cfg.serverProfilePath, INSTANCE_FILE);
+    const now = Date.now();
+    // Shown: live blocked and ending states, final states with a dead watcher, one written by an earlier MCP process (another owner), one 23 h old.
+    putState(mine, { pid: 1001, state: "blocked_dialog", dialog: { title: "Script Authorization Required", text: "x" }, why: "not ended: it was not started by this MCP session", saved: undefined });
+    putState(mine, { pid: 1002, state: "ending_vme" });
+    putState(mine, { pid: 1003, watcherPid: 4343, ownerPid: 12345 });
+    putState(mine, { pid: 1004, watcherPid: 4343, state: "end_failed", saved: undefined });
+    putState(mine, { pid: 1005, watcherPid: 4343, updated: now - 23 * HOUR });
+    // Not shown: 25 h old; another tool's root (a mission_server run, a client folder, a sibling folder with the same name start); a non-final state whose watcher is dead; the watching and exited states; damaged fields.
+    putState(mine, { pid: 2001, watcherPid: 4343, updated: now - 25 * HOUR });
+    putState(join(MISSION_ROOT, "2521", "server", INSTANCE_FILE), { pid: 2002 });
+    putState(join(root, "w6-client", `2003.${INSTANCE_FILE}`), { pid: 2003, kind: "client" });
+    putState(join(`${cfg.serverProfilePath}-other`, INSTANCE_FILE), { pid: 2004 });
+    putState(mine, { pid: 2005, watcherPid: 4343, state: "blocked_dialog" });
+    putState(mine, { pid: 2006, watcherPid: 4343, state: "ending_vme" });
+    putState(mine, { pid: 2007, state: "watching" });
+    putState(mine, { pid: 2008, state: "exited" });
+    putState(mine, { pid: 2009, updated: "yesterday" });
+    putState(mine, { pid: 2010, watcherPid: "x" });
+    const t = (await h({ action: "status" })).content[0].text;
+    for (const pid of [1001, 1002, 1003, 1004, 1005]) expect(t, String(pid)).toContain(`server PID ${pid},`);
+    for (const pid of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010]) expect(t, String(pid)).not.toContain(`PID ${pid},`);
+    expect(t).toContain('blocked by a dialog "Script Authorization Required", not ended: it was not started by this MCP session');
+    expect(t).toContain('ended after a VM exception window "Virtual machine exception" stayed open; logs saved to C:\\crash\\server_x');
+    expect(t).toContain("could not be ended after a VM exception window stayed open");
+  });
+
+  it("the description says a VM exception window on a server it started ends that server and its logs are saved", () => {
+    let def!: { description: string };
+    registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config);
+    expect(def.description).toMatch(/VM exception window stays open on it, that process \(and only that one\) is ended and its logs are saved/);
   });
 });

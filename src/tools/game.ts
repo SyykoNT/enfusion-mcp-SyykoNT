@@ -8,6 +8,8 @@ import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, isAlive, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
 import { runErrors } from "../utils/logwatch.js";
 import { OWNER, pidInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
+import { procWatchLines } from "../watchdog/proc-watch.js";
+import { watchStarted } from "./mission-server.js";
 
 const GAME_EXE = "ArmaReforgerSteam.exe";
 const GAME_DIAG_EXE = "ArmaReforgerSteamDiag.exe"; // needed for -client / -world
@@ -35,7 +37,8 @@ export function registerGame(server: McpServer, config: Config): void {
         "Start / stop the Arma Reforger game client for testing: load local packed addons (built with `mod` build), " +
         "join a server directly (connect=IP[:port], e.g. the local `server start`), or open a world straight away. " +
         "'logs' tails the client console log (script errors at runtime). " +
-        "The client runs with -noThrow (no error dialogs), and the status reply reports the script exceptions (VM exceptions) and crash.log of each client this MCP started.",
+        "The client runs with -noThrow (no error dialogs), and the status reply reports the script exceptions (VM exceptions) and crash.log of each client this MCP started. " +
+        "On Windows a watcher is started for every client it launches: if a VM exception window stays open on it, that process (and only that one) is ended and its logs are saved; the status reply shows what the watcher did.",
       inputSchema: {
         action: z.enum(["launch", "stop", "status", "logs"]),
         addons: z.array(z.string()).optional().describe("(launch) Local addon folder names to load from their packed build"),
@@ -86,9 +89,11 @@ export function registerGame(server: McpServer, config: Config): void {
           args.push(...(a.extraArgs ?? []));
           const started = Date.now();
           const pid = spawnDetached(exe, args, config.gamePath);
-          writeInstance(pidInstanceFile(config.clientProfilesRoot, pid), {
+          const instance = pidInstanceFile(config.clientProfilesRoot, pid);
+          writeInstance(instance, {
             kind: "client", name: "default", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe,
           });
+          watchStarted({ pid, kind: "client", instance, logsRoot: logsDir }, config);
           await sleep(3000);
           return text(`**Game launched** (pid ${pid})\n\n${diag ? GAME_DIAG_EXE : GAME_EXE} ${args.join(" ")}`);
         }
@@ -120,7 +125,8 @@ export function registerGame(server: McpServer, config: Config): void {
           return text(
             `Game: ${entries.length ? `${entries.length} client(s) running, ${entries.filter((e) => e.cls === "own").length} started by this MCP` : "not running"}\n` +
             `Install: ${config.gamePath}\nLogs: ${newestDir(logsDir) ?? logsDir}${entries.length ? `\n\n${instanceTable(entries)}` : ""}` +
-            (reports.length ? `\n\n${reports.join("\n\n")}` : "")
+            (reports.length ? `\n\n${reports.join("\n\n")}` : "") +
+            procWatchLines({ root: config.clientProfilesRoot }).map((l) => `\n${l}`).join("")
           );
         }
 

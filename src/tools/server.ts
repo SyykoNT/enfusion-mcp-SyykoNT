@@ -13,7 +13,8 @@ import { protectedAddonOf } from "../utils/game-paths.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
 import { runErrors } from "../utils/logwatch.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
-import { MISSION_ROOT } from "./mission-server.js";
+import { procWatchLines } from "../watchdog/proc-watch.js";
+import { MISSION_ROOT, watchStarted } from "./mission-server.js";
 
 const IS_WIN = process.platform === "win32";
 const SERVER_APP_ID = "1874900"; // Arma Reforger Dedicated Server (anonymous login)
@@ -121,6 +122,7 @@ export function registerServer(server: McpServer, config: Config): void {
         "'validate' (check any server.json), 'start' (with local packed addons and/or Workshop mods), 'stop', 'status', " +
         "'logs' (tail / errors only), 'scenarios' (all scenario IDs of the game). " +
         "Every server it starts runs with -noThrow (no error dialogs), and the start and status replies report the run's script exceptions (VM exceptions) and crash.log. " +
+        "On Windows a watcher is started for every server it starts: if a VM exception window stays open on it, that process (and only that one) is ended and its logs are saved; the status reply shows what the watcher did. " +
         "For a mission on unpacked addons that needs its Mission Header, use mission_server; `server` runs packed builds or a server.json.",
       inputSchema: {
         action: z.enum(["install", "update", "config", "validate", "start", "stop", "status", "logs", "scenarios"]),
@@ -261,10 +263,12 @@ export function registerServer(server: McpServer, config: Config): void {
           const diagExe = join(config.serverPath, SERVER_DIAG_EXE);
           const runExe = existsSync(diagExe) ? diagExe : exe;
           const pid = spawnDetached(runExe, args, config.serverPath);
-          writeInstance(join(config.serverProfilePath, INSTANCE_FILE), {
+          const instance = join(config.serverProfilePath, INSTANCE_FILE);
+          writeInstance(instance, {
             kind: "server", name: "default", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt,
             startedAt: started, exe: runExe, port, profileDir: config.serverProfilePath,
           });
+          watchStarted({ pid, kind: "server", instance, logsRoot: serverLogsDir(config) }, config);
           await sleep(8000);
           const logDir = newestDir(serverLogsDir(config), started - 5000);
           const alive = isAlive(pid);
@@ -316,6 +320,7 @@ export function registerServer(server: McpServer, config: Config): void {
             `- Profile: ${config.serverProfilePath}`,
             logDir ? `- Latest log: ${logDir}` : "",
             errors && `\n${errors}`,
+            ...procWatchLines({ root: config.serverProfilePath }),
             existsSync(installLog) ? `\nInstall log (last lines):\n\`\`\`\n${tail(installLog, 8)}\n\`\`\`` : "",
             entries.length ? `\n${instanceTable(entries)}` : "",
           ].filter(Boolean).join("\n"));

@@ -5,7 +5,8 @@ import { availableParallelism, freemem } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
-import { addonsDirsError, readGproj } from "../workbench/cli.js";
+import { addonsDirsError, crashLogsDir, readGproj } from "../workbench/cli.js";
+import { procWatchLines, startProcWatcher, type StartProcWatcher } from "../watchdog/proc-watch.js";
 import { duplicateAddonError } from "../pak/stack.js";
 import { DISABLE_CRASH_REPORTER, NO_THROW, argValue, clientProcesses, isAlive, killPids, limitProcess, newestDir, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, instanceTable, isUnder, planStop, scan, writeInstance, type Entry } from "../utils/instances.js";
@@ -205,6 +206,30 @@ function runReport(port: number): string {
   });
   return parts.length ? `\n\n${parts.join("\n\n")}` : "";
 }
+/**
+ * Start the process watcher for a server or client whose instance file was just written. The process is already running, so a watcher
+ * that cannot start (no state folder, no spawn) must not turn the start into a failure.
+ */
+export function watchStarted(w: Pick<StartProcWatcher, "pid" | "kind" | "instance" | "logsRoot">, config: Config): void {
+  try {
+    startProcWatcher({ ...w, ownerPid: OWNER.pid, ownerStarted: OWNER.startedAt, crashDir: crashLogsDir(config) });
+  } catch {
+    // shortcut: no note in the reply, -noThrow is the first defence; surface a watcher that did not start if a user needs it
+  }
+}
+
+/** After a wait that ended with a process gone: its watcher may still be writing the final state of an end it made, so look for up to 5 s. */
+async function exitedStates(root: string, pids: number[], since: number): Promise<string> {
+  const gone = pids.filter((p) => !isAlive(p));
+  if (!gone.length) return "";
+  for (let i = 0; ; i++) {
+    const lines = procWatchLines({ root, pids: gone, since, final: true });
+    if (lines.length) return `\n${lines.join("\n")}`;
+    if (i >= 10) return "";
+    await sleep(500);
+  }
+}
+
 /** This tool's processes (instance file under MISSION_ROOT, or under one port's folder). */
 const mine = (root = MISSION_ROOT): Entry[] => [...scan(serverProcesses()), ...scan(clientProcesses())].filter((e) => e.file && isUnder(e.file, root));
 
@@ -260,9 +285,11 @@ function startPeer(r: Run, config: Config): { n: number; pid: number; args: stri
   const args = peerArgs(r, profile);
   const started = Date.now();
   const pid = spawnDetached(exe, args, config.gamePath);
-  writeInstance(join(profile, INSTANCE_FILE), {
+  const instance = join(profile, INSTANCE_FILE);
+  writeInstance(instance, {
     kind: "client", name: `mission-${r.port}-peer${n}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe, port: r.port, profileDir: profile,
   });
+  watchStarted({ pid, kind: "client", instance, logsRoot: join(profile, "logs") }, config);
   return { n, pid, args, pinned: r.cpu ? limitProcess(pid, r.cpu.client) : undefined };
 }
 
@@ -279,7 +306,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         "Every client needs at least 4 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
         "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority. " +
         "The Crash Reporter is switched off for everything it starts (-disableCrashReporter), and every server and client it starts runs with -noThrow (no error dialogs). " +
-        "The start, join and status replies report the run's script exceptions (VM exceptions) and crash.log, for the server and each peer.",
+        "The start, join and status replies report the run's script exceptions (VM exceptions) and crash.log, for the server and each peer. " +
+        "On Windows a watcher is started for every server and client it starts: if a VM exception window stays open on one of them, that process (and only that one) is ended and its logs are saved; the status reply shows what the watcher did.",
       inputSchema: {
         action: z.enum(["start", "join", "status", "stop"]),
         world: z.string().optional().describe("(start) Absolute path of the mission .ent inside an unpacked addon"),
@@ -322,9 +350,11 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const args = serverArgs(run, profile, a.extraArgs);
           const started = Date.now();
           const pid = spawnDetached(exe, args, config.serverPath);
-          writeInstance(join(profile, INSTANCE_FILE), {
+          const instance = join(profile, INSTANCE_FILE);
+          writeInstance(instance, {
             kind: "server", name: `mission-${port}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe, port, profileDir: profile,
           });
+          watchStarted({ pid, kind: "server", instance, logsRoot: join(profile, "logs") }, config);
           writeFileSync(join(portDir(port), "run.json"), JSON.stringify(run, null, 2));
           const serverPinned = run.cpu ? limitProcess(pid, run.cpu.server) : undefined;
           if (run.cpu && !serverPinned) {
@@ -346,7 +376,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}${cpuNote}`;
           if (w.status !== "matched") {
             const why = w.status === "failed" ? `stopped on: ${w.fatal[0]?.line}` : w.status === "exited" ? "the server exited" : `not online within ${a.timeoutSec} s`;
-            return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}${runReport(port)}`, true);
+            const ended = w.status === "exited" ? await exitedStates(portDir(port), [pid], started) : "";
+            return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}${ended}${runReport(port)}`, true);
           }
           const peers: string[] = [];
           const startedPeers: { n: number; pid: number }[] = [];
@@ -366,13 +397,15 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             await sleep(2000);
           }
           const joined = a.peers > 0 && (await waitPlayers(w.file!, offset, a.peers, pid, a.joinTimeoutSec));
+          // Before stopOwn: the peers it ends itself are not "exited" waits.
+          const ended = a.peers > 0 && !joined ? await exitedStates(portDir(port), [pid, ...startedPeers.map((p) => p.pid)], started) : "";
           const stopped = a.peers > 0 && !joined ? await stopOwn(port, startedPeers) : "";
           const joinLine = a.peers === 0 ? "" : joined
             ? `\nAll ${a.peers} peer(s) joined (Players connected: ${a.peers}).`
             : `\nNot all peers joined within ${a.joinTimeoutSec} s: players connected ${playersConnected(readFileSync(w.file!, "utf-8"))} of ${a.peers}.${stopped}`;
           return text(
             `**Server online** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})${run.header ? "" : "\nNo Mission Header: the world started without one."}${joinLine}\n\n${head}` +
-              (peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : "") + runReport(port),
+              (peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : "") + ended + runReport(port),
             a.peers > 0 && !joined
           );
         }
@@ -389,6 +422,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const problems = peerProblems(before, peerStates(port), serverText);
           if (problems.length) return text(`join refused: ${problems.join("; ")}. No client was started; mission_server stop ends this run.`, true);
           const offset = statSync(log).size;
+          const since = Date.now();
           const p = startPeer(run, config);
           if (typeof p === "string") return text(p, true);
           if (p.pinned === false) {
@@ -396,12 +430,13 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             return text(`clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to the new peer ${p.n} (PID ${p.pid}).${stopped}`, true);
           }
           const joined = await waitPlayers(log, offset, before + 1, srv.proc.pid, a.joinTimeoutSec);
+          const ended = joined ? "" : await exitedStates(portDir(port), [p.pid, srv.proc.pid], since);
           const stopped = joined ? "" : await stopOwn(port, [p]);
           return text(
             (joined
               ? `**Peer ${p.n} joined** (PID ${p.pid}): players connected ${before + 1}.`
               : `**Peer ${p.n} did not join** within ${a.joinTimeoutSec} s (PID ${p.pid}): players connected ${playersConnected(readFileSync(log, "utf-8"))}.${stopped}`) +
-              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}` + runReport(port),
+              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}` + ended + runReport(port),
             !joined
           );
         }
@@ -417,7 +452,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             const live = entries.filter((e) => e.file && isUnder(e.file, join(MISSION_ROOT, port)));
             return (live.length
               ? `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`
-              : `- port ${port}: nothing running; last run was ${game}${log ? `, log ${log}` : ""}`) + runReport(Number(port));
+              : `- port ${port}: nothing running; last run was ${game}${log ? `, log ${log}` : ""}`) + procWatchLines({ root: join(MISSION_ROOT, port) }).map((l) => `\n${l}`).join("") + runReport(Number(port));
           });
           return text(`**mission_server**\n${rows.length ? rows.join("\n") : "No runs yet."}${entries.length ? `\n\n${instanceTable(entries)}` : ""}`);
         }
