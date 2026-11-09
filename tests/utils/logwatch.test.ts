@@ -208,7 +208,8 @@ describe("runErrors", () => {
     expect(r).toContain("**Script exceptions in this run: 2**");
     expect(r).toContain("Reason: NULL pointer to instance\nClass: SCR_CampaignMilitaryBaseComponent\nFunction: OnAllBasesInitialized\nScripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized");
     expect(r).not.toContain("Division by zero"); // only the first group is shown
-    expect(r).toContain(`**crash.log** ${join(dir, "run", "crash.log")} (Reason: Access violation)`);
+    expect(r).toContain(`**crash.log** ${join(dir, "run", "crash.log")}\n\`\`\`\ncrash-line-1\n`);
+    expect(r).toContain("Reason: Access violation\n");
     expect(r).toContain("crash-line-1\n");
     expect(r).toContain("crash-line-40\n");
     expect(r).not.toContain("crash-line-41");
@@ -217,6 +218,14 @@ describe("runErrors", () => {
   it("a fence inside log text cannot close the code block", () => {
     put("f/crash.log", "a ``` b\n");
     expect(runErrors(join(dir, "f"))).toContain("a ''' b");
+  });
+
+  it("markdown in a crash.log reason is shown only inside the code block", () => {
+    put("m/crash.log", "Reason: **x** [link](y)\n");
+    const [head, inside, tail] = runErrors(join(dir, "m")).split("```");
+    expect(head).toBe(`**crash.log** ${join(dir, "m", "crash.log")}\n`);
+    expect(inside).toContain("**x** [link](y)");
+    expect(tail).toBe("");
   });
 
   it("gives nothing for a clean folder, an empty folder and a missing folder, and does not throw", () => {

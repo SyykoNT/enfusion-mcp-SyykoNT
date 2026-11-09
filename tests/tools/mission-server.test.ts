@@ -80,7 +80,7 @@ const CRASH_LOG = Array.from({ length: 60 }, (_, i) => (i === 4 ? "Reason: Acces
 const expectReport = (t: string) => {
   expect(t).toContain("**Script exceptions in this run: 2**");
   expect(t).toContain("Reason: NULL pointer to instance\nClass: SCR_CampaignMilitaryBaseComponent\nFunction: OnAllBasesInitialized\nScripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized");
-  expect(t).toMatch(/\*\*crash\.log\*\* .*crash\.log \(Reason: Access violation\)/);
+  expect(t).toMatch(/\*\*crash\.log\*\* [^\n]*crash\.log\n```\n(?:[^\n]*\n)*Reason: Access violation\n/);
   expect(t).toContain("crash-line-40\n");
   expect(t).not.toContain("crash-line-41");
 };
@@ -619,6 +619,18 @@ describe("-noThrow on every process the tools start, and the script error report
     const clean = await start(t, 2562);
     expect(clean.content[0].text).toContain("**Server online**");
     expectClean(clean.content[0].text);
+  });
+
+  it("start prints the report when the server cannot be pinned", async () => {
+    const t = addon();
+    sys.pids = [902];
+    sys.failPins = new Set([902]);
+    serverWrites(VME_LOG);
+    writeFileSync(join(home, "ArmaReforgerServerDiag.exe"), "");
+    const r = await handler(registerMissionServer, config(home))({ action: "start", world: t.world, port: 2564, peers: 0, addonsDirs: [t.root], timeoutSec: 10, serverCpuMask: "0x3000", clientCpuMask: "0x0C00" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("**Server stopped**: serverCpuMask 0x3000 could not be applied");
+    expectReport(r.content[0].text);
   });
 
   it("start prints the report when the server is not ready", async () => {

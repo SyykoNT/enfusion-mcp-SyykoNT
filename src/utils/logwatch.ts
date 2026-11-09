@@ -5,7 +5,6 @@
  */
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { parseCrashLog } from "../watchdog/signals.js";
 import { parseScriptIssues } from "../workbench/cli.js";
 import { formatLogTime, parseLogHeader, parseLogTime, scriptErrorParser } from "../workbench/script-errors.js";
 import { isAlive as processAlive, newestDir, sleep } from "./process.js";
@@ -303,8 +302,7 @@ export function runErrors(logDir: string): string {
     const crash = join(logDir, "crash.log");
     if (existsSync(crash)) {
       const text = readFileSync(crash, "utf-8");
-      const reason = parseCrashLog(text).reason;
-      parts.push(`**crash.log** ${crash}${reason ? ` (Reason: ${reason})` : ""}\n${fenced(text.split(/\r?\n/).slice(0, CRASH_LINES).join("\n"))}`);
+      parts.push(`**crash.log** ${crash}\n${fenced(text.split(/\r?\n/).slice(0, CRASH_LINES).join("\n"))}`);
     }
     return parts.join("\n\n");
   } catch {

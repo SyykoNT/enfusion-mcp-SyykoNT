@@ -65,7 +65,7 @@ const CRASH_LOG = Array.from({ length: 60 }, (_, i) => (i === 4 ? "Reason: Acces
 const expectReport = (t: string) => {
   expect(t).toContain("**Script exceptions in this run: 2**");
   expect(t).toContain("Reason: NULL pointer to instance\nClass: SCR_CampaignMilitaryBaseComponent\nFunction: OnAllBasesInitialized\nScripts/Game/Components/Locations/SCR_CampaignMilitaryBaseComponent.c:2357 Function OnAllBasesInitialized");
-  expect(t).toMatch(/\*\*crash\.log\*\* .*crash\.log \(Reason: Access violation\)/);
+  expect(t).toMatch(/\*\*crash\.log\*\* [^\n]*crash\.log\n```\n(?:[^\n]*\n)*Reason: Access violation\n/);
   expect(t).toContain("crash-line-40\n");
   expect(t).not.toContain("crash-line-41");
 };

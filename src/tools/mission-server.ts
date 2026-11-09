@@ -326,7 +326,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           if (run.cpu && !serverPinned) {
             // An unpinned server would let the clients share its cores (run 2): end it and start nothing else.
             const stopped = await stopOwn(port, [{ pid }], false);
-            return text(`**Server stopped**: serverCpuMask 0x${run.cpu.server.toString(16)} could not be applied to server PID ${pid}.${stopped} No peers were started.`, true);
+            return text(`**Server stopped**: serverCpuMask 0x${run.cpu.server.toString(16)} could not be applied to server PID ${pid}.${stopped} No peers were started.${runReport(port)}`, true);
           }
           const w = await waitFor({
             log: () => resolveLogFile({ dir: profile, file: "console", newerThan: started - 5000 }),
