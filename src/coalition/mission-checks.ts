@@ -172,7 +172,7 @@ export function settings(m: Lobby, nodes: EnfusionNode[], enums: LobbyEnums, def
   const keyOf = (id: string | undefined) => firstOf(nodes.slice(1), (n) => prop(member(managerOf(n), "Factions")?.children.find((f) => f.id === id), "FactionKey"));
   // The prefab gives CIV no FactionKey: the plugin addresses it as the 4th faction (COA_MissionFactionPlugin.c:13,236).
   // Read the list from the base end of the chain: CRF's override of COA_Lobby.et lists only the factions it changes.
-  const civId = firstOf(nodes.slice(1).reverse(),(n) => member(managerOf(n), "Factions")?.children[CIV_FACTION_INDEX]?.id);
+  const civId = firstOf(nodes.slice(1).reverse(), (n) => member(managerOf(n), "Factions")?.children[CIV_FACTION_INDEX]?.id);
   for (const f of member(manager?.node, "Factions")?.children ?? []) {
     const friends = member(f, "m_aFriendlyFactionsIds")?.values;
     if (friends) rows.push({ name: `${keyOf(f.id) ?? (f.id === civId ? "CIVILIAN" : `faction ${f.id}`)} friendly with`, value: friends.join(", ") || "none", from: "mission" });
