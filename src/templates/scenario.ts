@@ -28,8 +28,14 @@ const PREFAB_VEHICLE_FIA    = "{D4A604DD154470CD}Prefabs/Systems/AmbientVehicles
 const PREFAB_CAH_MAJOR      = "{F4649500E51DF810}Prefabs/MP/Modes/CaptureAndHold/Areas/CaptureAndHoldArea_Major.et";
 // Defend waypoint for patrol defenders
 const PREFAB_DEFEND_WP      = "{AAE8882E0DE0761A}Prefabs/AI/Waypoints/AIWaypoint_Defend_Hierarchy.et";
-// Harbor source base (T3 = large, most common in production mods)
-const PREFAB_HARBOR_T3      = "{0226331FB6A8249A}Prefabs/Systems/MilitaryBase/ConflictSourceBase_T3Harbor.et";
+// AIWorld (class SCR_AIWorld, 1.9.0.37): a terrain's own prefab by the parent world's file stem, else the default.
+// shortcut: only the three vanilla terrains are known; a mod terrain's own SCR_AIWorld_<name>.et is not looked up, upgrade if one needs it.
+const PREFAB_AIWORLD        = "{E0A05C76552E7F58}Prefabs/AI/SCR_AIWorld.et";
+const PREFAB_AIWORLD_BY_TERRAIN = new Map([
+  ["eden",   "{70CCCF16487C927F}Prefabs/AI/SCR_AIWorld_Eden.et"],
+  ["arland", "{01DC74137CFDDB6A}Prefabs/AI/SCR_AIWorld_Arland.et"],
+  ["cain",   "{672531FAC0834C06}Prefabs/AI/SCR_AIWorld_Cain.et"],
+]);
 // Seeding restriction zone — confines players to MOB area during low-pop seeding
 const PREFAB_SEEDING_ZONE   = "{801DADF0D6C316B9}PrefabsEditable/RestrictionZone/E_SeedingRestrictionZoneBase.et";
 // Seeding-only ambient patrol (fast respawn, stops once seeding ends)
@@ -48,10 +54,6 @@ const CID_SEIZING   = "{5C66967235FBEEA3}";
 const CID_RADIO     = "{5C669673C2A82A2B}";
 const CID_RELAY_TX  = "{5C669673E8C94083}";
 const CID_BASE_COMP = "{5AFC974A70234D1C}";
-const CID_SUPPLIES  = "{5C6696724F524DA2}";
-// Harbor source base component GUIDs
-const CID_HARBOR_SEIZING    = "{621EB97024DABABE}";
-const CID_HARBOR_SOURCE     = "{621EB97024DABD3C}";
 // Ambient patrol component GUID
 const CID_PATROL_COMP       = "{5CCEC6036BBF3EDD}";
 // Ambient vehicle component GUID
@@ -80,13 +82,11 @@ export interface ConflictBaseSpec {
    * Base type:
    * - "base" (default) — standard contested military base (TownBase / SmallBase)
    * - "major" — large base with CAH areas, supply hub (harbour, airfield, military base)
-   * - "MOB" — main operating base / HQ (no seizing, 3000 supplies, radio source)
+   * - "MOB": main operating base and HQ candidate (no seizing, radio source); the game picks the 2 HQs from the MOBs
    * - "controlPoint" — lightweight control point objective
-   * - "sourceBase" — supply source, not capturable
-   * - "harbor" — supply-income harbor using ConflictSourceBase prefab family
    * - "relay" — pre-placed always-on radio relay tower, not capturable, extends radio coverage
    */
-  type?: "base" | "major" | "MOB" | "controlPoint" | "sourceBase" | "harbor" | "relay";
+  type?: "base" | "major" | "MOB" | "controlPoint" | "relay";
   /** Number of ambient patrol spawnpoints around this base (default 2, max 6) */
   patrolCount?: number;
   /** Radio antenna service range in meters (default 1470) */
@@ -128,6 +128,8 @@ export interface ConflictScenarioOptions {
   parentHasGameMode?: boolean;
   /** The parent world already has a faction manager: write none (D-044) */
   parentHasFactionManager?: boolean;
+  /** Write an AIWorld entity: set only when the parent world was read and has none (a world holds one) */
+  writeAIWorld?: boolean;
   /** Game mode display label (default "Conflict") */
   gameModeLabel?: string;
   /** Scenario description */
@@ -182,20 +184,19 @@ function buildMissionConf(opts: ConflictScenarioOptions, worldRef: string): stri
     lines.push(` m_fXpMultiplier ${opts.xpMultiplier}`);
   }
 
-  // Base whitelist — links .conf base names to world entities
-  const contestable = opts.bases.filter(b => b.type !== "sourceBase" && b.type !== "harbor" && b.type !== "relay");
-  if (contestable.length > 0) {
-    lines.push(` m_bCustomBaseWhitelist 1`);
-    lines.push(` m_aCampaignCustomBaseList {`);
-    for (const base of contestable) {
-      const guid = generateGuid();
-      lines.push(`  SCR_CampaignCustomBase "{${guid}}" {`);
-      lines.push(`   m_sBaseName "${base.name}"`);
-      if (base.type === "controlPoint") lines.push(`   m_bIsControlPoint 1`);
-      lines.push(`  }`);
-    }
-    lines.push(` }`);
+  // Base whitelist: links .conf base names to world entities. An entry replaces the base's own HQ and control point flags
+  // (SCR_CampaignCustomBase defaults are 0), so a MOB must say m_bCanBeHQ 1 here or the game finds no HQ.
+  lines.push(` m_bCustomBaseWhitelist 1`);
+  lines.push(` m_aCampaignCustomBaseList {`);
+  for (const base of opts.bases) {
+    const guid = generateGuid();
+    lines.push(`  SCR_CampaignCustomBase "{${guid}}" {`);
+    lines.push(`   m_sBaseName "${base.name}"`);
+    if (base.type === "MOB" || base.type === "major" || base.type === "controlPoint") lines.push(`   m_bIsControlPoint 1`);
+    if (base.type === "MOB") lines.push(`   m_bCanBeHQ 1`);
+    lines.push(`  }`);
   }
+  lines.push(` }`);
 
   lines.push("}");
   return lines.join("\n");
@@ -246,6 +247,15 @@ function buildDefaultLayer(opts: ConflictScenarioOptions): string {
     lines.push(`}`);
   }
 
+  if (opts.writeAIWorld) {
+    // last word of the file stem: Eden.ent, CTI_Campaign_Arland.ent
+    const terrain = resolveWorldRef(opts.worldName).split("/").pop()!.replace(/\.ent$/i, "").split("_").pop()!.toLowerCase();
+    lines.push(`SCR_AIWorld AIWorld1 : "${PREFAB_AIWORLD_BY_TERRAIN.get(terrain) ?? PREFAB_AIWORLD}" {`);
+    lines.push(` ID "${generateGuid()}"`);
+    lines.push(` coords 0 0 0`);
+    lines.push(`}`);
+  }
+
   return lines.length ? lines.join("\n") + "\n" : "";
 }
 
@@ -286,8 +296,6 @@ function buildBasesLayer(opts: ConflictScenarioOptions): string {
   lines.push(`$grp GenericEntity : "${PREFAB_CONFLICT_BASE}" {`);
 
   for (const base of opts.bases) {
-    if (base.type === "harbor") continue; // harbors have their own prefab family
-
     const [bx, by, bz] = parsePos(base.position);
     const baseType = base.type ?? "base";
     const isMOB = baseType === "MOB";
@@ -361,15 +369,6 @@ function buildBasesLayer(opts: ConflictScenarioOptions): string {
     lines.push(`    m_sBaseNameUpper "${base.name.toUpperCase()}"`);
     lines.push(`   }`);
 
-    // Supplies for MOB
-    if (isMOB) {
-      lines.push(`   SCR_CampaignSuppliesComponent "${CID_SUPPLIES}" {`);
-      lines.push(`    m_iSupplies 500`);
-      lines.push(`    m_iSuppliesMax 3000`);
-      lines.push(`    m_fOperationalRadius 50`);
-      lines.push(`   }`);
-    }
-
     lines.push(`  }`);
     lines.push(`  coords ${fmtPos(bx, by, bz)}`);
 
@@ -390,7 +389,7 @@ function buildBasesLayer(opts: ConflictScenarioOptions): string {
 
   // Ambient patrol spawnpoints (outside the $grp, after all bases)
   for (const base of opts.bases) {
-    if (base.type === "harbor" || base.type === "relay") continue;
+    if (base.type === "relay") continue;
     const [bx, by, bz] = parsePos(base.position);
     const patrolCount = Math.min(Math.max(base.patrolCount ?? 2, 0), 6);
     const patrolOffsets = [
@@ -456,7 +455,7 @@ function buildDefendersLayer(opts: ConflictScenarioOptions): string {
   // Group by faction for cleaner layer output
   const factionGroups = new Map<string, ConflictBaseSpec[]>();
   for (const base of opts.bases) {
-    if (base.type === "MOB" || base.type === "harbor" || base.type === "relay") continue;
+    if (base.type === "MOB" || base.type === "relay") continue;
     const list = factionGroups.get(base.faction) ?? [];
     list.push(base);
     factionGroups.set(base.faction, list);

@@ -95,17 +95,24 @@ describe("generateConflictScenario", () => {
       expect(missionConf).toContain("m_bIsControlPoint 1");
     });
 
-    it("excludes sourceBase from base whitelist", () => {
-      const opts = {
+    it("whitelist entries: both MOBs can be HQ and control points, major and controlPoint are control points, base and relay carry only a name", () => {
+      const at = (name: string, type?: "MOB" | "major" | "controlPoint" | "relay") => ({ name, position: "0 0 0", faction: "US", ...(type ? { type } : {}) });
+      const { missionConf } = generateConflictScenario({
         ...MINIMAL_OPTS,
-        bases: [
-          { name: "MOB_US", position: "0 0 0", faction: "US", type: "MOB" as const },
-          { name: "Harbor", position: "500 0 500", faction: "US", type: "sourceBase" as const },
-        ],
-      };
-      const { missionConf } = generateConflictScenario(opts);
-      expect(missionConf).not.toContain("Harbor");
-      expect(missionConf).toContain("MOB_US");
+        bases: [at("MOB_US", "MOB"), at("MOB_USSR", "MOB"), at("Major_Mid", "major"), at("CP1", "controlPoint"), at("Hill"), at("Relay1", "relay")],
+      });
+      const entry = (name: string, flags: string[]) =>
+        `  SCR_CampaignCustomBase "{XXXX}" {\n   m_sBaseName "${name}"\n${flags.map((f) => `   ${f}\n`).join("")}  }`;
+      const entries = missionConf.match(/  SCR_CampaignCustomBase "\{[0-9A-F]{16}\}" \{\n(?:   .*\n)+?  \}/g)!.map((e) => e.replace(/\{[0-9A-F]{16}\}/, "{XXXX}"));
+      expect(entries).toEqual([
+        entry("MOB_US", ["m_bIsControlPoint 1", "m_bCanBeHQ 1"]),
+        entry("MOB_USSR", ["m_bIsControlPoint 1", "m_bCanBeHQ 1"]),
+        entry("Major_Mid", ["m_bIsControlPoint 1"]),
+        entry("CP1", ["m_bIsControlPoint 1"]),
+        entry("Hill", []),
+        entry("Relay1", []),
+      ]);
+      expect(missionConf).not.toMatch(/m_bDisableWhenUnusedAsHQ|m_fRadioRange/);
     });
 
     it("does not write m_bIsSavingEnabled (not a vanilla property)", () => {
@@ -166,8 +173,18 @@ describe("generateConflictScenario", () => {
       expect(defaultLayer).toContain("{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et");
     });
 
+    it("writes one AIWorld entity only when asked, with the terrain's own prefab or the default", () => {
+      expect(generateConflictScenario(MINIMAL_OPTS).defaultLayer).not.toContain("SCR_AIWorld");
+      const layer = (worldName: string) => generateConflictScenario({ ...MINIMAL_OPTS, worldName, writeAIWorld: true }).defaultLayer;
+      const prefab = (text: string) => text.match(/SCR_AIWorld AIWorld1 : "([^"]+)"/g);
+      expect(prefab(layer("Everon"))).toEqual(['SCR_AIWorld AIWorld1 : "{70CCCF16487C927F}Prefabs/AI/SCR_AIWorld_Eden.et"']);
+      expect(prefab(layer("Arland"))).toEqual(['SCR_AIWorld AIWorld1 : "{01DC74137CFDDB6A}Prefabs/AI/SCR_AIWorld_Arland.et"']);
+      expect(prefab(layer("{AABB1234AABB1234}worlds/Custom/Cain.ent"))).toEqual(['SCR_AIWorld AIWorld1 : "{672531FAC0834C06}Prefabs/AI/SCR_AIWorld_Cain.et"']);
+      expect(prefab(layer("{AABB1234AABB1234}worlds/Custom/MyMap.ent"))).toEqual(['SCR_AIWorld AIWorld1 : "{E0A05C76552E7F58}Prefabs/AI/SCR_AIWorld.et"']);
+    });
+
     it("each entity has a unique ID", () => {
-      const { defaultLayer } = generateConflictScenario(MINIMAL_OPTS);
+      const { defaultLayer } = generateConflictScenario({ ...MINIMAL_OPTS, writeAIWorld: true });
       const ids = [...defaultLayer.matchAll(/ID "([A-F0-9]{16})"/g)].map(m => m[1]);
       const unique = new Set(ids);
       expect(unique.size).toBe(ids.length);
@@ -241,10 +258,9 @@ describe("generateConflictScenario", () => {
       expect(all).not.toContain("SCR_Iron_CaptureAndHoldSpawnProtectionArea");
     });
 
-    it("includes SCR_CampaignSuppliesComponent on MOB", () => {
+    it("writes no supplies component on a MOB: its members are read only by obsolete methods in 1.9.0.37", () => {
       const { basesLayer } = generateConflictScenario(MINIMAL_OPTS);
-      expect(basesLayer).toContain("SCR_CampaignSuppliesComponent");
-      expect(basesLayer).toContain("m_iSupplies 500");
+      expect(basesLayer).not.toMatch(/SCR_CampaignSuppliesComponent|m_iSupplies|m_fOperationalRadius/);
     });
 
     it("places base at specified position", () => {
@@ -303,20 +319,6 @@ describe("generateConflictScenario", () => {
       for (const old of ["m_bRequiresCaptureAndHoldAreas", "m_aCaptureAndHoldAreaNames", "m_iAreaThreshold"]) {
         expect(basesLayer).not.toContain(old);
       }
-    });
-
-    it("excludes harbor type from $grp block", () => {
-      const opts = {
-        scenarioName: "Test",
-        worldName: "Everon",
-        bases: [
-          { name: "MOB_US", position: "0 0 0", faction: "US", type: "MOB" as const },
-          { name: "Harbor1", position: "100 0 100", faction: "US", type: "harbor" as const },
-        ],
-      };
-      const { basesLayer } = generateConflictScenario(opts);
-      expect(basesLayer).toContain("MOB_US {");
-      expect(basesLayer).not.toContain("Harbor1 {");
     });
 
     it("uses FIA patrol prefab for FIA faction", () => {
@@ -470,9 +472,9 @@ describe("generateConflictScenario", () => {
       expect(basesLayer).toContain('"Transmitting Range" 4500');
     });
 
-    it("excludes relay bases from the mission base whitelist", () => {
+    it("lists relay bases in the mission base whitelist by name only, so the game initializes them", () => {
       const { missionConf } = generateConflictScenario(opts);
-      expect(missionConf).not.toContain(`m_sBaseName "RelayTower"`);
+      expect(missionConf).toMatch(/m_sBaseName "RelayTower"\n  \}/);
     });
 
     it("excludes relay bases from patrol and defender generation", () => {

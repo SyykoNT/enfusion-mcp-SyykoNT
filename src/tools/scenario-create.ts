@@ -32,14 +32,13 @@ const BASE_SPEC_SCHEMA = z.object({
     .string()
     .describe("Starting faction key: 'US', 'USSR', 'FIA', or a custom key."),
   type: z
-    .enum(["base", "major", "MOB", "controlPoint", "sourceBase", "harbor", "relay"])
+    .enum(["base", "major", "MOB", "controlPoint", "relay"])
     .optional()
     .describe(
       "Base type. 'base' (default) = standard contested base. 'major' = large base with CAH areas (harbour, port, airfield). " +
-      "'MOB' = main operating base / HQ (no seizing, 3000 supplies, radio source). " +
-      "'controlPoint' = lightweight capture point. 'sourceBase' = supply source only, not capturable. " +
-      "'harbor' = supply-income harbor (skipped in Bases.layer, uses own prefab family). " +
-      "'relay' = pre-placed always-on radio relay tower, not capturable, extends coverage into radio gaps (default range 3000m)."
+      "'MOB' = main operating base and HQ candidate (no seizing, radio source; listed in the mission header as able to be an HQ). " +
+      "'controlPoint' = lightweight capture point. " +
+      "'relay' =pre-placed always-on radio relay tower, not capturable, extends coverage into radio gaps (default range 3000m)."
     ),
   radioRange: z
     .number()
@@ -57,6 +56,7 @@ const BASE_SPEC_SCHEMA = z.object({
 // game mode class is not seen. Upgrade if a parent needs it.
 const GAME_MODE_RE = /\bSCR_GameModeCampaign\b|\bSCR_BaseGameMode\b/;
 const FACTION_MGR_RE = /\bSCR_CampaignFactionManager\b|\bSCR_FactionManager\b/;
+const AIWORLD_RE = /\bAIWorld\b|SCR_AIWorld/;
 
 /** What a parent world's bytes (read as latin1: vanilla worlds are binary) say it already holds. */
 export function parentWorldHas(text: string): { gameMode: boolean; factionManager: boolean } {
@@ -102,7 +102,11 @@ function parentNotes(
   given: { suppliesIncome?: number; seedingEnabled?: boolean }
 ): string[] {
   if (!parent) {
-    return [`Parent world not readable: the game mode and faction manager are written; remove them if the parent has its own.`, ``];
+    return [
+      `Parent world not readable: the game mode and faction manager are written; remove them if the parent has its own.`,
+      `No AIWorld is written (a world holds one): add one to default.layer if the parent has none.`,
+      ``,
+    ];
   }
   const skipped = [parent.gameMode && "game mode", parent.factionManager && "faction manager"].filter(Boolean);
   if (skipped.length === 0) return [];
@@ -124,7 +128,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
     {
       description:
         "Generate a Conflict multiplayer scenario: a mission header (.conf with its .meta), a sub-scene world (.ent with its .meta) and 3 to 6 layer files " +
-        "(the result lists every file written). Generates the vanilla game mode (GameMode_Campaign) and CampaignFactionManager, each written only when the parent world has none, " +
+        "(the result lists every file written). Generates the vanilla game mode (GameMode_Campaign), CampaignFactionManager and AIWorld, each written only when the parent world has none (no AIWorld is written when the parent world cannot be read), " +
         "military bases with seizing, radio and patrol spawnpoints, optional relay towers (base type='relay') and optional seeding mode. " +
         "Seeding needs a third-party mod (see the seedingEnabled input). " +
         "Known worlds: " + KNOWN_WORLDS.join(", ") + ". " +
@@ -151,7 +155,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           .array(BASE_SPEC_SCHEMA)
           .min(1)
           .describe(
-            "List of military bases to place. Include at least one MOB per faction and 2+ contested bases. " +
+            "List of military bases to place. At least 2 must be type 'MOB' (the game picks one HQ per side from them); add 2+ contested bases. " +
             "Positions are world-space coordinates — use the map to find sensible locations."
           ),
         playerCount: z
@@ -237,6 +241,17 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
       projectPath,
       modName,
     }) => {
+      // Conflict stops at start with fewer than 2 HQ candidates, so nothing is written for it
+      const mobs = bases.filter((b) => b.type === "MOB").length;
+      if (mobs < 2) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `A Conflict mission needs at least 2 bases of type 'MOB' (HQ candidates); the game picks one HQ per side from them. Got ${mobs}.`,
+          }],
+          isError: true,
+        };
+      }
       const target = resolveWriteAddon(config, { projectPath, modName });
       try {
         validateFilename(scenarioName);
@@ -244,6 +259,8 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
         // Offline read of the parent world: null = not readable (also when there is no target to write to)
         const parentText = "error" in target ? null : readParentWorld(config, target.gproj, resolveWorldRef(worldName));
         const parent = parentText === null ? null : parentWorldHas(parentText);
+        // One AIWorld per world: write it only when the parent was read and holds none
+        const writeAIWorld = parentText !== null && !AIWORLD_RE.test(parentText);
 
         const worldGuid = generateGuid();
         const headerGuid = generateGuid();
@@ -258,6 +275,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           xpMultiplier,
           parentHasGameMode: parent?.gameMode,
           parentHasFactionManager: parent?.factionManager,
+          writeAIWorld,
           gameModeLabel,
           description,
           author,
@@ -367,6 +385,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
                 `Players: ${playerCount ?? 40}`,
                 ``,
                 ...parentNotes(parent, { suppliesIncome, seedingEnabled }),
+                ...(writeAIWorld ? [`No AIWorld found above this world, so default.layer gets one.`, ``] : []),
                 ...(seedingEnabled
                   ? [
                       `WARNING — seeding requires a third-party dependency:`,

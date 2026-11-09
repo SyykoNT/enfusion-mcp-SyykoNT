@@ -45,7 +45,7 @@ const listing = () => readdirSync(root, { recursive: true }).map(String).sort();
 const before = listing();
 const files = (dir: string) => readdirSync(dir, { recursive: true }).map(String).filter((f) => f !== "addon.gproj").sort();
 
-const scenario = { scenarioName: "WGA_Conflict", worldName: "Arland", bases: [{ name: "BaseAlpha", position: "100 0 100", faction: "US" }] };
+const scenario = { scenarioName: "WGA_Conflict", worldName: "Arland", bases: [{ name: "BaseAlpha", position: "100 0 100", faction: "US", type: "MOB" }, { name: "BaseBravo", position: "200 0 200", faction: "USSR", type: "MOB" }] };
 // The handler gets raw arguments (no zod defaults), so pass the defaults the schema would fill.
 const anim = {
   vehicleName: "WGA_Truck", vehicleType: "wheeled", wheelCount: 4, hasTurret: false, hasSuspensionIK: true, hasShockAbsorbers: false,

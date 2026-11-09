@@ -183,7 +183,7 @@ export function registerScenarioTools(server: McpServer, client: WorkbenchClient
           .optional()
           .describe(
             "(base) Base type. 'base' (default) = standard contested base. " +
-            "'MOB' = main operating base / HQ (seizing disabled, 3000 supplies, radio source)."
+            "'MOB' = main operating base / HQ candidate (seizing disabled, radio source)."
           ),
         patrolCount: z
           .number()
@@ -438,9 +438,9 @@ export function registerScenarioTools(server: McpServer, client: WorkbenchClient
             `Next steps:`,
             `1. Select ${names.base} and snap to terrain.`,
             `2. Adjust patrol spawnpoint positions around the base perimeter.`,
-            `3. Add ${names.base} name to the mission header m_aCampaignCustomBaseList.`,
+            `3. Add ${names.base} to the mission header m_aCampaignCustomBaseList with ${baseType === "MOB" ? "m_bCanBeHQ 1 and m_bIsControlPoint 1" : "m_bIsControlPoint 1 if it is a major base"}: an entry replaces the base's own flags, so one without them clears those flags.`,
             `4. Add SCR_DefenderSpawnerComponent entities inside base buildings for reinforcements.`,
-            baseType !== "MOB" ? `5. Ensure at least one MOB per faction exists in the world for radio coverage.` : `5. MOB placed — verify radio coverage reaches contested bases.`,
+            `5. A Conflict mission needs at least 2 MOBs, and radio coverage must reach the contested bases.`,
           );
 
           return {

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { z } from "zod";
 import { loadConfig } from "../../src/config.js";
 import { registerScenarioCreate, parentWorldHas, readParentWorld } from "../../src/tools/scenario-create.js";
 import { resolveWorldRef } from "../../src/templates/scenario.js";
@@ -35,7 +36,10 @@ function addon(name: string): string {
 }
 const args = (projectPath: string) => ({
   scenarioName: "ScnT", worldName: "Arland", projectPath,
-  bases: [{ name: "BaseAlpha", position: "1000 0 2000", faction: "US", type: "MOB" }],
+  bases: [
+    { name: "BaseAlpha", position: "1000 0 2000", faction: "US", type: "MOB" },
+    { name: "BaseBravo", position: "2000 0 3000", faction: "USSR", type: "MOB" },
+  ],
 });
 
 describe("scenario_create_conflict input docs", () => {
@@ -52,6 +56,35 @@ describe("scenario_create_conflict input docs", () => {
     expect(d).toMatch(/Regular bases use m_iRegularSuppliesIncomeBase .* only while m_bSuppliesAutoRegenerationEnabled is on/);
     expect(d).toContain("Source bases set their own");
     expect(d).toMatch(/radio extra .* applies only to non-HQ bases with auto regeneration on/);
+  });
+});
+
+describe("scenario_create_conflict base rules", () => {
+  const at = (name: string, type: string) => ({ name, position: "0 0 0", faction: "US", type });
+
+  it("refuses fewer than 2 MOBs with the HQ text and writes no file", async () => {
+    const dir = addon("M1");
+    for (const [bases, got] of [[[at("A", "MOB"), at("B", "base")], 1], [[at("A", "base")], 0]] as const) {
+      const r = await create({ ...args(dir), bases });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toBe(`A Conflict mission needs at least 2 bases of type 'MOB' (HQ candidates); the game picks one HQ per side from them. Got ${got}.`);
+      expect(readdirSync(dir)).toEqual(["addon.gproj"]);
+    }
+  });
+
+  it("refuses before looking for a target addon", async () => {
+    const r = await create({ ...args(addon("M2")), projectPath: undefined, bases: [at("A", "MOB")] });
+    expect(r.content[0].text).toMatch(/^A Conflict mission needs at least 2 bases/);
+  });
+
+  it("rejects the removed types sourceBase and harbor in the schema, and keeps relay", () => {
+    const bases = schema.bases as unknown as z.ZodTypeAny;
+    for (const type of ["sourceBase", "harbor"]) expect(bases.safeParse([at("A", type)]).success).toBe(false);
+    expect(bases.safeParse([at("A", "relay")]).success).toBe(true);
+  });
+
+  it("names the 2-MOB minimum in the bases description", () => {
+    expect(schema.bases.description).toContain("At least 2 must be type 'MOB'");
   });
 });
 
@@ -150,7 +183,7 @@ describe("scenario_create_conflict parent world (D-044)", () => {
   it("writes neither entity when the parent world and its layers hold them, and says which options are ignored", async () => {
     const dir = addon2("P1", {
       "Worlds/Parent.ent": "SubScene {\n}\nSCR_GameModeCampaign GameMode1 {\n}",
-      "Worlds/Parent_Layers/default.layer": "SCR_CampaignFactionManager FM1 {\n}",
+      "Worlds/Parent_Layers/default.layer": "SCR_CampaignFactionManager FM1 {\n}\nSCR_AIWorld AIWorld1 {\n}",
     });
     const r = await create(withParent(dir, "{1111111111111111}Worlds/Parent.ent"));
     expect(r.isError).toBeUndefined();
@@ -167,7 +200,7 @@ describe("scenario_create_conflict parent world (D-044)", () => {
   });
 
   it("follows the SubScene parent chain: a sub-scene this tool made over a world with the game mode writes neither again (B-041)", async () => {
-    const dir = addon2("P4", { "Worlds/Top.ent": "SubScene {\n}\nSCR_GameModeCampaign GameMode1 {\n}\nSCR_CampaignFactionManager FM1 {\n}" });
+    const dir = addon2("P4", { "Worlds/Top.ent": "SubScene {\n}\nSCR_GameModeCampaign GameMode1 {\n}\nSCR_CampaignFactionManager FM1 {\n}\nSCR_AIWorld AIWorld1 {\n}" });
     const first = await create({ ...withParent(dir, "{1111111111111111}Worlds/Top.ent"), scenarioName: "Mid" });
     expect(first.isError).toBeUndefined();
     expect(readFileSync(join(dir, "Worlds", "Mid_Layers", "default.layer"), "utf-8")).toBe("");
@@ -175,6 +208,40 @@ describe("scenario_create_conflict parent world (D-044)", () => {
     expect(r.isError).toBeUndefined();
     expect(readFileSync(join(dir, "Worlds", "Low_Layers", "default.layer"), "utf-8")).toBe("");
     expect(r.content[0].text).toContain("parent world already has a game mode and a faction manager");
+  });
+
+  describe("AIWorld", () => {
+    const aiWorlds = (dir: string) => defaultLayer(dir).match(/^SCR_AIWorld AIWorld1 : "[^"]*"/gm) ?? [];
+
+    it("writes the Eden AIWorld for an Everon parent that has none, in default.layer and no extra file", async () => {
+      const dir = addon2("A1", { "worlds/Eden/Eden.ent": "SubScene {\n}" });
+      const r = await create({ ...args(dir), worldName: "Everon" });
+      expect(r.isError).toBeUndefined();
+      expect(aiWorlds(dir)).toEqual(['SCR_AIWorld AIWorld1 : "{70CCCF16487C927F}Prefabs/AI/SCR_AIWorld_Eden.et"']);
+      expect(r.content[0].text).toContain("No AIWorld found above this world");
+      expect(readdirSync(join(dir, "Missions")).sort()).toEqual(["ScnT.conf", "ScnT.conf.meta"]);
+      expect(readdirSync(join(dir, "Worlds")).filter((f) => f.startsWith("ScnT")).sort()).toEqual(["ScnT.ent", "ScnT.ent.meta", "ScnT_Layers"]);
+      expect(readdirSync(join(dir, "Worlds", "ScnT_Layers")).sort()).toEqual(["Bases.layer", "Defenders.layer", "default.layer"]);
+    });
+
+    it("writes none when the parent world or its layers already hold one", async () => {
+      const dir = addon2("A2", { "Worlds/Parent.ent": "SubScene {\n}", "Worlds/Parent_Layers/default.layer": "SCR_AIWorld AIWorld1 : \"{70CCCF16487C927F}Prefabs/AI/SCR_AIWorld_Eden.et\" {\n}" });
+      await create(withParent(dir, "{1111111111111111}Worlds/Parent.ent"));
+      expect(aiWorlds(dir)).toEqual([]);
+    });
+
+    it("writes none and says so when the parent world cannot be read", async () => {
+      const dir = addon2("A3", {});
+      const r = await create(withParent(dir, "{1111111111111111}Worlds/Missing.ent"));
+      expect(aiWorlds(dir)).toEqual([]);
+      expect(r.content[0].text).toContain("No AIWorld is written");
+    });
+
+    it("writes the default SCR_AIWorld for a custom world with no terrain prefab of its own", async () => {
+      const dir = addon2("A4", { "Worlds/Parent.ent": "SubScene {\n}" });
+      await create(withParent(dir, "{1111111111111111}Worlds/Parent.ent"));
+      expect(aiWorlds(dir)).toEqual(['SCR_AIWorld AIWorld1 : "{E0A05C76552E7F58}Prefabs/AI/SCR_AIWorld.et"']);
+    });
   });
 
   it("stops on a parent chain that loops, and on a link that cannot be read", () => {
