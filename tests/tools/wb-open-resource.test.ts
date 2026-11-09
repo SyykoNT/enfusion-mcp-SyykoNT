@@ -6,6 +6,9 @@ import { formatDialogs, type DialogProbe, type WinInfo } from "../../src/watchdo
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
 import { decodeInt32LE, decodePascalString, encodePascalString } from "../../src/workbench/protocol.js";
 
+// The timeout path lists Workbench processes; keep the test off the real process list and, with dialogProbe stubbed, off the desktop.
+vi.mock("../../src/utils/process.js", async (orig) => ({ ...(await orig<typeof import("../../src/utils/process.js")>()), findPids: () => [4242] }));
+
 type Result = { content: { text: string }[]; isError?: boolean };
 type Handler = (args: Record<string, unknown>) => Promise<Result>;
 
@@ -62,16 +65,37 @@ describe("wb_open_resource", () => {
     expect(description).toContain("Run wb_save first");
   });
 
-  it("a timeout tells the user the Loading world dialog is probably waiting", async () => {
+  /** A real client timeout (the mock never answers) with the dialog probe stubbed to `probe`. */
+  const timedOut = async (probe: () => Promise<DialogProbe[]>, path = "Worlds/Other.ent") => {
     const t = setup(() => undefined);
+    t.client.dialogProbe = probe;
     // Shorten the default 10 s timeout for the test.
     const call = t.client.call.bind(t.client);
     vi.spyOn(t.client, "call").mockImplementation((f, p, o) => call(f, p, { ...o, timeout: 300 }));
-    const r = await t.tool.run({ path: "Worlds/Other.ent" });
+    return t.tool.run({ path });
+  };
+
+  it("a timeout tells the user the Loading world dialog is probably waiting", async () => {
+    const r = await timedOut(async () => [{ pid: 4242, dialogs: [{ hwnd: 1, cls: "Qt683QWindowIcon", text: "Loading world" }] }]);
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("Error opening resource:");
+    expect(r.content[0].text).toContain("Workbench PID 4242 has a dialog open"); // the stubbed probe, not a real Workbench
     expect(r.content[0].text).toContain("A timeout here usually means Workbench is showing the \"Loading world\" dialog");
     expect(r.content[0].text).toContain("use wb_save before opening another world");
+  });
+
+  it("a probe that could not run is reported, and the Loading world hint stays for a world", async () => {
+    const note = "dialog check unavailable: only Windows can be checked";
+    const hint = "usually means Workbench is showing the \"Loading world\" dialog";
+    const world = await timedOut(async () => [{ pid: 4242, unavailable: "only Windows can be checked" }]);
+    expect(world.content[0].text).toContain(`Workbench PID 4242 (${note})`);
+    expect(world.content[0].text).toContain(hint);
+    const prefab = await timedOut(async () => [{ pid: 4242, unavailable: "only Windows can be checked" }], "Prefabs/X.et");
+    expect(prefab.content[0].text).toContain(note);
+    expect(prefab.content[0].text).not.toContain(hint);
+    const threw = await timedOut(() => Promise.reject(new Error("boom")));
+    expect(threw.content[0].text).toContain("(dialog check unavailable: boom)");
+    expect(threw.content[0].text).toContain(hint);
   });
 
   it("the Loading world hint is only for .ent paths and only when no other dialog was named", async () => {

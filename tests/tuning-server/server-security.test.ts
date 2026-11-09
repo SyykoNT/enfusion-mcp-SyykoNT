@@ -151,6 +151,18 @@ describe("tuning server write path, hostile requests", () => {
       unchanged();
     });
 
+    it("413 reaches the client every time: the unread body is drained, so the socket is not reset", async () => {
+      // Closing with the 2 MB still unread made the OS reset the connection in a few posts per thousand (ECONNRESET), so send 1000.
+      const big = JSON.stringify({ pad: "x".repeat(2 * 1024 * 1024) });
+      const statuses: (number | string)[] = [];
+      for (let round = 0; round < 100; round++) {
+        const batch = await Promise.all(Array.from({ length: 10 }, () => post({}, big).then((r) => r.status, (e: Error) => e.message)));
+        statuses.push(...batch);
+      }
+      expect(statuses.filter((s) => s !== 413)).toEqual([]);
+      unchanged();
+    }, 60_000);
+
     it("413 for a chunked body over the cap (no Content-Length to check)", async () => {
       const res = await new Promise<{ status: number }>((resolve, reject) => {
         const req = request(

@@ -34,7 +34,6 @@ function readBody(req: IncomingMessage): Promise<string> {
       if (size > MAX_BODY_BYTES) {
         chunks.length = 0;
         req.removeAllListeners("data");
-        req.resume(); // drain the rest unread so the 413 can still be delivered
         reject(new BodyTooLarge());
         return;
       }
@@ -191,7 +190,7 @@ export function createTuningServer(
         }
 
         const tooLarge = () => {
-          res.setHeader("Connection", "close");
+          req.resume(); // drain the rest unread (never buffered) and keep the connection open: closing with it pending resets the socket and the client loses the 413
           sendJson(res, 413, { status: "error", message: `Request body is larger than ${MAX_BODY_BYTES} bytes` });
         };
         if (Number(req.headers["content-length"]) > MAX_BODY_BYTES) {
