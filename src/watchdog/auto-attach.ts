@@ -3,13 +3,12 @@
  * Runs beside live calls, so every process query on this path is async.
  */
 
-import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "../config.js";
 import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { WORKBENCH_INSTANCES, isOwned } from "../utils/instances.js";
-import { isAlive, processInfoAsync, sleep, type ProcInfo } from "../utils/process.js";
+import { isAlive, netstat, processInfoAsync, sleep, type ProcInfo } from "../utils/process.js";
 import { WB_EXE, isWatcherCmd, watchAction } from "../tools/wb-watch-tool.js";
 import { UNREADABLE, WATCH_DIR, autoBlocked, readStates, startWatcher, watcherOf, type StartWatcher } from "./wb-watch.js";
 import { portOwner } from "./signals.js";
@@ -35,9 +34,6 @@ export interface AttachResult {
 }
 
 export const LOCAL_HOSTS = ["127.0.0.1", "localhost", "::1"];
-
-export const netstat = () =>
-  new Promise<string>((done) => execFile("netstat", ["-ano", "-p", "TCP"], { windowsHide: true, timeout: 10_000 }, (err, out) => done(err ? "" : String(out))));
 
 export function attachDeps(config: Config): AttachDeps {
   return {

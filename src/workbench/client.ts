@@ -9,18 +9,18 @@
 
 import { Socket } from "node:net";
 import { appendFileSync, existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
 import { findGproj, findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
-import { forbiddenRoot } from "../utils/safe-path.js";
-import { findPids, isAlive } from "../utils/process.js";
-import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
+import { forbiddenRoot, sameRealPath } from "../utils/safe-path.js";
+import { argValue, findPids, isAlive, netstat, processInfoAsync, type ProcInfo } from "../utils/process.js";
+import { OWNER, WORKBENCH_INSTANCES, isOwned, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { crashLogsDir, workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher, sweepForStart } from "../watchdog/wb-watch.js";
-import { LOCAL_HOSTS, attachDeps, ensureWatched, netstat, type AttachResult } from "../watchdog/auto-attach.js";
+import { LOCAL_HOSTS, attachDeps, ensureWatched, type AttachResult } from "../watchdog/auto-attach.js";
 import { probeDialogs, probeTitles, type TitleProbe } from "../watchdog/probe.js";
 import { dialogKind, formatDialogs, portOwner, unsavedWorld, type DialogProbe } from "../watchdog/signals.js";
 import type { Config } from "../config.js";
@@ -210,6 +210,12 @@ export class WorkbenchClient {
     netstat: (): Promise<string> => (process.platform === "win32" ? netstat() : Promise.reject(new Error("only Windows can be checked"))),
     titles: (pid: number): Promise<TitleProbe> => probeTitles(pid),
   };
+  /** What portOwnerInfo reads besides worldProbe.netstat. Public so tests can stub it: the real ones run PowerShell, and only on Windows. */
+  ownerProbe = {
+    platform: process.platform as NodeJS.Platform,
+    proc: (pid: number): Promise<ProcInfo | undefined> => processInfoAsync(pid),
+    owned: (pid: number, proc: ProcInfo): boolean => isOwned(pid, WORKBENCH_INSTANCES, proc),
+  };
   /** The automatic watch check (B-093). Public so tests can stub it: the real one runs netstat and PowerShell. */
   watchCheck: () => Promise<AttachResult> = () => ensureWatched(this.port, this.host, attachDeps(this.config!));
   /** How long a timeout reply waits for the watch check. Public so tests can shorten it. */
@@ -228,7 +234,7 @@ export class WorkbenchClient {
 
   constructor(
     private readonly host: string,
-    private readonly port: number,
+    readonly port: number,
     private readonly config?: Config,
     private readonly clientId: string = DEFAULT_CLIENT_ID
   ) {}
@@ -275,6 +281,41 @@ export class WorkbenchClient {
       }
       throw err;
     }
+  }
+
+  /**
+   * Who answers this client's NET API port: the listening PID, its -gproj and whether this MCP started it.
+   * A field is missing when it is unknown: a non-local host or a non-Windows PC (no netstat runs), a failed netstat or process
+   * read, an owner without -gproj. Never throws.
+   */
+  async portOwnerInfo(): Promise<{ pid?: number; gproj?: string; owned?: boolean }> {
+    if (!LOCAL_HOSTS.includes(this.host.toLowerCase()) || this.ownerProbe.platform !== "win32") return {};
+    try {
+      const pid = portOwner(await this.worldProbe.netstat(), this.port);
+      if (!pid) return {};
+      const proc = await this.ownerProbe.proc(pid);
+      return proc ? { pid, gproj: argValue(proc.cmd, "-gproj"), owned: this.ownerProbe.owned(pid, proc) } : { pid };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * A Workbench already answers the port: its identity line, and `refuse` when gprojPath names a different project (real paths,
+   * so a junction to the same file is the same). An owner whose project cannot be told is shared, never refused. Starts and kills nothing.
+   */
+  async answeringWorkbench(gprojPath?: string): Promise<{ line: string; refuse?: string }> {
+    const o = await this.portOwnerInfo();
+    const by = o.owned === undefined ? "" : o.owned ? ", started by this MCP" : ", not started by this MCP";
+    const line = `${o.pid ? `Workbench PID ${o.pid}` : "A Workbench"} answers NET API port ${this.port}: project ${o.gproj ?? "unknown"}${by}.`;
+    // shortcut: a relative -gproj cannot be resolved from here, so it counts as unknown; upgrade if Workbench is ever started that way.
+    if (!gprojPath || !o.gproj || !isAbsolute(o.gproj) || sameRealPath(gprojPath, o.gproj, true)) return { line };
+    return {
+      line,
+      refuse:
+        `Refused: ${line} You asked for ${gprojPath}. Nothing was started or written and that Workbench is left running: ` +
+        `close it or ask whoever uses it, then call wb_launch again.`,
+    };
   }
 
   /**
@@ -756,7 +797,9 @@ export class WorkbenchClient {
   private async launchWorkbench(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
     // 1. Check if already running (maybe it came up between the failed call and now)
     if (await this.ping()) {
-      logger.info("Workbench is already running.");
+      const who = await this.answeringWorkbench(gprojPath);
+      if (who.refuse) throw new WorkbenchError(who.refuse, "LAUNCH_FAILED");
+      logger.info(`Workbench is already running. ${who.line}`);
       return;
     }
     // A running Workbench whose NET API does not answer is loading, showing a dialog or hung.

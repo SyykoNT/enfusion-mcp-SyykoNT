@@ -22,8 +22,10 @@ export function registerWbLaunch(
         "repo's local exclude file (.git/info/exclude) and refuses if handler files are committed. Pass gprojPath; without it the server " +
         "picks ENFUSION_DEFAULT_MOD or the first .gproj under the project path, never one in ENFUSION_PROTECTED_ADDONS. " +
         "A protected gprojPath opens only when it already holds the handlers (nothing is written into it); otherwise it is refused. If a Workbench already answers on " +
-        "the NET API it reports that and starts nothing; if one is running but not answering it refuses to start " +
-        "another. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
+        "the NET API, nothing is started or closed. When gprojPath is a different project than the one that Workbench has open, " +
+        "wb_launch refuses and names it (PID, project, started by this MCP or not). With the same project, or without gprojPath, " +
+        "it shares that Workbench and says which one answers. If the project it has open cannot be read, it shares it and says " +
+        "\"project unknown\". If one is running but not answering it refuses to start another. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
       inputSchema: {
         gprojPath: z
@@ -54,14 +56,18 @@ export function registerWbLaunch(
     async ({ gprojPath, unattended, worldPath }) => {
       try {
         const alreadyRunning = await client.ping();
-        const gitNote = alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath);
+        const who = alreadyRunning ? await client.answeringWorkbench(gprojPath) : undefined;
+        if (who?.refuse) {
+          return { content: [{ type: "text" as const, text: `**Launch Refused**\n\n${who.refuse}${formatConnectionStatus(client)}` }], isError: true };
+        }
+        const gitNote =alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath);
 
         // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
           config.defaultMod = basename(dirname(resolve(gprojPath)));
         }
 
-        if (alreadyRunning) {
+        if (who) {
           const notOpened = worldPath
             ? `\n\nworldPath was not opened: a running Workbench does not switch worlds here. Open it with **wb_open_resource**, or close Workbench and launch again.`
             : "";
@@ -69,7 +75,7 @@ export function registerWbLaunch(
             content: [
               {
                 type: "text" as const,
-                text: `**Workbench Already Running**: NET API is responding. All \`wb_*\` tools are available.${notOpened}${formatConnectionStatus(client)}`,
+                text: `**Workbench Already Running**: NET API is responding. All \`wb_*\` tools are available.\n\n${who.line}${notOpened}${formatConnectionStatus(client)}`,
               },
             ],
           };

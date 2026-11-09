@@ -8,7 +8,15 @@ import { WATCH_DIR, alertLine, isAlert, readStates } from "../watchdog/wb-watch.
  * Appended to all wb_* tool responses so the LLM always knows the mode.
  */
 export function formatConnectionStatus(client: WorkbenchClient, watchDir = WATCH_DIR): string {
-  return connectionLine(client) + watchAlerts(watchDir) + watchEvents(watchDir);
+  return connectionLine(client) + watchAlerts(watchDir) + portOwnerLines(watchDir, client.port) + watchEvents(watchDir);
+}
+
+/** One footer line per live watched Workbench that does not hold the NET API port: another process answers it. Reads the state files only. */
+export function portOwnerLines(dir: string, port: number): string {
+  return readStates(dir).states
+    .filter((s) => s.state !== "exited" && s.state !== "crashed" && s.portOwner && s.portOwner !== s.pid)
+    .map((s) => `\n\`Watchdog: Workbench PID ${s.pid} does not hold NET API port ${port}; PID ${s.portOwner} answers it.\``)
+    .join("");
 }
 
 /** Events from before this MCP process started are not repeated in its tool results. */

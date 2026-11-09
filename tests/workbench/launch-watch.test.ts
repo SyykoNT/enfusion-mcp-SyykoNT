@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -14,6 +14,7 @@ const sys = vi.hoisted(() => ({
   spawnEnv: [] as NodeJS.ProcessEnv[], spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][], alive: true,
   // what the crash sweep and the spawn did, in order, and what the sweep returns
   order: [] as string[], sweepArgs: [] as unknown[][], saved: [] as { folder: string; dest: string }[], errors: [] as string[],
+  killed: [] as number[][],
 }));
 vi.mock("../../src/watchdog/crash-sweep.js", async (orig) => ({
   ...(await orig<typeof import("../../src/watchdog/crash-sweep.js")>()),
@@ -35,6 +36,7 @@ vi.mock("node:child_process", async (orig) => ({
 vi.mock("../../src/utils/process.js", async (orig) => ({
   ...(await orig<typeof import("../../src/utils/process.js")>()),
   findPids: () => [],
+  killPids: vi.fn((pids: number[]) => sys.killed.push(pids)),
   isAlive: () => sys.alive,
   spawnDetached: vi.fn((_exe: string, args: string[]) => {
     sys.watcher.push(args);
@@ -77,6 +79,7 @@ beforeEach(() => {
   sys.sweepArgs = [];
   sys.saved = [];
   sys.errors = [];
+  sys.killed = [];
 });
 
 describe("launchWorkbench records and watches what it starts", () => {
@@ -280,6 +283,7 @@ describe("launchWorkbench saves crash folders before it starts Workbench (B-044)
     await expect(bad.c.ensureRunning(bad.gproj, false, "World.txt")).rejects.toThrow(/worldPath must be a world/);
     const answering = client();
     vi.spyOn(answering.c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockResolvedValue({});
+    answering.c.worldProbe.netstat = async () => ""; // no real netstat: the owner stays unknown
     expect(await answering.c.ensureRunning(answering.gproj)).toBeUndefined();
     expect(sys.order).toEqual([]);
   });
@@ -300,5 +304,54 @@ describe("launchWorkbench saves crash folders before it starts Workbench (B-044)
       delete process.env.ENFUSION_WORKBENCH_PROFILE;
       delete process.env.ENFUSION_FORBIDDEN_DIRS;
     }
+  });
+});
+
+describe("launchWorkbench with a Workbench that already answers the port", () => {
+  const LISTEN = "  TCP    0.0.0.0:5775           0.0.0.0:0              LISTENING       4321\r\n";
+  function answering(ownerGproj: string | undefined) {
+    const { c, gproj } = client();
+    vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockResolvedValue({});
+    c.worldProbe.netstat = async () => LISTEN;
+    c.ownerProbe = {
+      platform: "win32",
+      proc: async () => ({ pid: 4321, ppid: 1, cmd: `ArmaReforgerWorkbenchSteamDiag.exe${ownerGproj ? ` -gproj "${ownerGproj}"` : ""} -addonsDir "x"`, created: 1 }),
+      owned: () => false,
+    };
+    return { c, gproj };
+  }
+
+  it("refuses a different project by name: nothing spawned, swept, written or killed", async () => {
+    const other = join(home, "projects", "Other", "addon.gproj");
+    const { c } = answering(other);
+    const asked = join(home, "projects", "Fresh", "addon.gproj"); // no handlers in it yet
+    mkdirSync(join(home, "projects", "Fresh"), { recursive: true });
+    writeFileSync(asked, 'GameProject {\n ID "Fresh"\n GUID "3333333333333333"\n}\n');
+    const err = (await c.ensureRunning(asked).catch((e: Error) => e)) as Error;
+    expect(err).toBeInstanceOf(WorkbenchError);
+    for (const part of ["PID 4321", other, "not started by this MCP", "close it or ask whoever uses it"]) expect(err.message).toContain(part);
+    expect(sys.order).toEqual([]);
+    expect(sys.killed).toEqual([]);
+    expect(existsSync(join(home, "projects", "Fresh", "Scripts"))).toBe(false);
+  });
+
+  it("shares the same project, also through a junction, and an owner that cannot be told", async () => {
+    const link = join(home, "link-to-TestAddon");
+    symlinkSync(join(home, "projects", "TestAddon"), link, "junction");
+    for (const [owner, line] of [
+      [join(link, "addon.gproj"), /project .*addon\.gproj, not started by this MCP\./],
+      [undefined, /project unknown, not started by this MCP\./],
+      ["addon.gproj", /project addon\.gproj,/], // relative: cannot be resolved from here
+    ] as const) {
+      const { c, gproj } = answering(owner);
+      const info = vi.spyOn(logger, "info").mockImplementation(() => {});
+      try {
+        expect(await c.ensureRunning(gproj)).toBeUndefined();
+        expect(info.mock.calls.map((a) => a[0]).join("\n")).toMatch(line);
+      } finally {
+        info.mockRestore();
+      }
+    }
+    expect(sys.order).toEqual([]);
   });
 });

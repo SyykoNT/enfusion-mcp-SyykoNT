@@ -119,6 +119,11 @@ export function processInfoAsync(pid: number): Promise<ProcInfo | undefined> {
     })
   );
 }
+
+/** `netstat -ano -p TCP` output without blocking; "" when the query fails. */
+export const netstat = () =>
+  new Promise<string>((done) => execFile("netstat", ["-ano", "-p", "TCP"], { windowsHide: true, timeout: 10_000 }, (err, out) => done(err ? "" : String(out))));
+
 export const serverProcesses = () => cimQuery("Name='ArmaReforgerServerDiag.exe' OR Name='ArmaReforgerServer.exe'");
 export const clientProcesses = () => cimQuery("Name='ArmaReforgerSteamDiag.exe' OR Name='ArmaReforgerSteam.exe'");
 export const crashReporters = () => cimQuery("Name='CrashReporter.exe'");

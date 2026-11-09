@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkbenchClient } from "../../src/workbench/client.js";
@@ -166,5 +166,21 @@ describe("ensureMode", () => {
     const off = new WorkbenchClient("127.0.0.1", 1, { autoWatch: false } as Config);
     vi.spyOn(off, "probeMode").mockResolvedValue("timeout");
     expect(await ensureMode(off, "edit", "save")).not.toContain("Watchdog");
+  });
+});
+
+describe("formatConnectionStatus: a Workbench that does not hold the NET API port", () => {
+  const dir = mkdtempSync(join(tmpdir(), "emcp-status-owner-"));
+  const state = (pid: number, extra: Record<string, unknown>) =>
+    writeFileSync(join(dir, `${pid}.json`), JSON.stringify({ pid, watcherPid: 1, owned: false, state: "ok", since: 0, lastLines: [], actions: [], dismiss: "watched", autoRecover: false, updated: 0, ...extra }));
+  const footer = () => formatConnectionStatus(new WorkbenchClient("127.0.0.1", 5775), dir);
+
+  it("names the PID that answers, only for a live state whose owner differs", () => {
+    state(100, { portOwner: 200 });
+    expect(footer()).toContain("Workbench PID 100 does not hold NET API port 5775; PID 200 answers it.");
+    for (const extra of [{ portOwner: 100 }, { portOwner: null }, {}, { state: "exited", portOwner: 200 }]) {
+      state(100, extra);
+      expect(footer()).not.toContain("does not hold");
+    }
   });
 });
