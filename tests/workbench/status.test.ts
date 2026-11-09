@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkbenchClient } from "../../src/workbench/client.js";
-import { formatConnectionStatus, ensureMode } from "../../src/workbench/status.js";
+import { formatConnectionStatus, ensureMode, portOwnerLines } from "../../src/workbench/status.js";
 import type { Config } from "../../src/config.js";
 import { encodePascalString, decodePascalString, decodeInt32LE } from "../../src/workbench/protocol.js";
 
@@ -172,7 +172,7 @@ describe("ensureMode", () => {
 describe("formatConnectionStatus: a Workbench that does not hold the NET API port", () => {
   const dir = mkdtempSync(join(tmpdir(), "emcp-status-owner-"));
   const state = (pid: number, extra: Record<string, unknown>) =>
-    writeFileSync(join(dir, `${pid}.json`), JSON.stringify({ pid, watcherPid: 1, owned: false, state: "ok", since: 0, lastLines: [], actions: [], dismiss: "watched", autoRecover: false, updated: 0, ...extra }));
+    writeFileSync(join(dir, `${pid}.json`), JSON.stringify({ pid, watcherPid: process.pid, owned: false, state: "ok", since: 0, lastLines: [], actions: [], dismiss: "watched", autoRecover: false, updated: 0, ...extra }));
   const footer = () => formatConnectionStatus(new WorkbenchClient("127.0.0.1", 5775), dir);
 
   it("names the PID that answers, only for a live state whose owner differs", () => {
@@ -182,5 +182,11 @@ describe("formatConnectionStatus: a Workbench that does not hold the NET API por
       state(100, extra);
       expect(footer()).not.toContain("does not hold");
     }
+  });
+
+  it("gives no line when the watcher of the state is dead", () => {
+    state(100, { portOwner: 200 });
+    expect(portOwnerLines(dir, 5775, () => true)).toContain("does not hold");
+    expect(portOwnerLines(dir, 5775, () => false)).toBe("");
   });
 });

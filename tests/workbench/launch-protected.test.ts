@@ -70,9 +70,12 @@ describe("wb_launch worldPath", () => {
   it("does not switch worlds in a running Workbench and says so", async () => {
     const { config, client } = setup();
     vi.spyOn(client, "ping").mockResolvedValue(true);
+    const netstat = vi.fn(async () => ""); // no real netstat: the owner stays unknown
+    client.worldProbe.netstat = netstat;
     const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
     const r = await wbTools(config, client).wb_launch({ worldPath: "worlds/Test.ent" });
     expect(launch).not.toHaveBeenCalled();
+    expect(netstat).toHaveBeenCalledTimes(1); // the injected one answered, so no real netstat started
     expect(r.content[0].text).toMatch(/Already Running[\s\S]*worldPath was not opened[\s\S]*wb_open_resource/);
   });
 

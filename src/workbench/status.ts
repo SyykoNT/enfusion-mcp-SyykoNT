@@ -2,6 +2,7 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkbenchClient } from "./client.js";
 import { WATCH_DIR, alertLine, isAlert, readStates } from "../watchdog/wb-watch.js";
+import { isAlive } from "../utils/process.js";
 
 /**
  * Build a status footer line showing current Workbench connection state.
@@ -11,10 +12,10 @@ export function formatConnectionStatus(client: WorkbenchClient, watchDir = WATCH
   return connectionLine(client) + watchAlerts(watchDir) + portOwnerLines(watchDir, client.port) + watchEvents(watchDir);
 }
 
-/** One footer line per live watched Workbench that does not hold the NET API port: another process answers it. Reads the state files only. */
-export function portOwnerLines(dir: string, port: number): string {
+/** One footer line per watched Workbench (live state, watcher alive) that does not hold the NET API port: another process answers it. Reads the state files only. */
+export function portOwnerLines(dir: string, port: number, alive = isAlive): string {
   return readStates(dir).states
-    .filter((s) => s.state !== "exited" && s.state !== "crashed" && s.portOwner && s.portOwner !== s.pid)
+    .filter((s) => s.state !== "exited" && s.state !== "crashed" && alive(s.watcherPid) && s.portOwner && s.portOwner !== s.pid)
     .map((s) => `\n\`Watchdog: Workbench PID ${s.pid} does not hold NET API port ${port}; PID ${s.portOwner} answers it.\``)
     .join("");
 }

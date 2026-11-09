@@ -58,9 +58,9 @@ export function registerWbLaunch(
         const alreadyRunning = await client.ping();
         const who = alreadyRunning ? await client.answeringWorkbench(gprojPath) : undefined;
         if (who?.refuse) {
-          return { content: [{ type: "text" as const, text: `**Launch Refused**\n\n${who.refuse}${formatConnectionStatus(client)}` }], isError: true };
+          return { content: [{ type: "text" as const, text: `${who.refuse}${formatConnectionStatus(client)}` }], isError: true };
         }
-        const gitNote =alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath);
+        const gitNote = alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath);
 
         // Remember which addon was requested so other tools default to it (not after a refused launch)
         if (gprojPath) {
