@@ -27,7 +27,8 @@ export function registerWbLaunch(
         "wb_launch refuses and names it (PID, project, started by this MCP or not). With the same project, or without gprojPath, " +
         "it shares that Workbench and says which one answers. If the project it has open cannot be read, it shares it and says " +
         "\"project unknown\". If one is running but not answering it refuses to start another. A launch is refused, before anything is written or started, when the " +
-        "project or one of its dependencies exists as two copies with the same GUID in the -addonsDir folders (addonsDirs, else ENFUSION_ADDONS_DIR). Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
+        "project or one of its dependencies exists as two copies with the same GUID in the -addonsDir folders (addonsDirs, else ENFUSION_ADDONS_DIR), " +
+        "or when under 4 GB of memory is free; under 9 GB free it starts and the reply carries a warning. Check that nobody else is using Workbench first. When done, call wb_cleanup to remove the " +
         "handler scripts from the mod before the user publishes.",
       inputSchema: {
         gprojPath: z

@@ -11,6 +11,7 @@ import { Socket } from "node:net";
 import { appendFileSync, existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { freemem } from "node:os";
 import { spawn } from "node:child_process";
 import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
@@ -39,6 +40,9 @@ const HANDLER_PATH = `Scripts/WorkbenchGame/${HANDLER_FOLDER}/`;
 const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
 const WORLD_LAUNCH_TIMEOUT_MS = 300_000;
+// A GUI Workbench held 4.3 to 8.9 GB of working set on the PC this was measured on.
+const MIN_FREE_GB = 4;
+const WARN_FREE_GB = 9;
 
 /** The reply line when a Workbench is already up or starting: it keeps the -addonsDir it began with. */
 export const ADDONS_DIRS_NOT_APPLIED = (why: string) =>
@@ -218,6 +222,8 @@ export class WorkbenchClient {
     proc: (pid: number): Promise<ProcInfo | undefined> => processInfoAsync(pid),
     owned: (pid: number, proc: ProcInfo): boolean => isOwned(pid, WORKBENCH_INSTANCES, proc),
   };
+  /** Free memory in bytes before a GUI launch. Public so tests can set it. */
+  freeMemory: () => number = () => freemem();
   /** The automatic watch check (B-093). Public so tests can stub it: the real one runs netstat and PowerShell. */
   watchCheck: () => Promise<AttachResult> = () => ensureWatched(this.port, this.host, attachDeps(this.config!));
   /** How long a timeout reply waits for the watch check. Public so tests can shorten it. */
@@ -845,6 +851,18 @@ export class WorkbenchClient {
     if (dup) throw new WorkbenchError(dup, "LAUNCH_FAILED");
     // Built before any handler copy, so a bad worldPath is refused with nothing written.
     let args = buildLaunchArgs({ gproj: resolvedGproj, addonsDir, unattended, worldPath });
+    // Also before any handler copy or crash sweep. Written as !(x >= limit) so an unreadable value refuses too.
+    const freeGb = this.freeMemory() / 2 ** 30;
+    if (!(freeGb >= MIN_FREE_GB)) {
+      throw new WorkbenchError(
+        `Refused: ${freeGb.toFixed(1)} GB of memory free, under the ${MIN_FREE_GB} GB a GUI Workbench needs (it used up to about 9 GB on the PC this was measured on). ` +
+          `Nothing was written or started. Close other programs and call wb_launch again.`,
+        "LAUNCH_FAILED"
+      );
+    }
+    const lowMemory = freeGb < WARN_FREE_GB
+      ? `**Warning:** ${freeGb.toFixed(1)} GB of memory free; a GUI Workbench used up to about 9 GB on the PC this was measured on. It may run slowly or be closed by Windows.`
+      : undefined;
     let gitNote: string | undefined;
     if (resolvedGproj && !isProtected) {
       gitNote = this.installHandlerScripts(dirname(resolvedGproj));
@@ -930,7 +948,7 @@ export class WorkbenchClient {
         this._state.connected = true;
         this._state.lastUpdated = Date.now();
         logger.info("Workbench NET API is responding.");
-        return [gitNote, swept].filter(Boolean).join("\n\n") || undefined;
+        return [gitNote, swept, lowMemory].filter(Boolean).join("\n\n") || undefined;
       } catch (err) {
         if (err instanceof WorkbenchError) {
           lastErrorCode = err.code;

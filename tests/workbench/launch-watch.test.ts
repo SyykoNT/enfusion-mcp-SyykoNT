@@ -54,12 +54,14 @@ const { registerWbLaunch } = await import("../../src/tools/wb-launch.js");
 const { logger } = await import("../../src/utils/logger.js");
 
 const crashRoot = join(home, "Crash Logs");
+const GB = 2 ** 30;
 
 function client(extra: Partial<Config> = {}) {
   const projects = join(home, "projects");
   mkdirSync(join(projects, "TestAddon"), { recursive: true });
   writeFileSync(join(projects, "TestAddon", "addon.gproj"), 'GameProject {\n ID "TestAddon"\n GUID "1111111111111111"\n}\n');
   const c = new WorkbenchClient("127.0.0.1", 5775, { projectPath: projects, workbenchPath: join(home, "Tools"), crashLogsDir: crashRoot, ...extra } as Config);
+  c.freeMemory = () => 16 * GB; // not the test PC's real reading
   // First call is the "already running?" ping (no), every later one is the NET API wait (answers at once).
   let calls = 0;
   vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockImplementation(async () => {
@@ -360,5 +362,86 @@ describe("launchWorkbench with a Workbench that already answers the port", () =>
       }
     }
     expect(sys.order).toEqual([]);
+  });
+});
+
+describe("launchWorkbench checks free memory before a GUI launch", () => {
+  // An addon that never held handlers, so "nothing copied" can be told from a leftover of an earlier test.
+  let n = 0;
+  function fresh() {
+    const dir = join(home, "projects", `Ram${n++}`);
+    mkdirSync(dir, { recursive: true });
+    const gproj = join(dir, "addon.gproj");
+    writeFileSync(gproj, 'GameProject {\n ID "Ram"\n GUID "4444444444444444"\n}\n');
+    return { dir, gproj };
+  }
+  // The wb_launch tool pings once, then launchWorkbench pings again: both refused, then the NET API answers.
+  function tool(c: InstanceType<typeof WorkbenchClient>) {
+    let calls = 0;
+    vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockImplementation(async () => {
+      if (calls++ < 2) throw new Error("refused");
+      return {};
+    });
+    const tools: Record<string, (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>> = {};
+    registerWbLaunch({ registerTool: (name: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>) => { tools[name] = h; } } as unknown as McpServer, {} as Config, c);
+    return tools.wb_launch;
+  }
+
+  it("refuses at 3.9 GB free: nothing is spawned, swept, watched or copied", async () => {
+    const { c } = client();
+    const { dir, gproj } = fresh();
+    c.freeMemory = () => 3.9 * GB;
+    const err = (await c.ensureRunning(gproj).catch((e: Error) => e)) as Error;
+    expect(err).toBeInstanceOf(WorkbenchError);
+    expect(err.message).toMatch(/Refused: 3\.9 GB of memory free, under the 4 GB/);
+    expect(sys.spawnArgs).toEqual([]);
+    expect(sys.order).toEqual([]); // no sweep, no spawn
+    expect(sys.watcher).toEqual([]);
+    expect(existsSync(join(dir, "Scripts"))).toBe(false);
+  });
+
+  it("refuses when the reading is not a number", async () => {
+    const { c } = client();
+    c.freeMemory = () => NaN;
+    await expect(c.ensureRunning(fresh().gproj)).rejects.toThrow(/Refused: NaN GB/);
+    expect(sys.order).toEqual([]);
+  });
+
+  it("starts at 8.9 GB free and the wb_launch reply carries the warning once", async () => {
+    const { c } = client();
+    c.freeMemory = () => 8.9 * GB;
+    const text = (await tool(c)({ gprojPath: fresh().gproj })).content[0].text;
+    expect(sys.spawnArgs.length).toBe(1);
+    expect(text.split("**Warning:** 8.9 GB of memory free").length - 1).toBe(1);
+  });
+
+  it("starts at 9.1 GB free with no warning line", async () => {
+    const { c } = client();
+    const reading = vi.fn(() => 9.1 * GB);
+    c.freeMemory = reading;
+    const text = (await tool(c)({ gprojPath: fresh().gproj })).content[0].text;
+    expect(reading).toHaveBeenCalledTimes(1);
+    expect(sys.spawnArgs.length).toBe(1);
+    expect(text).not.toContain("of memory free");
+  });
+
+  it("runs after the existing refusals: a protected addon and a bad worldPath keep their own messages at 3.9 GB", async () => {
+    const { c } = client({ protectedAddons: ["4444444444444444"] });
+    c.freeMemory = () => 3.9 * GB;
+    await expect(c.ensureRunning(fresh().gproj)).rejects.toThrow(/protected addon/);
+    const bad = client();
+    bad.c.freeMemory = () => 3.9 * GB;
+    await expect(bad.c.ensureRunning(fresh().gproj, false, "World.txt")).rejects.toThrow(/worldPath must be a world/);
+  });
+
+  it("is not read at all when a Workbench already answers", async () => {
+    const { c, gproj } = client();
+    const reading = vi.fn(() => 1 * GB);
+    c.freeMemory = reading;
+    vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockResolvedValue({});
+    c.worldProbe.netstat = async () => ""; // no real netstat: the owner stays unknown
+    expect(await c.ensureRunning(gproj)).toBeUndefined();
+    expect(reading).not.toHaveBeenCalled();
+    expect(sys.spawnArgs).toEqual([]);
   });
 });
