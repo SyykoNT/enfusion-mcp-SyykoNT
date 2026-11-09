@@ -40,6 +40,18 @@ describe("wb_launch", () => {
   });
 });
 
+describe("wb_launch reply after handlers were refreshed", () => {
+  it("carries the line that names the replaced and added files", async () => {
+    const client = new WorkbenchClient("127.0.0.1", 1);
+    client.ping = async () => false;
+    const note = "Handler scripts in X refreshed from this MCP version: replaced EMCP_WB_Clipboard.c; added EMCP_WB_Components.c.";
+    client.ensureRunning = async () => note;
+    const r = await launchTool({} as Config, client)({ gprojPath: join(home, "A", "addon.gproj") });
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain(note);
+  });
+});
+
 describe("wb_launch with a Workbench that already answers the port", () => {
   const LISTEN = "  TCP    0.0.0.0:5775           0.0.0.0:0              LISTENING       4321\r\n";
   const mine = join(home, "A", "addon.gproj");

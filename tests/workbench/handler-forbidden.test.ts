@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,18 @@ vi.mock("../../src/utils/process.js", async (importActual) => ({
   ...(await importActual<typeof import("../../src/utils/process.js")>()),
   findPids: vi.fn(() => []),
 }));
+// Lets one test make the Nth handler copy fail; every other copy goes through.
+const copies = vi.hoisted(() => ({ failAt: -1, n: 0 }));
+vi.mock("node:fs", async (importActual) => {
+  const actual = await importActual<typeof import("node:fs")>();
+  return {
+    ...actual,
+    copyFileSync: (...a: Parameters<typeof actual.copyFileSync>) => {
+      if (copies.failAt >= 0 && copies.n++ === copies.failAt) throw new Error("disk full");
+      return actual.copyFileSync(...a);
+    },
+  };
+});
 const { WorkbenchClient } = await import("../../src/workbench/client.js");
 const { registerWbLaunch } = await import("../../src/tools/wb-launch.js");
 
@@ -21,6 +33,7 @@ type Result = { content: { text: string }[]; isError?: boolean };
 const made: string[] = [];
 const tmp = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); made.push(d); return d; };
 afterEach(() => {
+  copies.failAt = -1;
   delete process.env.ENFUSION_FORBIDDEN_DIRS;
   for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
 });
@@ -98,5 +111,46 @@ describe("normal paths are unchanged", () => {
     const r = await tools.wb_cleanup({ modDir: addon });
     expect(r.isError).toBeUndefined();
     expect(r.content[0].text).toMatch(/No Cleanup Needed/);
+  });
+});
+
+describe("wb_launch refreshes handlers in an unprotected addon", () => {
+  const bundledFile = (f: string) => readFileSync(join(bundled, f));
+  const install = (client: InstanceType<typeof WorkbenchClient>, addon: string) =>
+    (client as unknown as { installHandlerScripts(d: string): string | undefined }).installHandlerScripts(addon);
+  /** All handlers in place, one stale, one missing, an extra EMCP_ file and the user's own script. */
+  function staged() {
+    const s = setup();
+    const dir = join(s.addon, H);
+    cpSync(bundled, dir, { recursive: true });
+    writeFileSync(join(dir, "EMCP_WB_Clipboard.c"), "// old\n");
+    rmSync(join(dir, "EMCP_WB_Components.c"));
+    writeFileSync(join(dir, "EMCP_Extra.c"), "// extra\n");
+    writeFileSync(join(dir, "SYK_Own.c"), "// own\n");
+    return { ...s, dir };
+  }
+
+  it("copies the stale and the missing one, leaves other files alone, and names them", async () => {
+    const { addon, client, dir } = staged();
+    await expect(client.ensureRunning(join(addon, "addon.gproj"))).rejects.toThrow(/Cannot find/); // handlers copied, then no exe
+    for (const f of ["EMCP_WB_Clipboard.c", "EMCP_WB_Components.c"]) expect(readFileSync(join(dir, f)).equals(bundledFile(f))).toBe(true);
+    expect(readdirSync(dir).filter((f) => f.startsWith("EMCP_"))).toHaveLength(23);
+    expect(readFileSync(join(dir, "EMCP_Extra.c"), "utf-8")).toBe("// extra\n");
+    expect(readFileSync(join(dir, "SYK_Own.c"), "utf-8")).toBe("// own\n");
+    // The note that becomes the wb_launch reply
+    writeFileSync(join(dir, "EMCP_WB_Clipboard.c"), "// old\n");
+    rmSync(join(dir, "EMCP_WB_Components.c"));
+    const note = install(client, addon);
+    expect(note).toMatch(/refreshed[\s\S]*replaced EMCP_WB_Clipboard\.c; added EMCP_WB_Components\.c/);
+    expect(install(client, addon)).toBeUndefined(); // everything current now: nothing copied, nothing said
+  });
+
+  it("a copy that fails halfway removes only its own new files and puts replaced ones back", () => {
+    const { addon, client, dir } = staged();
+    const before = Object.fromEntries(readdirSync(dir).map((f) => [f, readFileSync(join(dir, f), "utf-8")]));
+    copies.n = 0;
+    copies.failAt = 1; // missing files are copied first (Components), then the stale one (Clipboard) fails
+    expect(() => install(client, addon)).toThrow(/disk full/);
+    expect(Object.fromEntries(readdirSync(dir).map((f) => [f, readFileSync(join(dir, f), "utf-8")]))).toEqual(before);
   });
 });

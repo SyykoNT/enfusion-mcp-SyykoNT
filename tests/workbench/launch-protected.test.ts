@@ -152,6 +152,16 @@ describe("launchWorkbench and protected addons", () => {
     expect(client.staleHandlers(crf)).toEqual([]);
   });
 
+  it("never refreshes stale or missing handlers in a protected addon", async () => {
+    const { crf, client } = setup();
+    const dir = withHandlers(crf);
+    writeFileSync(join(dir, "EMCP_WB_Clipboard.c"), "// old\n");
+    rmSync(join(dir, "EMCP_WB_Components.c"));
+    const before = snap(dir);
+    await expect(client.ensureRunning(join(crf, "addon.gproj"))).rejects.toThrow(/Cannot find/);
+    expect(snap(dir)).toBe(before);
+  });
+
   it("reports missing or changed handlers in a protected addon and changes nothing", () => {
     const { crf, client } = setup();
     const dir = withHandlers(crf);

@@ -1,3 +1,4 @@
+import { dirname, isAbsolute } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus } from "../workbench/status.js";
@@ -7,7 +8,8 @@ export function registerWbConnect(server: McpServer, client: WorkbenchClient): v
     "wb_connect",
     {
       description:
-        "Test connection to Arma Reforger Workbench. Returns connection status and current editor mode. Use this to verify Workbench is running with the NET API enabled.",
+        "Test connection to Arma Reforger Workbench. Returns connection status and current editor mode. Use this to verify Workbench is running with the NET API enabled. " +
+        "When the Workbench that answers has stale or missing handler scripts in its project compared with this MCP version, the reply adds a line saying so (nothing is written).",
       inputSchema: {},
     },
     async () => {
@@ -33,6 +35,20 @@ export function registerWbConnect(server: McpServer, client: WorkbenchClient): v
         lines.push(`- **Status:** Connected`);
         if (details.mode) lines.push(`- **Mode:** ${details.mode}`);
         if (details.message) lines.push(`- **Info:** ${details.message}`);
+
+        // Read only. An addon with no handlers of its own is skipped: the running ones come from a dependency, and a second copy would clash.
+        const gproj = (await client.portOwnerInfo()).gproj;
+        if (gproj && isAbsolute(gproj)) {
+          try {
+            const h = client.handlerFiles(dirname(gproj));
+            if (h.stale.length + h.missing.length && h.current.length + h.stale.length) {
+              lines.push(
+                `\nHandlers in ${dirname(gproj)} differ from this MCP version (${h.stale.length} stale, ${h.missing.length} missing): ` +
+                  `run wb_handlers install with the user's OK, then restart Workbench.`
+              );
+            }
+          } catch { /* unreadable addon folder: no line */ }
+        }
 
         return { content: [{ type: "text" as const, text: lines.join("\n") + formatConnectionStatus(client) }] };
       } catch (e) {

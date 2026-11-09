@@ -472,7 +472,7 @@ export class WorkbenchClient {
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
    * @param unattended Launch with -noThrow (no error dialogs).
    * @param worldPath Optional .ent to open in the World Editor at start.
-   * @returns Notes for the reply (the repo's git exclude changed, crash folders saved before the start), else undefined.
+   * @returns Notes for the reply (the repo's git exclude changed, handler scripts refreshed, crash folders saved before the start), else undefined.
    */
   async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
     if (!this.config) {
@@ -1086,32 +1086,41 @@ export class WorkbenchClient {
     // Before the skip below: handlers already on disk need the exclude as much as new ones.
     const gitNote = existsSync(targetBase) ? excludeHandlersFromGit(targetBase) : undefined;
 
-    // Already installed? Skip (stale handlers stay until they are cleaned up)
-    if (existsSync(join(targetScriptsDir, "EMCP_WB_Ping.c"))) {
-      return gitNote;
-    }
-
+    // Copy what is missing or differs from the bundle; current files, extra EMCP_* files and other scripts stay untouched.
+    const { missing, stale, current } = this.handlerFiles(targetBase);
+    const files = [...missing, ...stale];
+    if (!files.length) return gitNote;
 
     logger.info(`Installing handler scripts to ${targetScriptsDir}`);
     mkdirSync(targetScriptsDir, { recursive: true });
 
-    const files = readdirSync(bundledDir).filter((f) => f.endsWith(".c"));
+    const before = new Map(stale.map((f) => [f, readFileSync(join(targetScriptsDir, f))]));
     const copied: string[] = [];
     try {
       for (const file of files) {
+        copied.push(file); // before the copy: a copy that fails halfway is undone too
         copyFileSync(join(bundledDir, file), join(targetScriptsDir, file));
-        copied.push(file);
       }
     } catch (e) {
-      // Partial installation: remove only what this attempt copied (the folder may hold user scripts)
+      // Partial installation: undo only what this attempt touched (new files removed, replaced ones put back; the folder may hold user scripts)
       logger.error(`Failed to install handler scripts, rolling back: ${e}`);
       try {
-        for (const file of copied) rmSync(join(targetScriptsDir, file), { force: true });
+        for (const file of copied) {
+          const old = before.get(file);
+          if (old) writeFileSync(join(targetScriptsDir, file), old);
+          else rmSync(join(targetScriptsDir, file), { force: true });
+        }
       } catch { /* best-effort cleanup */ }
       throw e;
     }
 
     logger.info(`Installed ${files.length} handler scripts.`);
+    // A fresh install needs no list; refreshing handlers that were already there is named, because their edits are overwritten.
+    const refreshed =
+      current.length + stale.length > 0
+        ? `Handler scripts in ${targetScriptsDir} refreshed from this MCP version: ` +
+          [stale.length ? `replaced ${stale.join(", ")}` : "", missing.length ? `added ${missing.join(", ")}` : ""].filter(Boolean).join("; ") + "."
+        : undefined;
 
     // When using the standalone fallback path, also write a .gproj so Workbench
     // treats the directory as a loadable addon and compiles the handler scripts.
@@ -1123,7 +1132,7 @@ export class WorkbenchClient {
         logger.info(`Created standalone addon .gproj at ${gprojPath}`);
       }
     }
-    return gitNote;
+    return [gitNote, refreshed].filter(Boolean).join("\n\n") || undefined;
   }
 
   /**
