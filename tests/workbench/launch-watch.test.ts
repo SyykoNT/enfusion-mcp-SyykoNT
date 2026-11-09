@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 
 // A fake home first: the instance registry and watch dir land in temp folders, never in the real ~/.enfusion-mcp.
@@ -9,10 +10,23 @@ const home = mkdtempSync(join(tmpdir(), "emcp-lw-home-"));
 process.env.USERPROFILE = process.env.HOME = home;
 
 // spawn is a stub (no Workbench starts), the watcher spawn is recorded, no Workbench counts as running.
-const sys = vi.hoisted(() => ({ spawnEnv: [] as NodeJS.ProcessEnv[], spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][], alive: true }));
+const sys = vi.hoisted(() => ({
+  spawnEnv: [] as NodeJS.ProcessEnv[], spawnArgs: [] as string[][], listeners: [] as string[], watcher: [] as string[][], alive: true,
+  // what the crash sweep and the spawn did, in order, and what the sweep returns
+  order: [] as string[], sweepArgs: [] as unknown[][], saved: [] as { folder: string; dest: string }[],
+}));
+vi.mock("../../src/watchdog/crash-sweep.js", async (orig) => ({
+  ...(await orig<typeof import("../../src/watchdog/crash-sweep.js")>()),
+  saveCrashFolders: vi.fn((...a: unknown[]) => {
+    sys.order.push("sweep");
+    sys.sweepArgs.push(a);
+    return { saved: sys.saved, errors: [], capped: false };
+  }),
+}));
 vi.mock("node:child_process", async (orig) => ({
   ...(await orig<typeof import("node:child_process")>()),
   spawn: vi.fn((_exe: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
+    sys.order.push("spawn");
     sys.spawnArgs.push(args);
     sys.spawnEnv.push(opts.env ?? {});
     return { pid: 4242, unref: () => {}, on: (ev: string) => sys.listeners.push(ev) };
@@ -34,12 +48,15 @@ vi.mock("../../src/utils/game-paths.js", async (orig) => ({
 
 const { WorkbenchClient, WorkbenchError } = await import("../../src/workbench/client.js");
 const { isOwned, readInstance, pidInstanceFile, WORKBENCH_INSTANCES } = await import("../../src/utils/instances.js");
+const { registerWbLaunch } = await import("../../src/tools/wb-launch.js");
 
-function client() {
+const crashRoot = join(home, "Crash Logs");
+
+function client(extra: Partial<Config> = {}) {
   const projects = join(home, "projects");
   mkdirSync(join(projects, "TestAddon"), { recursive: true });
   writeFileSync(join(projects, "TestAddon", "addon.gproj"), 'GameProject {\n ID "TestAddon"\n GUID "1111111111111111"\n}\n');
-  const c = new WorkbenchClient("127.0.0.1", 5775, { projectPath: projects, workbenchPath: join(home, "Tools") } as Config);
+  const c = new WorkbenchClient("127.0.0.1", 5775, { projectPath: projects, workbenchPath: join(home, "Tools"), crashLogsDir: crashRoot, ...extra } as Config);
   // First call is the "already running?" ping (no), every later one is the NET API wait (answers at once).
   let calls = 0;
   vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockImplementation(async () => {
@@ -55,6 +72,9 @@ beforeEach(() => {
   sys.listeners = [];
   sys.watcher = [];
   sys.alive = true;
+  sys.order = [];
+  sys.sweepArgs = [];
+  sys.saved = [];
 });
 
 describe("launchWorkbench records and watches what it starts", () => {
@@ -173,6 +193,74 @@ describe("launchWorkbench stops waiting when its Workbench has exited", () => {
       await done;
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("launchWorkbench saves crash folders before it starts Workbench (B-044)", () => {
+  const two = [{ folder: "logs_a", dest: join(crashRoot, "logs_a") }, { folder: "logs_b", dest: join(crashRoot, "logs_b") }];
+  const savedLine = `Saved 2 crash folder(s) to ${crashRoot}`;
+
+  it("sweeps the Workbench logs folder into the crash logs folder right before the spawn", async () => {
+    expect(crashRoot.startsWith(home)).toBe(true); // MCP-0062: temp paths only
+    sys.saved = two;
+    const { c, gproj } = client();
+    const note = await c.ensureRunning(gproj);
+    expect(sys.order).toEqual(["sweep", "spawn"]);
+    expect(sys.sweepArgs[0].slice(0, 2)).toEqual([join(home, "logs"), crashRoot]);
+    expect(note).toContain(savedLine);
+  });
+
+  it("adds the reply line only when something was saved", async () => {
+    const { c, gproj } = client();
+    expect(await c.ensureRunning(gproj)).toBeUndefined();
+    expect(sys.order).toEqual(["sweep", "spawn"]);
+  });
+
+  it("the wb_launch reply carries the line once", async () => {
+    sys.saved = two;
+    const { c, gproj } = client();
+    let calls = 0; // the tool pings once, then launchWorkbench pings again: both refused, then the NET API answers
+    vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockImplementation(async () => {
+      if (calls++ < 2) throw new Error("refused");
+      return {};
+    });
+    const tools: Record<string, (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>> = {};
+    registerWbLaunch({ registerTool: (n: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>) => { tools[n] = h; } } as unknown as McpServer, {} as Config, c);
+    const text = (await tools.wb_launch({ gprojPath: gproj })).content[0].text;
+    expect(text.split(savedLine).length - 1).toBe(1);
+  });
+
+  it("a refused launch saves nothing: protected addon without handlers, forbidden root, bad worldPath, a Workbench that already answers", async () => {
+    sys.saved = two;
+    const prot = client({ protectedAddons: ["2222222222222222"] });
+    mkdirSync(join(home, "projects", "Prot"), { recursive: true });
+    writeFileSync(join(home, "projects", "Prot", "addon.gproj"), 'GameProject {\n ID "Prot"\n GUID "2222222222222222"\n}\n'); // no handlers inside
+    await expect(prot.c.ensureRunning(join(home, "projects", "Prot", "addon.gproj"))).rejects.toThrow(/protected addon/);
+    const forbidden = client({ gamePath: join(home, "projects") });
+    await expect(forbidden.c.ensureRunning(forbidden.gproj)).rejects.toThrow(/is inside/);
+    const bad = client();
+    await expect(bad.c.ensureRunning(bad.gproj, false, "World.txt")).rejects.toThrow(/worldPath must be a world/);
+    const answering = client();
+    vi.spyOn(answering.c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockResolvedValue({});
+    expect(await answering.c.ensureRunning(answering.gproj)).toBeUndefined();
+    expect(sys.order).toEqual([]);
+  });
+
+  it("with no usable crash logs folder nothing is copied and the reply says so once", async () => {
+    // The default crash folder sits beside the profile folder; forbid that parent so neither it nor a setting is usable.
+    const profile = join(home, "p", "Profile");
+    mkdirSync(join(profile, "logs"), { recursive: true });
+    process.env.ENFUSION_WORKBENCH_PROFILE = profile;
+    process.env.ENFUSION_FORBIDDEN_DIRS = join(home, "p");
+    try {
+      const { c, gproj } = client({ crashLogsDir: undefined });
+      const note = await c.ensureRunning(gproj);
+      expect(note?.split("Crash folders were not saved").length).toBe(2);
+      expect(sys.order).toEqual(["spawn"]);
+    } finally {
+      delete process.env.ENFUSION_WORKBENCH_PROFILE;
+      delete process.env.ENFUSION_FORBIDDEN_DIRS;
     }
   });
 });

@@ -116,10 +116,10 @@ export function appendLockLine(lock: string | undefined, line: string): string |
   }
 }
 
-/** Copy (never move) a crashed run's log files to `<destRoot>/<stamp>_<pid>/`. A missing file is reported, an existing copy is kept. */
-export function copyCrashFiles(logDir: string | undefined, destRoot: string, stamp: string, pid: number): Pick<CrashLog, "dir" | "copied" | "missing"> {
+/** Copy (never move) a crashed run's log files to `<destRoot>/<name>/` (default `<stamp>_<pid>`). A missing file is reported, an existing copy is kept. */
+export function copyCrashFiles(logDir: string | undefined, destRoot: string, stamp: string, pid: number, name = `${stamp}_${pid}`): Pick<CrashLog, "dir" | "copied" | "missing"> {
   if (!logDir) return { copied: [], missing: ["the log folder of this run was not found"] };
-  const dir = join(destRoot, `${stamp}_${pid}`);
+  const dir = join(destRoot, name);
   let names: string[];
   try {
     names = readdirSync(logDir);

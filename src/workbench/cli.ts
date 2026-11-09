@@ -33,6 +33,8 @@ export interface WorkbenchRun {
   seconds: number;
   logDir: string | null;
   console: string;
+  /** The crash-folder line from the sweep before the start (B-044): what was saved, or why nothing could be. */
+  savedCrashes?: string;
 }
 
 /**
@@ -71,10 +73,12 @@ export const crashLogsDir = (config: Config): string | undefined => crashLogsFol
 /** cwd is the game folder, so without these Steam counts Workbench as the game (its steam_appid.txt says 1874880). */
 export const workbenchEnv = (): NodeJS.ProcessEnv => ({ ...process.env, SteamAppId: "1874910", SteamGameId: "1874910" });
 
-export function runWorkbench(config: Config, args: string[], timeoutMs: number): Promise<WorkbenchRun> {
+export async function runWorkbench(config: Config, args: string[], timeoutMs: number): Promise<WorkbenchRun> {
   const exe = findWorkbenchExe(config.workbenchPath);
   if (!exe) throw new Error(`Workbench not found under ${config.workbenchPath} (need Workbench/ArmaReforgerWorkbenchSteamDiag.exe)`);
   const logsDir = join(workbenchProfileDir(config), "logs");
+  // Loaded here, not at the top: wb-watch reads the config at load, and the config loads this module through game-paths.
+  const savedCrashes = (await import("../watchdog/wb-watch.js")).sweepForStart(config);
   const start = Date.now();
   return new Promise((done) => {
     // CWD = game dir so ./addons/data and ./addons/core resolve (same as wb_launch)
@@ -93,6 +97,7 @@ export function runWorkbench(config: Config, args: string[], timeoutMs: number):
         seconds: Math.round((Date.now() - start) / 1000),
         logDir,
         console: consolePath && existsSync(consolePath) ? readFileSync(consolePath, "utf-8") : "",
+        ...(savedCrashes ? { savedCrashes } : {}),
       });
     };
     proc.on("close", finish);

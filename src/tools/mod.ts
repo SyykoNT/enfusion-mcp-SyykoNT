@@ -486,6 +486,7 @@ export function registerMod(
               for (const w of c.warnings.slice(0, 30)) lines.push(`- \`${w.file}:${w.line}\` ${w.message}`);
             }
             if (c.run.logDir) lines.push("", `Log: ${join(c.run.logDir, "console.log")}`);
+            if (c.run.savedCrashes) lines.push("", c.run.savedCrashes);
             if (!c.ok) return { content: [{ type: "text", text: lines.join("\n") }], isError: true };
             if (action === "compile") return { content: [{ type: "text", text: lines.join("\n") }] };
             lines.push("");
@@ -515,6 +516,7 @@ export function registerMod(
             for (const e of p.errors.slice(0, 20)) lines.push(`- ${e}`);
             if (p.run.logDir) lines.push(`Log: ${join(p.run.logDir, "console.log")}`);
           }
+          if (p.run.savedCrashes) lines.push("", p.run.savedCrashes);
           const result = {
             action, ok: p.ok,
             addon: { id: project.id, guid: project.guid, dir: addonDir },

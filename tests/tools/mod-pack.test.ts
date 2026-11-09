@@ -109,3 +109,22 @@ describe("mod pack result", () => {
     expect(json.files.map((f: { name: string }) => f.name)).toEqual(["data.pak", "addon.gproj"]);
   });
 });
+
+describe("crash folders saved before a headless run (B-044)", () => {
+  const run = (savedCrashes?: string) => ({ exitCode: 0, timedOut: false, seconds: 1, logDir: null, console: "", ...(savedCrashes ? { savedCrashes } : {}) });
+  const line = "Saved 2 crash folder(s) to C:\Crash Logs";
+
+  it("compile and pack results carry the line once when something was saved, and nothing otherwise", async () => {
+    vi.mocked(cli.compileAddon).mockResolvedValue({ ok: true, run: run(line), errors: [], warnings: [] });
+    const compiled = (await mod({ action: "compile", addonName: "Clean" })).content[0].text;
+    expect(compiled.split(line).length - 1).toBe(1);
+    vi.mocked(cli.compileAddon).mockResolvedValue({ ok: true, run: run(), errors: [], warnings: [] });
+    expect((await mod({ action: "compile", addonName: "Clean" })).content[0].text).not.toContain("crash folder");
+
+    vi.mocked(cli.packAddon).mockImplementation(async (_c, _g, outDir) => ({ ok: true, outDir, files: [], errors: [], run: run(line) }));
+    const packed = (await mod({ action: "pack", addonName: "Clean" })).content[0].text;
+    expect(packed.split(line).length - 1).toBe(1);
+    vi.mocked(cli.packAddon).mockImplementation(async (_c, _g, outDir) => ({ ok: true, outDir, files: [], errors: [], run: run() }));
+    expect((await mod({ action: "pack", addonName: "Clean" })).content[0].text).not.toContain("crash folder");
+  });
+});

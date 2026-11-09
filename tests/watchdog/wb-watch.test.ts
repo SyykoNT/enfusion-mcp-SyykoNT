@@ -1,10 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eventLines, watchAlerts } from "../../src/workbench/status.js";
 import { alerts, claimWatch, createWatcher, findLogDir, recentStates, runWatcher, type WatchOpts, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
+
+// The crash folder sweep asks which Workbenches run; no real process list is read (B-044).
+vi.mock("../../src/utils/process.js", async (orig) => ({ ...(await orig<typeof import("../../src/utils/process.js")>()), findPids: () => [] }));
 
 // Temp folders only: a fake log root, fake projects and a fake state dir. No probe, PowerShell or Workbench runs.
 const at = (hms: string) => new Date(`2026-10-31T${hms}`).getTime();
@@ -364,6 +367,75 @@ describe("watcher keeps its own lock honest (B-097) and the state after Ignore (
     await w.tick();
     t.clock.now = at("02:14:14.000");
     expect((await w.tick()).state).toBe("blocked_dialog");
+  });
+});
+
+describe("crash folder sweep at attach (B-044)", () => {
+  const events = (dir: string) => readFileSync(join(dir, "events.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+  // Two ticks, then the Workbench is gone. setImmediate keeps a loop regression a timeout, not a hang (MCP-0035).
+  const twoTicks = () => {
+    let ticks = 0;
+    return { alive: () => ticks < 2, wait: () => new Promise((r) => setImmediate(() => { ticks++; r(undefined); })) };
+  };
+  const result = (root: string) => ({ saved: [{ folder: "logs_a", dest: join(root, "logs_a") }, { folder: "logs_b", dest: join(root, "logs_b") }], errors: [], capped: false });
+
+  it("runs once after a successful claim and after the first tick, and saved folders give one crash event", async () => {
+    const t = setup();
+    const crashDir = join(t.root, "Crash Logs");
+    const sample = vi.fn(() => t.sample);
+    const sweep = vi.fn(() => {
+      expect(sample).toHaveBeenCalledTimes(1); // the first tick is not delayed by it
+      return result(crashDir);
+    });
+    expect(await runWatcher(t.opts({ crashDir }), { probe: () => ({ stop: vi.fn() }), sample, sweep, ...twoTicks() })).toBe(0);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    const crash = events(t.stateDir).filter((e) => e.kind === "crash");
+    expect(crash).toHaveLength(1);
+    expect(crash[0].action).toMatch(/^SWEEP \d\d:\d\d:\d\d PID 19524: Saved 2 crash folder\(s\) to /);
+    expect(crash[0].action.endsWith(crashDir)).toBe(true);
+    expect(eventLines(t.stateDir, 0).lines).toHaveLength(1);
+  });
+
+  it("does not run after a failed claim", async () => {
+    const t = setup();
+    writeFileSync(join(t.stateDir, "19524.lock"), String(process.ppid)); // another live process holds the lock
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const sweep = vi.fn(() => result(t.root));
+    expect(await runWatcher(t.opts({ crashDir: join(t.root, "Crash Logs") }), { probe: vi.fn(), sweep })).toBe(3);
+    err.mockRestore();
+    expect(sweep).not.toHaveBeenCalled();
+  });
+
+  it("a throwing sweep does not stop the watcher; the failure is logged and there is no crash event", async () => {
+    const t = setup();
+    const sweep = vi.fn(() => { throw new Error("boom"); });
+    expect(await runWatcher(t.opts({ crashDir: join(t.root, "Crash Logs") }), { probe: () => ({ stop: vi.fn() }), sweep, ...twoTicks() })).toBe(0);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    expect(events(t.stateDir).filter((e) => e.kind === "crash")).toEqual([]);
+    expect(events(t.stateDir).some((e) => e.action === "crash folder sweep failed: boom")).toBe(true);
+    expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")).state).toBe("exited");
+  });
+
+  it("saves nothing and logs nothing when nothing was saved or there is no crash folder", async () => {
+    const t = setup();
+    const none = vi.fn(() => ({ saved: [], errors: [], capped: false }));
+    await runWatcher(t.opts({ crashDir: join(t.root, "Crash Logs") }), { probe: () => ({ stop: vi.fn() }), sweep: none, ...twoTicks() });
+    const u = setup();
+    const silent = vi.fn(() => result(u.root));
+    await runWatcher(u.opts(), { probe: () => ({ stop: vi.fn() }), sweep: silent, ...twoTicks() }); // no crashDir
+    expect(events(t.stateDir).filter((e) => e.kind === "crash")).toEqual([]);
+    expect(existsSync(join(u.stateDir, "events.jsonl")) ? events(u.stateDir).filter((e) => e.kind === "crash") : []).toEqual([]);
+  });
+
+  it("by default it sweeps its logs root into its crash folder", async () => {
+    const t = setup();
+    const crashDir = join(t.root, "Crash Logs");
+    expect(crashDir.startsWith(tmpdir())).toBe(true);
+    mkdirSync(join(t.root, "logs", "logs_2026-10-30_08-00-00"));
+    writeFileSync(join(t.root, "logs", "logs_2026-10-30_08-00-00", "crash_1.mdmp"), "old crash");
+    expect(await runWatcher(t.opts({ crashDir }), { probe: () => ({ stop: vi.fn() }), ...twoTicks() })).toBe(0);
+    expect(readdirSync(crashDir)).toEqual(["logs_2026-10-30_08-00-00"]);
+    expect(events(t.stateDir).filter((e) => e.kind === "crash")).toHaveLength(1);
   });
 });
 

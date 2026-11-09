@@ -13,8 +13,10 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { MCP_HOME, loadConfig, parseAuthMode, type AuthMode } from "../config.js";
-import { crashReporters, isAlive, killPids, processInfo, sleep, spawnDetached, type ProcInfo } from "../utils/process.js";
+import { MCP_HOME, loadConfig, parseAuthMode, type AuthMode, type Config } from "../config.js";
+import { logger } from "../utils/logger.js";
+import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
+import { crashReporters, findPids, isAlive, killPids, processInfo, sleep, spawnDetached, type ProcInfo } from "../utils/process.js";
 import {
   decide, dialogText, isDialog, likelyTrigger, leakAssertButton, loadedProjects, lockHeldBy, newCarry, parseCrashLog, parseLogChunk, portOwner,
   type Dismiss, type LogCarry, type Signals, type WatchStateName,
@@ -25,6 +27,7 @@ import {
   type AuthLog, type CrashLog, type WinInfo,
 } from "./signals.js";
 import { appendLockLine, authDetails, copyCrashFiles, endCrashReporters, loadSetOf, type LoadSet } from "./auth.js";
+import { saveCrashFolders, sweepLine, type SweepResult } from "./crash-sweep.js";
 
 export const WATCH_DIR = join(MCP_HOME, "watch");
 const SELF = fileURLToPath(import.meta.url);
@@ -273,6 +276,18 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
       const action = `WATCH ${hms(t)} PID ${o.pid} attached automatically (not started by this MCP): Ignore on the leak assert, Script Authorization by ENFUSION_SCRIPT_AUTH=${o.scriptAuth ?? "rules"}`;
       appendFileSync(join(o.stateDir, "events.jsonl"), JSON.stringify({ t, pid: o.pid, action, kind: "watch" }) + "\n");
     },
+    /** After the first tick: save the crash folders of earlier runs (B-044). A failing sweep is logged and never stops the watch. */
+    sweep(run: () => SweepResult | undefined) {
+      const t = deps.now();
+      try {
+        const r = run();
+        const line = r && o.crashDir ? sweepLine(r, o.crashDir) : undefined;
+        if (line) note(t, `SWEEP ${hms(t)} PID ${o.pid}: ${line}`, "crash");
+      } catch (e) {
+        note(t, `crash folder sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      save();
+    },
     async tick(): Promise<WatchState> {
       const now = deps.now();
       const s = deps.sample();
@@ -452,6 +467,46 @@ const netstat = () => {
   }
 };
 
+const WORKBENCH_EXE = "ArmaReforgerWorkbenchSteamDiag.exe";
+
+/**
+ * saveCrashFolders for a start or an attach: never the log folders of watched Workbenches that are alive, nor any folder a running Workbench
+ * started. A running Workbench whose start time cannot be read makes every folder unsafe, so nothing is copied then.
+ */
+export function sweepCrashes(
+  logsRoot: string,
+  destRoot: string,
+  stateDir = WATCH_DIR,
+  deps: { alive?: (pid: number) => boolean; pids?: () => number[]; startOf?: (pid: number) => number | undefined; now?: () => number; capMs?: number } = {}
+): SweepResult {
+  const alive = deps.alive ?? isAlive;
+  const live = readStates(stateDir).states.filter((s) => s.state !== "exited" && s.state !== "crashed" && alive(s.pid));
+  const starts = (deps.pids ?? (() => findPids(WORKBENCH_EXE)))().map((p) => (deps.startOf ?? ((x) => processInfo(x)?.created))(p) ?? 0);
+  return saveCrashFolders(logsRoot, destRoot, {
+    skipDirs: live.flatMap((s) => s.logDir ?? []),
+    liveSince: starts.length ? Math.min(...starts) : undefined,
+    now: deps.now,
+    capMs: deps.capMs,
+  });
+}
+
+/**
+ * Before any Workbench start (B-044): copy the crash folders of earlier runs to the crash logs folder, because a start prunes older log folders.
+ * Returns the reply line when something was saved, or one line saying why nothing can be; never throws, so a failing sweep cannot block a start.
+ */
+export function sweepForStart(config: Config): string | undefined {
+  const root = crashLogsDir(config);
+  if (!root) return "Crash folders were not saved: no crash logs folder is usable (the setting and the default are both inside the game, Tools or Workshop folders). Set ENFUSION_CRASH_LOGS_DIR to a folder of your own.";
+  try {
+    const r = sweepCrashes(join(workbenchProfileDir(config), "logs"), root);
+    if (r.errors.length) logger.warn(`Crash folder sweep: ${r.errors.join("; ")}`);
+    return sweepLine(r, root);
+  } catch (e) {
+    logger.warn(`Crash folder sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+    return undefined;
+  }
+}
+
 /** Owned only: Exit through the NET API (if this PID holds the port), then kill this PID alone, then its own CrashReporter. Never WM_CLOSE. */
 async function recover(o: WatchOpts, startTime: number | undefined): Promise<string> {
   const notes: string[] = [];
@@ -488,7 +543,7 @@ async function recover(o: WatchOpts, startTime: number | undefined): Promise<str
 /** Watch until the Workbench is gone. Returns the exit code: 0 done, 3 already watched. */
 export async function runWatcher(
   o: WatchOpts,
-  over: Partial<WatchDeps> & { probe?: typeof startProbe; wait?: (ms: number) => Promise<unknown> } = {}
+  over: Partial<WatchDeps> & { probe?: typeof startProbe; wait?: (ms: number) => Promise<unknown>; sweep?: () => SweepResult | undefined } = {}
 ): Promise<number> {
   mkdirSync(o.stateDir, { recursive: true });
   const claim = claimWatch(o.stateDir, o.pid);
@@ -528,8 +583,14 @@ export async function runWatcher(
   try {
     if (!holdsLock()) return 3;
     w.init();
+    let swept = false;
     for (;;) {
       const s = await w.tick();
+      // Once, after the first tick so the sweep never delays it: this also covers a Workbench from another launcher.
+      if (!swept) {
+        swept = true;
+        w.sweep(over.sweep ?? (() => (o.crashDir && o.logsRoot ? sweepCrashes(o.logsRoot, o.crashDir, o.stateDir) : undefined)));
+      }
       if (s.state === "exited" || s.state === "crashed") return 0;
       await (over.wait ?? sleep)(TICK_MS);
       if (!holdsLock()) return 3;

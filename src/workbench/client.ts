@@ -19,7 +19,7 @@ import { forbiddenRoot } from "../utils/safe-path.js";
 import { findPids, isAlive } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { crashLogsDir, workbenchEnv, workbenchProfileDir } from "./cli.js";
-import { startWatcher } from "../watchdog/wb-watch.js";
+import { startWatcher, sweepForStart } from "../watchdog/wb-watch.js";
 import { attachDeps, ensureWatched, type AttachResult } from "../watchdog/auto-attach.js";
 import { probeDialogs } from "../watchdog/probe.js";
 import { dialogKind, formatDialogs, type DialogProbe } from "../watchdog/signals.js";
@@ -394,7 +394,7 @@ export class WorkbenchClient {
    * @param gprojPath Optional .gproj file path to open directly (skips launcher).
    * @param unattended Launch with -noThrow (no error dialogs).
    * @param worldPath Optional .ent to open in the World Editor at start.
-   * @returns A note for the reply when the handler install changed the repo's git exclude, else undefined.
+   * @returns Notes for the reply (the repo's git exclude changed, crash folders saved before the start), else undefined.
    */
   async ensureRunning(gprojPath?: string, unattended = false, worldPath?: string): Promise<string | undefined> {
     if (!this.config) {
@@ -793,6 +793,9 @@ export class WorkbenchClient {
     // (data/ArmaReforger.gproj with GUID 58D0FB3206B6F859) via ./addons resolution.
     const cwd = this.findGameDir() || dirname(exePath);
 
+    // Last step before the start, so a refused launch saves nothing: the start prunes older log folders (B-044).
+    const swept = sweepForStart(this.config!);
+
     logger.info(`Launching Workbench: ${exePath}${args.length ? ` ${args.join(" ")}` : ""} (cwd: ${cwd})`);
     const launchedAt = Date.now();
     const proc = spawn(exePath, args, {
@@ -836,7 +839,7 @@ export class WorkbenchClient {
         this._state.connected = true;
         this._state.lastUpdated = Date.now();
         logger.info("Workbench NET API is responding.");
-        return gitNote;
+        return [gitNote, swept].filter(Boolean).join("\n\n") || undefined;
       } catch (err) {
         if (err instanceof WorkbenchError) {
           lastErrorCode = err.code;
