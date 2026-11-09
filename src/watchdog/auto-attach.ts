@@ -28,7 +28,7 @@ export interface AttachDeps {
   settleMs?: number;
 }
 
-/** ok: attached or already watched (the client then skips checks for 60 s). text: one line for a timeout reply. */
+/** ok: no recheck for 60 s (attached, already watched, or a watcher was just started). text: one line for a timeout reply. */
 export interface AttachResult {
   ok: boolean;
   text: string;
@@ -114,7 +114,9 @@ export async function ensureWatched(port: number, host: string, d: AttachDeps): 
     held = watcherOf(d.stateDir, pid, d.alive);
   }
   if (held !== watcher) {
-    return no(held ? `another watcher (PID ${held}) holds Workbench PID ${pid}; wb_watch status shows it` : `watcher PID ${watcher} did not take Workbench PID ${pid}; wb_watch status shows what runs`);
+    // ok:true on purpose: the client then waits 60 s before the next check, so a watcher that never claims is not respawned on every call.
+    const why = held ? `another watcher (PID ${held}) holds Workbench PID ${pid}; wb_watch status shows it` : `watcher PID ${watcher} did not take Workbench PID ${pid}; wb_watch status shows what runs`;
+    return { ok: true, text: `Workbench not watched: ${why}.` };
   }
   return {
     ok: true,

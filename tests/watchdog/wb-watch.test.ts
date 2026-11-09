@@ -155,11 +155,11 @@ describe("watcher main loop", () => {
 
   it("a second watcher on the same PID exits with already watched", async () => {
     const t = setup();
-    expect(claimWatch(t.stateDir, 19524)).toEqual({ ok: true });
+    writeFileSync(join(t.stateDir, "19524.lock"), String(process.ppid)); // another live process holds the lock
     const probe = vi.fn();
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(await runWatcher(t.opts(), { probe })).toBe(3);
-    expect(err).toHaveBeenCalledWith(`already watched by watcher PID ${process.pid}\n`);
+    expect(err).toHaveBeenCalledWith(`already watched by watcher PID ${process.ppid}\n`);
     expect(probe).not.toHaveBeenCalled();
     err.mockRestore();
     // A lock left by a dead watcher is taken over.
@@ -241,7 +241,7 @@ describe("automatic watch", () => {
     expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")).auto).toBe(true);
 
     const held = setup();
-    expect(claimWatch(held.stateDir, 19524)).toEqual({ ok: true }); // this process holds the lock
+    writeFileSync(join(held.stateDir, "19524.lock"), String(process.ppid)); // another live process holds the lock
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(await runWatcher(held.opts({ auto: true }), { probe: vi.fn() })).toBe(3);
     err.mockRestore();

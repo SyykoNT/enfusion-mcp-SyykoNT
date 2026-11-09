@@ -373,19 +373,33 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
   };
 }
 
-/** One watcher per PID: `<pid>.lock` holds the watcher's PID. A lock whose watcher is dead is taken over. */
-export function claimWatch(dir: string, pid: number, alive = isAlive): { ok: true } | { ok: false; by: number } {
+/**
+ * One watcher per PID: `<pid>.lock` holds the watcher's PID. A lock whose watcher is dead (or names this very process, a reused PID) is taken over.
+ * An empty or unparsable lock is a claim in progress while it is under 5 s old. `self` is for tests.
+ */
+export function claimWatch(dir: string, pid: number, alive = isAlive, self = process.pid): { ok: true } | { ok: false; by: number } {
   const file = join(dir, `${pid}.lock`);
   for (let i = 0; i < 2; i++) {
     try {
       const fd = openSync(file, "wx");
-      writeSync(fd, String(process.pid));
+      writeSync(fd, String(self));
       closeSync(fd);
-      return { ok: true };
+      // A rival that took our lock for stale may have claimed since: the last writer keeps it.
+      const last = Number(readText(file)) || 0;
+      return last === self ? { ok: true } : { ok: false, by: last };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const by = Number(readText(file));
-      if (by && alive(by)) return { ok: false, by };
+      const by = Number(readText(file)) || 0;
+      if (by && by !== self && alive(by)) return { ok: false, by };
+      let age = Infinity;
+      try {
+        age = Date.now() - statSync(file).mtimeMs;
+      } catch {
+        // gone already: nothing to wait for
+      }
+      if (!by && age < 5_000) return { ok: false, by: 0 };
+      // Compare-and-delete: a rival may have replaced the stale lock while it was checked.
+      if ((Number(readText(file)) || 0) !== by) continue;
       rmSync(file, { force: true });
     }
   }

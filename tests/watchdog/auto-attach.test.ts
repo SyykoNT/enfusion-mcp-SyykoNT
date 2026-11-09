@@ -117,13 +117,20 @@ describe("ensureWatched", () => {
   it("step 5: another MCP's watcher took the PID first: no 'Attached', the lock holder is named", async () => {
     const d = deps();
     d.start = vi.fn(() => (writeFileSync(join(d.stateDir, "19524.lock"), "800"), 700));
-    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: another watcher (PID 800) holds Workbench PID 19524; wb_watch status shows it." });
+    // ok:true = no recheck for 60 s, so the loser does not start another watcher on its next call
+    expect(await check(d)).toEqual({ ok: true, text: "Workbench not watched: another watcher (PID 800) holds Workbench PID 19524; wb_watch status shows it." });
+  });
+
+  it("step 5: a watcher that claims the lock only after the first poll read is still reported attached", async () => {
+    const d = deps({ settleMs: 500 });
+    d.start = vi.fn(() => (setTimeout(() => writeFileSync(join(d.stateDir, "19524.lock"), "700"), 30), 700));
+    expect((await check(d)).text).toMatch(/^Attached watcher PID 700 to Workbench PID 19524/);
   });
 
   it("step 5: the new watcher never appears in the lock: no 'Attached'", async () => {
     const d = deps();
     d.start = vi.fn(() => 700);
-    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: watcher PID 700 did not take Workbench PID 19524; wb_watch status shows what runs." });
+    expect(await check(d)).toEqual({ ok: true, text: "Workbench not watched: watcher PID 700 did not take Workbench PID 19524; wb_watch status shows what runs." });
   });
 
   it("step 4: the user stopped the watch of this Workbench run", async () => {

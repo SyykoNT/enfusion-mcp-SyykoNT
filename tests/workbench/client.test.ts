@@ -535,6 +535,26 @@ describe("automatic watch check (B-093)", () => {
     expect(check).toHaveBeenCalledTimes(2);
   });
 
+  it("a watcher that never claims the lock is started once, not on every call within 60 s", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(T);
+    const c = new WorkbenchClient("127.0.0.1", mock.port, AUTO);
+    const wb = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger Tools\\Workbench\\ArmaReforgerWorkbenchSteamDiag.exe -gproj x";
+    const start = vi.fn(() => 700); // never writes the lock
+    c.watchCheck = () =>
+      ensureWatched(mock.port, "127.0.0.1", {
+        stateDir: mkdtempSync(join(tmpdir(), "emcp-cw-")), platform: "win32", settleMs: 0, owned: () => false, alive: () => false, start, base: {},
+        netstat: async () => `  TCP    0.0.0.0:${mock.port}           0.0.0.0:0              LISTENING       19524\r\n`,
+        proc: async (pid) => ({ pid, ppid: 1, cmd: wb, created: T }),
+      });
+    for (const s of [0, 5, 30, 59]) {
+      vi.setSystemTime(T + s * 1000);
+      await c.call("EMCP_WB_Ping");
+      await flush();
+    }
+    expect(start).toHaveBeenCalledOnce();
+  });
+
   it("runs only when config.autoWatch is true: none for {} as config or no config", async () => {
     for (const c of [new WorkbenchClient("127.0.0.1", mock.port, {} as Config), new WorkbenchClient("127.0.0.1", mock.port)]) {
       const check = vi.fn(attached);
