@@ -72,10 +72,12 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
 
         const result = await client.call<Record<string, unknown>>("EMCP_WB_Resources", params);
 
-        // the handler replies status "ok" with this message when RegisterResourceFile returns false
-        if (action === "register" && /returned false/.test(String(result.message ?? ""))) {
+        // the handler replies status "ok" with "<call> returned false for: <path>" when RegisterResourceFile or SetOpenedResource returns false
+        const falseReturn = { register: /^RegisterResourceFile returned false/, open: /^SetOpenedResource returned false/ }[action as "register" | "open"];
+        if (falseReturn?.test(String(result.message ?? ""))) {
+          const label = action === "register" ? "Not registered" : "Not opened";
           return {
-            content: [{ type: "text" as const, text: `**Not registered: ${path}**\n\n${result.message}${formatConnectionStatus(client)}` }],
+            content: [{ type: "text" as const, text: `**${label}: ${path}**\n\n${result.message}${formatConnectionStatus(client)}` }],
             isError: true,
           };
         }

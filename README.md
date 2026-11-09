@@ -195,7 +195,7 @@ sets one up), writes there are refused (see [COALITION missions](#coalition-miss
 | `ENFUSION_LOG_ROOTS` | `logRoots` | None. Extra folders `log_watch` may read logs under (comma-separated), besides the server profile, client profiles, Workbench and game log folders |
 | `ENFUSION_COALITION_TOOLS` | `coalitionTools` | Off. `on`, `1` or `true` (any case; `true` in the config file) registers the nine COALITION mission-making tools, see [COALITION missions](#coalition-missions-optional). Unset or any other value leaves them off |
 | `ENFUSION_SCRIPT_AUTH` | `scriptAuth` | `rules`. How the watchdog answers Workbench's "Script Authorization Required" dialog, in any Workbench the server watches. `rules`: Yes for a script call from an addon that Workbench loaded, No for a script that is in none of them; a request to run a program (`Workbench.RunCmd`, `Workbench.RunProcess`) and a dialog it cannot read are left open and reported, for the agent to answer with `wb_watch answer`. `all`: Yes to All on every request, program runs included; set it only if you trust every addon you load. `off`: report only. Any other value is read as `rules` and logged once. The server never uses `-scriptAuthorizeAll` |
-| `ENFUSION_CRASH_LOGS_DIR` | `crashLogsDir` | `Workbench Crash Logs` beside the Workbench profile folder (for the default profile, `Documents\My Games\Workbench Crash Logs`). When a Workbench the server watches crashes, that run's crash and log files are copied here, because a new Workbench start removes the older log folders; then that Workbench's own CrashReporter is ended without sending a report |
+| `ENFUSION_CRASH_LOGS_DIR` | `crashLogsDir` | `Workbench Crash Logs` beside the Workbench profile folder (for the default profile, `Documents\My Games\Workbench Crash Logs`). When a Workbench the server watches crashes, that run's crash and log files are copied here, because a new Workbench start removes the older log folders; then that Workbench's own CrashReporter is ended without sending a report, only when the Workbench's start time is known (otherwise it is left running and the report says so). A setting inside the game, Tools or Workshop folders, or one that cannot be read, is refused: the default folder is used and `env_check` says why |
 | `ENFUSION_WB_AUTOWATCH` | `autoWatch` | On. Any live call attaches a watcher by itself to the Workbench on the NET API port of this PC, whoever started it. `off`, `0`, `false` or `no` (any case) turns that off; `on`, `1`, `true` and `yes` keep it on. Any other value is off, with one warning in the log |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
 
@@ -227,7 +227,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 | `layout_create` / `layout_recipe` | UI layouts, from scratch or from recipes taken from game HUDs |
 | `menu_create` | A custom menu: script class, layout and menu preset entry |
 | `gamemode_scaffold` | A modded `SCR_GameModeCampaign` composed from feature recipes |
-| `scenario_create_conflict` | A Conflict scenario: mission header, world stub and layer files, into the addon named by `modName` or `projectPath` |
+| `scenario_create_conflict` | A Conflict scenario: mission header (its World names the new world, and it gets its own `.meta`), world stub and layer files, into the addon named by `modName` or `projectPath` |
 | `animation_graph` | Author, inspect and set up vehicle animation graphs; `author` and `setup` write only with `modName` or `projectPath` |
 | `building_setup` | Destructible building prefabs from a Blender export manifest |
 | `game_duplicate` | Copy a game prefab or config into an addon, inherited components included |
@@ -241,7 +241,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 | `server` | Dedicated server: `install`, `update`, `config`, `validate`, `start`, `stop`, `status`, `logs`, `scenarios` |
 | `server_config` | Generate a `server.json` |
 | `game` | Game client: `launch` (addons, connect, world), `stop`, `status`, `logs` |
-| `env_check` | Check the setup and say what to set for anything missing |
+| `env_check` | Check the setup and say what to set for anything missing; game and server versions are read from their exe files, and the crash logs folder in use is shown |
 | `addon_git_guard` | Local git commit guard for addon repos: `status`, `check` (both read-only) and `install` |
 | `addon_deps` | Read-only dependency check before publishing: each dependency's version and source, references into it, and findings such as undeclared, missing, unused or redundant dependencies, cycles and game version drift; plus the load order |
 | `script_errors` | Script runtime errors from Workbench, game client or dedicated server logs, grouped with counts, first and last time and the addon that owns the top frame. Compile errors stay with `mod compile` |
@@ -264,7 +264,7 @@ The tools, guided prompts and resource templates, by area. The tools for COALITI
 | `wb_undo_redo` | Undo or redo in the World Editor |
 | `wb_open_resource` | Open a resource in its Workbench editor |
 | `wb_execute_action` | Run a Workbench menu action by path |
-| `wb_reload` | Request a script or plugin reload through menu actions (see Known limitations) |
+| `wb_reload` | Reload game scripts with Workbench's built-in `ReloadScripts` call, plugins through menu actions (see Known limitations) |
 | `wb_projects` | List, locate or open loaded projects |
 
 ### World Editor (NET API)
@@ -432,7 +432,7 @@ only read (apart from those git refs), so they are not affected. To write, name 
   to "Script Authorization Required" by `ENFUSION_SCRIPT_AUTH` (`authorizeScripts=never` turns it off for one watch),
   by pressing Yes, No or, in `all` mode, Yes to All with UI Automation, never `No to All` and never
   `-scriptAuthorizeAll`; and, after a crash of a Workbench it watches, copying that run's log files to
-  `ENFUSION_CRASH_LOGS_DIR` and ending that Workbench's own CrashReporter without sending a report. Every action is
+  `ENFUSION_CRASH_LOGS_DIR` and ending that Workbench's own CrashReporter without sending a report (only when the Workbench's start time is known; otherwise it is left running and the report says so). Every action is
   reported. After an answer in a Workbench that loaded CRF or COALITION-Lobby, the report adds the `git status` and
   the diff stat of the gear list in those clones; nothing is restored.
 - `addon_git_guard install` writes only into the `.git/hooks` folder of one named addon under the project path
@@ -448,15 +448,16 @@ only read (apart from those git refs), so they are not affected. To write, name 
 | Problem | What to do |
 |---|---|
 | Workbench stops on a "Script Authorization Required" dialog | Run `wb_watch status`. In the default mode the watcher answers Yes to a script from a loaded addon on its own. A request to run a program is left open and shown with the script, the line and the command read from the script's source: answer it with `wb_watch answer` (`yes` or `no`, with a reason) or in Workbench. Set `ENFUSION_SCRIPT_AUTH=all` to press Yes to All on every request, or `off` to answer only by hand. The watcher acts on any Workbench it watches: one this server started, or one it attached to by itself or through `wb_watch start` (`ENFUSION_WB_AUTOWATCH=off` stops the automatic attach) |
-| Where crash logs go | When a Workbench the server watches crashes, that run's `crash.log`, any `.mdmp` dump, `console.log`, `error.log` and `script.log` are copied to the folder in `ENFUSION_CRASH_LOGS_DIR` (default: `Workbench Crash Logs` beside the Workbench profile folder), into a subfolder named `<date>_<time>_<PID>`. The originals stay where they are. Workbench removes older log folders when it starts again, so use the copy |
+| Where crash logs go | When a Workbench the server watches crashes, that run's `crash.log`, any `.mdmp` dump, `console.log`, `error.log` and `script.log` are copied to the folder in `ENFUSION_CRASH_LOGS_DIR` (default: `Workbench Crash Logs` beside the Workbench profile folder; a setting inside the game, Tools or Workshop folders is refused and the default is used), into a subfolder named `<date>_<time>_<PID>`. The originals stay where they are. Workbench removes older log folders when it starts again, so use the copy |
 
 ## Known limitations
 
-- `wb_reload` does not reload scripts on 1.8 or on 1.9.0.37. On 1.8 the menu paths it tries do not exist; on 1.9.0.37 every
-  one of them returns false. It says so ("Reload not confirmed") instead of reporting success. Workbench's built-in NET API
-  call `ReloadScripts` does
-  reload, but no tool sends it yet. Saving a `.c` file of the loaded project also makes Workbench reload game
-  scripts. `mod compile` refuses while a Workbench is open (`force=true` runs it anyway).
+- `wb_reload` sends Workbench's built-in `ReloadScripts` call. Its Ok does not prove the scripts were recompiled: look for a
+  new "Reloading game scripts took" line in Workbench's `console.log`. On the diag build every reload raises the "Resources are leaking!"
+  assert and waits for Ignore, which an attached `wb_watch` presses. The plugin reload (`target` `plugins` or `both`) goes
+  through menu paths that do not exist on 1.8 and all return false on 1.9.0.37, so it says "not confirmed". Saving a `.c`
+  file of the loaded project also makes Workbench reload game scripts. `mod compile` refuses while a Workbench is open
+  (`force=true` runs it anyway).
 - The console server ignores the close request, so `server stop` kills it after `graceSec` (default 10 seconds).
 - `prefab create` from a recipe resolves the parent's components only when `parentPrefab` is given. Without
   it, the parent's components are added a second time.
@@ -469,8 +470,6 @@ only read (apart from those git refs), so they are not affected. To write, name 
 - `wb_launch` with `unattended` passes `-noThrow`, which Bohemia documents as disabling error dialogs. It is
   untested on a GUI Workbench and on Script Authorization prompts.
 - `wb_launch` with `worldPath` (a `.ent` of the opened project) adds `-wbModule=WorldEditor -run -load` and waits up to 300 s; it does not check that the world loaded (use `wb_state`), and a running Workbench does not switch worlds.
-- `wb_resources register` reports "Registered" even when Workbench returns false (for example, a file that is
-  already registered).
 - `economy set` for ranks changes every faction's rank file that contains the rank.
 - `resource_resolve` assumes dependencies load depth first in `Dependencies` order; the engine's real order
   among sibling dependencies is not verified yet.
@@ -505,7 +504,10 @@ Reforger 1.9 vehicle data.
   and differentials by name. A value goes only into a block that already exists in that `.et`; if the block is
   missing, nothing is written and the page says to add the override in Workbench first. Text fields such as a
   differential's `Type` are shown, not written. Close the prefab in Workbench before you apply.
-- `ENFUSION_TUNING_READONLY=1` turns writing off. The server listens on 127.0.0.1 only and refuses requests whose
+- With writing on, the server does not start for an addon the other writing tools refuse (one in the game or Tools install,
+  a Workshop cache or download, `ENFUSION_FORBIDDEN_DIRS` or `ENFUSION_PROTECTED_ADDONS`, the projects folder itself, or a
+  folder without a `.gproj`) and says why; point `ENFUSION_TUNING_ADDON` at your own addon.
+  `ENFUSION_TUNING_READONLY=1` turns writing off and starts anyway. The server listens on 127.0.0.1 only and refuses requests whose
   Host or Origin is not its own address.
 
 ```

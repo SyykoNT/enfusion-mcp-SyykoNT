@@ -32,4 +32,20 @@ describe("wb_resources rebuild", () => {
     expect(r.content[0].text).toContain("**Not registered: Prefabs/A.et**");
     expect(r.content[0].text).not.toMatch(/Registered resource/);
   });
+
+  it("open reports a false return from SetOpenedResource as a failure, not as opened", async () => {
+    const r = await setup("SetOpenedResource returned false for: Prefabs/A.et")({ action: "open", path: "Prefabs/A.et" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("**Not opened: Prefabs/A.et**");
+    expect(r.content[0].text).not.toMatch(/Opened resource/);
+  });
+
+  it("a success whose path contains 'returned false' stays a success for register and open", async () => {
+    const reg = await setup("Resource registered: Prefabs/returned false.et")({ action: "register", path: "Prefabs/returned false.et" });
+    expect(reg.isError).toBeUndefined();
+    expect(reg.content[0].text).toContain("**Registered resource: Prefabs/returned false.et**");
+    const open = await setup("Opened resource: Prefabs/returned false.et")({ action: "open", path: "Prefabs/returned false.et" });
+    expect(open.isError).toBeUndefined();
+    expect(open.content[0].text).toContain("**Opened resource: Prefabs/returned false.et**");
+  });
 });
