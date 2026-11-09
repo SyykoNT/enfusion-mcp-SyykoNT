@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { isWorldPath, type WorkbenchClient } from "../workbench/client.js";
@@ -10,7 +12,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
       description:
         "Manage Workbench resources. Register new resources, rebuild resource databases, get resource info, or open a resource in its editor. " +
         "To SEARCH for resources by name, use asset_search (searches base game data and .pak archives offline); this tool cannot list or browse. " +
-        "Register only new files that exist on disk: registering an already registered or missing file can open a dialog or hang Workbench.",
+        "Register only new files: register needs the absolute path of a file that exists on disk and has no .meta yet, and is refused before Workbench is called otherwise (an already registered or missing file can open a dialog or hang Workbench).",
       inputSchema: {
         action: z
           .enum(["register", "rebuild", "getInfo", "open"])
@@ -19,7 +21,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
           ),
         path: z
           .string()
-          .describe("Exact resource path. Required for all actions."),
+          .describe("Exact resource path. Required for all actions. register needs an absolute file path."),
         buildRuntime: z
           .boolean()
           .optional()
@@ -29,6 +31,12 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
     async ({ action, path, buildRuntime }) => {
       let warn = "";
       try {
+        // The engine call takes an absolute file path, and a second register of a file with a .meta can open a dialog and hang Workbench.
+        if (action === "register") {
+          const why = !isAbsolute(path) ? "the path is not absolute" : !existsSync(path) ? "the file does not exist" : existsSync(`${path}.meta`) ? "the file already has a .meta, it may be registered already" : "";
+          if (why) return { content: [{ type: "text" as const, text: `**Not registered: ${path}**\n\nRefused before Workbench was called: ${why}. Register only a new file, by its absolute path.` }], isError: true };
+        }
+
         // Mutating actions require edit mode
         if (action === "register" || action === "rebuild") {
           const modeErr = await ensureMode(client, "edit", `${action} resource`);

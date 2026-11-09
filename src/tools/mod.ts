@@ -322,6 +322,10 @@ function checkNaming(projectPath: string): ValidationIssue[] {
   return issues;
 }
 
+/** The dialog line of a headless run that stayed on one (it is the failure reason); nothing was answered. */
+const dialogLine = (run: { dialog?: string; timedOut: boolean }) =>
+  `Workbench showed a dialog that nothing answered: ${run.dialog}. ${run.timedOut ? "The run timed out with it open." : "The run was ended because it stayed open."}`;
+
 /** Owner line of the shared Workbench lock file (ENFUSION_WORKBENCH_LOCK), for refusal messages. */
 function lockOwner(): string {
   const path = process.env.ENFUSION_WORKBENCH_LOCK;
@@ -486,6 +490,7 @@ export function registerMod(
               for (const w of c.warnings.slice(0, 30)) lines.push(`- \`${w.file}:${w.line}\` ${w.message}`);
             }
             if (c.run.logDir) lines.push("", `Log: ${join(c.run.logDir, "console.log")}`);
+            if (c.run.dialog) lines.push("", dialogLine(c.run));
             if (c.run.savedCrashes) lines.push("", c.run.savedCrashes);
             if (!c.ok) return { content: [{ type: "text", text: lines.join("\n") }], isError: true };
             if (action === "compile") return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -516,6 +521,7 @@ export function registerMod(
             for (const e of p.errors.slice(0, 20)) lines.push(`- ${e}`);
             if (p.run.logDir) lines.push(`Log: ${join(p.run.logDir, "console.log")}`);
           }
+          if (p.run.dialog) lines.push("", dialogLine(p.run));
           if (p.run.savedCrashes) lines.push("", p.run.savedCrashes);
           const result = {
             action, ok: p.ok,

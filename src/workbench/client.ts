@@ -18,7 +18,7 @@ import { findGproj, findWorkbenchExe, isProtectedAddon } from "../utils/game-pat
 import { forbiddenRoot, sameRealPath } from "../utils/safe-path.js";
 import { argValue, findPids, isAlive, netstat, processInfoAsync, type ProcInfo } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, isOwned, pidInstanceFile, writeInstance } from "../utils/instances.js";
-import { crashLogsDir, workbenchEnv, workbenchProfileDir } from "./cli.js";
+import { crashLogsDir, DIALOG_CHECK_AFTER_MS, DIALOG_CHECK_EVERY_MS, workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { startWatcher, sweepForStart } from "../watchdog/wb-watch.js";
 import { LOCAL_HOSTS, attachDeps, ensureWatched, type AttachResult } from "../watchdog/auto-attach.js";
 import { probeDialogs, probeTitles, type TitleProbe } from "../watchdog/probe.js";
@@ -38,9 +38,6 @@ const HANDLER_PATH = `Scripts/WorkbenchGame/${HANDLER_FOLDER}/`;
 const LAUNCH_POLL_INTERVAL_MS = 3_000;
 const LAUNCH_TIMEOUT_MS = 90_000;
 const WORLD_LAUNCH_TIMEOUT_MS = 300_000;
-/** wb_launch looks for a blocking dialog from this long after launch, then at most this often. */
-const DIALOG_CHECK_AFTER_MS = 30_000;
-const DIALOG_CHECK_EVERY_MS = 15_000;
 
 /**
  * Workbench command line. worldPath (a .ent of the opened project) adds the World Editor flags

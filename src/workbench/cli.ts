@@ -18,6 +18,12 @@ import { findWorkbenchExe, myGamesDir } from "../utils/game-paths.js";
 import { newestDir } from "../utils/process.js";
 import { forbiddenRoot, isContained, realPathOf } from "../utils/safe-path.js";
 import { parsePakIndex, type PakDirEntry } from "../pak/reader.js";
+import { probeDialogs } from "../watchdog/probe.js";
+import { dialogKind, dialogText, type WinInfo } from "../watchdog/signals.js";
+
+/** A Workbench run (headless or wb_launch) looks for a blocking dialog from this long after the start, then at most this often. */
+export const DIALOG_CHECK_AFTER_MS = 30_000;
+export const DIALOG_CHECK_EVERY_MS = 15_000;
 
 export interface ScriptIssue {
   file: string;
@@ -35,6 +41,10 @@ export interface WorkbenchRun {
   console: string;
   /** The crash-folder line from the sweep before the start (B-044): what was saved, or why nothing could be. */
   savedCrashes?: string;
+  /** The dialog that stayed open and ended the run, or the Script Authorization dialog that was open when it timed out. */
+  dialog?: string;
+  /** The run was ended on the diag leak assert: judge it from console.log, not from the exit code. */
+  leakAssertEnded?: boolean;
 }
 
 /**
@@ -87,8 +97,35 @@ export async function runWorkbench(config: Config, args: string[], timeoutMs: nu
     const proc = spawn(exe, fullArgs, { cwd, windowsHide: true, stdio: "ignore", env: workbenchEnv() });
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
+    // A dialog that stays open across two checks never closes by itself: end our own child and name it.
+    // Script Authorization is never ended here (it only gets named if the run times out); the leak assert ends the run but is not a failure.
+    let dialog: string | undefined;
+    let authDialog: string | undefined;
+    let leakEnded = false;
+    let ending = false;
+    let lastOpen = new Set<number>();
+    const describe = (w: WinInfo) => `"${w.text}"${dialogText(w) ? ` (${dialogText(w)})` : ""}`;
+    const watcher = setInterval(async () => {
+      if (ending || !proc.pid || Date.now() - start < DIALOG_CHECK_AFTER_MS) return;
+      const wins = (await probeDialogs([proc.pid])).flatMap((p) => ("dialogs" in p ? p.dialogs : []));
+      if (ending) return;
+      const auth = wins.find((w) => dialogKind(w) === "script_authorization");
+      if (auth) authDialog = describe(auth);
+      const open = wins.filter((w) => w !== auth);
+      const persisted = open.filter((w) => lastOpen.has(w.hwnd));
+      lastOpen = new Set(open.map((w) => w.hwnd));
+      const stop = persisted.find((w) => dialogKind(w) !== "leak_assert") ?? persisted[0];
+      if (!stop) return;
+      ending = true;
+      if (dialogKind(stop) === "leak_assert") leakEnded = true;
+      else dialog = describe(stop);
+      proc.kill();
+    }, DIALOG_CHECK_EVERY_MS);
     const finish = (code: number | null) => {
       clearTimeout(timer);
+      clearInterval(watcher);
+      ending = true;
+      const shown = dialog ?? (timedOut ? authDialog : undefined);
       const logDir = newestDir(logsDir, start - 5000);
       const consolePath = logDir ? join(logDir, "console.log") : "";
       done({
@@ -98,6 +135,8 @@ export async function runWorkbench(config: Config, args: string[], timeoutMs: nu
         logDir,
         console: consolePath && existsSync(consolePath) ? readFileSync(consolePath, "utf-8") : "",
         ...(savedCrashes ? { savedCrashes } : {}),
+        ...(shown ? { dialog: shown } : {}),
+        ...(leakEnded ? { leakAssertEnded: true } : {}),
       });
     };
     proc.on("close", finish);
@@ -136,7 +175,7 @@ export async function compileAddon(config: Config, gprojPath: string, timeoutMs 
   const addonDir = dirname(gprojPath);
   const errors = parseScriptIssues(run.console, addonDir, "E");
   const warnings = parseScriptIssues(run.console, addonDir, "W").filter((w) => w.inAddon);
-  const failed = run.timedOut || run.exitCode !== 0 || /Can't compile ".+" script module/.test(run.console);
+  const failed = run.timedOut || !!run.dialog || (run.exitCode !== 0 && !run.leakAssertEnded) || /Can't compile ".+" script module/.test(run.console);
   return { ok: !failed, run, errors, warnings };
 }
 
@@ -157,7 +196,7 @@ export async function packAddon(config: Config, gprojPath: string, outDir: strin
     timeoutMs
   );
   const files = existsSync(outDir) ? readdirSync(outDir) : [];
-  const ok = !run.timedOut && run.exitCode === 0 && /Packaging project successful/.test(run.console) && files.includes("data.pak");
+  const ok = !run.timedOut && !run.dialog && (run.exitCode === 0 || !!run.leakAssertEnded) && /Packaging project successful/.test(run.console) && files.includes("data.pak");
   const packLog = run.console.slice(Math.max(0, run.console.indexOf("Packaging project started")));
   const errors = [...packLog.matchAll(/^.*\(E\): (.+)$/gm)].map((m) => m[1].trim());
   return { ok, run, outDir, files, errors };
