@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer, type Socket } from "node:net";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
+import { formatDialogs, type DialogProbe, type WinInfo } from "../../src/watchdog/signals.js";
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
 import { decodeInt32LE, decodePascalString, encodePascalString } from "../../src/workbench/protocol.js";
 
@@ -75,12 +76,20 @@ describe("wb_open_resource", () => {
 
   it("the Loading world hint is only for .ent paths and only when no other dialog was named", async () => {
     const t = setup(() => undefined);
-    const timeout = (msg: string) => vi.spyOn(t.client, "call").mockRejectedValue(new WorkbenchError(msg, "TIMEOUT"));
-    timeout("timed out");
-    expect((await t.tool.run({ path: "Prefabs/X.et" })).content[0].text).not.toContain("Loading world");
-    expect((await t.tool.run({ path: "Worlds/Other.ent" })).content[0].text).toContain("\"Loading world\" dialog");
-    timeout("Workbench PID 1 has a dialog open, which blocks every NET API call:\n- \"Script Authorization Required\" (#32770) [script_authorization]");
-    expect((await t.tool.run({ path: "Worlds/Other.ent" })).content[0].text).not.toContain("usually means");
+    // Built the way client.ts builds a TIMEOUT: probe result, its formatted text, the structured probe
+    const timeout = (dialogs: DialogProbe[]) =>
+      vi.spyOn(t.client, "call").mockRejectedValue(new WorkbenchError(["timed out", formatDialogs(dialogs)].join("\n"), "TIMEOUT", dialogs));
+    const win = (text: string, cls: string): WinInfo => ({ hwnd: 1, cls, text });
+    const hinted = async (path: string) => (await t.tool.run({ path })).content[0].text.includes("usually means");
+
+    timeout([{ pid: 1, dialogs: [] }]);
+    expect(await hinted("Prefabs/X.et")).toBe(false);
+    expect(await hinted("Worlds/Other.ent")).toBe(true);
+    timeout([{ pid: 1, dialogs: [win("Script Authorization Required", "#32770")] }]);
+    expect(await hinted("Worlds/Other.ent")).toBe(false);
+    timeout([{ pid: 1, dialogs: [win("Loading world", "Qt683QWindowIcon")] }]);
+    expect(await hinted("Worlds/Other.ent")).toBe(true);
+    expect(await hinted("Prefabs/X.et")).toBe(false);
   });
 
   it("another error carries no dialog hint", async () => {

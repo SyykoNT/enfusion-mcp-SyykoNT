@@ -30,12 +30,13 @@ function formatEntityDetails(data: Record<string, unknown>): string {
   const props = namedRows(data.properties);
   if (props.length > 0) {
     const total = typeof data.varCount === "number" ? data.varCount : props.length;
-    lines.push(`\n### Properties (${props.length}${total > props.length ? ` of ${total}` : ""})`, "| Property | Value |", "|---|---|");
+    lines.push(`\n### Properties (${props.length}${total > props.length ? ` of ${total}` : ""})`);
     const held = props.filter((p) => p.value !== undefined && p.value !== "");
+    if (held.length > 0) lines.push("| Property | Value |", "|---|---|");
     for (const p of held) lines.push(`| ${p.name} | ${p.value} |`);
     // 1.9 lists script-method names with no value; they would bury the real properties
     const empty = props.filter((p) => !held.includes(p));
-    if (empty.length > 0) lines.push(`\n*${empty.length} more with no value: ${empty.slice(0, 5).map((p) => p.name).join(", ")}${empty.length > 5 ? ", ..." : ""}*`);
+    if (empty.length > 0) lines.push(`${held.length > 0 ? "\n" : ""}*${empty.length} ${held.length > 0 ? "more " : ""}with no value: ${empty.slice(0, 5).map((p) => p.name).join(", ")}${empty.length > 5 ? ", ..." : ""}*`);
   }
 
   if (Array.isArray(data.children) && data.children.length > 0) {
@@ -53,7 +54,9 @@ function formatEntityList(data: Record<string, unknown>): string {
   const lines: string[] = [];
   // 1.9 packs an empty object before each real entity row; a real one has a name, class or position
   const entities = (Array.isArray(data.entities) ? data.entities : []).filter((e) => e?.name || e?.className || e?.position);
-  const total = typeof data.total === "number" ? data.total : entities.length;
+  // the handler sends totalCount; total is the older name
+  const count = data.totalCount ?? data.total;
+  const total = typeof count === "number" ? count : entities.length;
   const offset = typeof data.offset === "number" ? data.offset : 0;
 
   lines.push(`**Entities** (showing ${entities.length} of ${total}, offset ${offset})\n`);

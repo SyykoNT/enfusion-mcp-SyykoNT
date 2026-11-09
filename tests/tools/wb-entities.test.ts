@@ -78,12 +78,19 @@ describe("wb_entity_inspect components and list rows", () => {
 
   it("wb_entity_list drops the empty rows, counts and numbers the real ones, and keeps an unnamed entity that has a class", async () => {
     const ents = [{ name: "A", className: "GenericEntity", position: "1 2 3" }, { name: "", className: "Tree", position: "4 5 6" }];
-    const v19 = (await tool("wb_entity_list", { status: "ok", total: 2, offset: 0, entities: ents.flatMap((e) => [{}, e]) }).run({ offset: 0, limit: 50 })).content[0].text;
-    const v18 = (await tool("wb_entity_list", { status: "ok", total: 2, offset: 0, entities: ents }).run({ offset: 0, limit: 50 })).content[0].text;
+    const v19 = (await tool("wb_entity_list", { status: "ok", totalCount: 2, offset: 0, entities: ents.flatMap((e) => [{}, e]) }).run({ offset: 0, limit: 50 })).content[0].text;
+    const v18 = (await tool("wb_entity_list", { status: "ok", totalCount: 2, offset: 0, entities: ents }).run({ offset: 0, limit: 50 })).content[0].text;
     expect(v19).toContain("(showing 2 of 2, offset 0)");
     expect(v19).toContain("1. **A** at 1 2 3\n2. **(unnamed)** at 4 5 6");
     expect(v19).not.toContain("3. ");
     expect(v18).toBe(v19);
+  });
+
+  it("wb_entity_list shows the handler's totalCount and the pagination line when the list was capped", async () => {
+    const ents = [{ name: "A", className: "GenericEntity", position: "1 2 3" }, { name: "B", className: "GenericEntity", position: "4 5 6" }];
+    const text = (await tool("wb_entity_list", { status: "ok", totalCount: 10, offset: 0, entities: ents }).run({ offset: 0, limit: 2 })).content[0].text;
+    expect(text).toContain("(showing 2 of 10, offset 0)");
+    expect(text).toContain("*8 more entities not shown. Use offset/limit to paginate.*");
   });
 });
 
@@ -94,6 +101,13 @@ describe("wb_entity_inspect values", () => {
     const text = (await tool("wb_entity_inspect", { status: "ok", name: "E", varCount: 8, properties: props.flatMap((p) => [{}, p]) }).run({ name: "E" })).content[0].text;
     expect(text).toContain("### Properties (8)\n| Property | Value |\n|---|---|\n| Mass | 77 |\n| Off | 0 |\n\n*6 more with no value: EOnTouch, _WB_CanDelete, OnA, OnB, OnC, ...*");
     expect(text).not.toContain("| EOnTouch |");
+  });
+
+  it("prints no table header when every property row is empty", async () => {
+    const props = [{ name: "OnA", value: "" }, { name: "OnB", value: "" }];
+    const text = (await tool("wb_entity_inspect", { status: "ok", name: "E", varCount: 2, properties: props }).run({ name: "E" })).content[0].text;
+    expect(text).toContain("### Properties (2)\n*2 with no value: OnA, OnB*");
+    expect(text).not.toContain("| Property |");
   });
 
   it("prints the properties the handler read, marks the capped count, and drops the empty rows", async () => {
