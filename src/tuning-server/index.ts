@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { createTuningServer } from "./server.js";
+import { writeRefusal } from "./write-guard.js";
 import { WorkbenchClient } from "../workbench/client.js";
 import { PakVirtualFS } from "../pak/vfs.js";
 import { baseReader } from "../tools/config-override.js";
@@ -15,6 +16,13 @@ const port = process.env.ENFUSION_TUNING_PORT ? parseInt(process.env.ENFUSION_TU
 // way to change a nested field (the Workbench API replaces the whole nested
 // object and wipes siblings). Set ENFUSION_TUNING_READONLY=1 to lock it.
 const allowWrite = process.env.ENFUSION_TUNING_READONLY !== "1";
+
+// Writing into a game or Workshop folder or a protected addon is refused at start, like every other writing tool.
+const refusal = allowWrite ? writeRefusal(config, addonPath) : null;
+if (refusal) {
+  console.error(`${refusal}\nThe tuning server did not start. Set ENFUSION_TUNING_ADDON to your own addon, or ENFUSION_TUNING_READONLY=1 to view without writing.`);
+  process.exit(1);
+}
 
 // What to do in Workbench after a successful write, via ENFUSION_TUNING_POST_WRITE:
 //   rebuild        (default) ask Workbench to rebuild the changed .et file (ResourceManager.RebuildResourceFile); the reply only says it was requested, the result is in console.log

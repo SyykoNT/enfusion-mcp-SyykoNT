@@ -123,7 +123,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
     try {
       rmSync(noautoFile(d.stateDir, pid), { force: true });
     } catch (e) {
-      markerNote = ` The stop marker for this Workbench run could not be removed (${(e as NodeJS.ErrnoException).code ?? "error"}), so the automatic attach stays off for it.`;
+      markerNote = ` The stop marker could not be removed (${(e as NodeJS.ErrnoException).code ?? "error"}), so the automatic attach stays off for this Workbench run if the marker names it.`;
     }
   }
   // Ownership only from the instance registry (D-026): nothing a caller passes can make a Workbench owned.
@@ -143,12 +143,12 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
     await sleep(100);
     holder = watcherOf(d.stateDir, pid, d.alive);
   }
-  if (holder === UNREADABLE) return fail(`Stopped the automatic watcher PID ${watcher}, but the watch lock for PID ${pid} cannot be read right now; check wb_watch status.`);
+  if (holder === UNREADABLE) return fail(`Stopped the automatic watcher PID ${watcher}, but the watch lock for PID ${pid} cannot be read right now; check wb_watch status.${markerNote}`);
   if (holder === w) return { text: `Replaced the automatic watcher PID ${watcher} with watcher PID ${w}. ${text}` };
   return fail(
     holder
-      ? `Stopped the automatic watcher PID ${watcher}, but another watcher (PID ${holder}) took Workbench PID ${pid} first; check wb_watch status.`
-      : `Stopped the automatic watcher PID ${watcher}, but the new watcher PID ${w} did not take Workbench PID ${pid} within ${(d.settleMs ?? 2000) / 1000} s. Check wb_watch status.`
+      ? `Stopped the automatic watcher PID ${watcher}, but another watcher (PID ${holder}) took Workbench PID ${pid} first; check wb_watch status.${markerNote}`
+      : `Stopped the automatic watcher PID ${watcher}, but the new watcher PID ${w} did not take Workbench PID ${pid} within ${(d.settleMs ?? 2000) / 1000} s. Check wb_watch status.${markerNote}`
   );
 }
 

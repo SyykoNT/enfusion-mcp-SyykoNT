@@ -190,6 +190,18 @@ describe("tuning server write path, hostile requests", () => {
       expect(req.listenerCount("data")).toBe(0);
     });
 
+    it("readBody takes a body of exactly the cap and rejects one byte more", async () => {
+      const exact = new EventEmitter() as IncomingMessage;
+      const taken = readBody(exact);
+      exact.emit("data", Buffer.alloc(MAX_BODY_BYTES));
+      exact.emit("end");
+      expect(Buffer.byteLength(await taken)).toBe(MAX_BODY_BYTES);
+      const over = new EventEmitter() as IncomingMessage;
+      const refused = readBody(over);
+      over.emit("data", Buffer.alloc(MAX_BODY_BYTES + 1));
+      await expect(refused).rejects.toThrow();
+    });
+
     it("a body just under the cap still gets through to the JSON check", async () => {
       const res = await post({}, "x".repeat(900 * 1024));
       expect(res.status).toBe(400);

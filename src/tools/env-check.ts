@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import { findWorkbenchExe, findGproj } from "../utils/game-paths.js";
+import { realPathOf } from "../utils/safe-path.js";
 import { findPids, serverProcesses, clientProcesses } from "../utils/process.js";
 import { crashLogsFolder } from "../workbench/cli.js";
 import { peFileVersion } from "../utils/pe-version.js";
@@ -23,6 +24,8 @@ export function readBuildInfo(file = BUILD_INFO_FILE): BuildInfo | undefined {
   } catch { /* unstamped build */ }
   return undefined;
 }
+
+const canRead = (p: string) => { try { realPathOf(p); return true; } catch { return false; } };
 
 const packageVersion = (): string => createRequire(import.meta.url)("../../package.json").version;
 
@@ -53,7 +56,8 @@ export function registerEnvCheck(server: McpServer, config: Config, client: Work
 
       const ver = (exe: string) => { const v = peFileVersion(exe); return v ? ` (v${v})` : ""; };
       const crash = crashLogsFolder(config);
-      const unreadable = crash.refused?.root === crash.refused?.setting;
+      // A setting equal to a forbidden root (the game folder itself) has root === setting too, so ask the real path.
+      const unreadable = !!crash.refused && !canRead(crash.refused.setting);
       const crashLine = crash.refused
         ? `${ok(false)} Crash logs folder: ENFUSION_CRASH_LOGS_DIR (crashLogsDir) "${crash.refused.setting}" is refused, ${unreadable ? "it cannot be read (missing drive or no access)" : `it is inside ${crash.refused.root}`}; ${crash.dir ? `using ${unreadable ? "the default " : ""}${crash.dir}` : "no crash logs folder is set"}`
         : `${ok(!!crash.dir)} Crash logs folder: ${crash.dir ?? "none (its default location is not allowed): set ENFUSION_CRASH_LOGS_DIR"}`;
