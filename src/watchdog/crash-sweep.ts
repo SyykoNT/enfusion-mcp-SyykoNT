@@ -1,12 +1,12 @@
 /**
- * Save the log folders of earlier Workbench runs that crashed or hung (B-044, PRD F14.1). A new Workbench start prunes older
+ * Save the log folders of earlier Workbench runs that crashed. A new Workbench start prunes older
  * log folders, so a crash nobody watched is gone by the next start. Copy only: nothing in the logs folder is moved or deleted.
  */
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, rmdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { copyCrashFiles } from "./auth.js";
-import { LEAK_TEXT, crashFiles, parseCrashLog } from "./signals.js";
+import { crashFiles } from "./signals.js";
 
 export interface SweepOpts {
   /** Log folders of Workbenches that are running now: still being written, never copied. */
@@ -57,12 +57,10 @@ const unreadable = (path: string): string | undefined => {
 // A file that never copies whole (unreadable, still growing) would otherwise get a new full copy on every sweep.
 const MAX_COPIES = 3;
 
-/** True when some entry of a crash.log has a Reason other than the leak assert (entries are split as parseCrashLog splits them). */
-const hasCrashEntry = (text: string) =>
-  text.split(/^-{20,}\s*$/m).some((block) => {
-    const reason = parseCrashLog(block).reason; // the file header block has no Reason: it is not an entry
-    return reason !== undefined && reason !== LEAK_TEXT;
-  });
+/** True when a crash.log has an entry whose type line is "Unhandled exception". "Assertion failed" entries (the leak assert and others) and the file header block are not crashes. */
+const hasCrashEntry = (text: string) => /^Unhandled exception\s*$/m.test(text);
+/** A FREEZE_*.mdmp is a hang dump Workbench writes without a crash: only another dump counts. */
+const isCrashDump = (file: string) => !/^FREEZE_/i.test(file);
 
 /** Every copy folder under the crash folder with its files (lowercase name to size). */
 function savedIndex(root: string): { dir: string; files: Map<string, number> }[] {
@@ -83,7 +81,7 @@ function savedIndex(root: string): { dir: string; files: Map<string, number> }[]
   return index;
 }
 
-/** Copy every finished crash or hang log folder under `logsRoot` that is not saved yet to `<destRoot>/<folder name>/`. */
+/** Copy every finished crash log folder under `logsRoot` that is not saved yet to `<destRoot>/<folder name>/`. */
 export function saveCrashFolders(logsRoot: string, destRoot: string, o: SweepOpts = {}): SweepResult {
   const now = o.now ?? Date.now;
   const t0 = now();
@@ -109,7 +107,7 @@ export function saveCrashFolders(logsRoot: string, destRoot: string, o: SweepOpt
       const files = readdirSync(src);
       const dumps = files.filter((f) => /\.mdmp$/i.test(f)).sort();
       const log = files.find((f) => f.toLowerCase() === "crash.log");
-      if (!dumps.length && !(log && hasCrashEntry(readFileSync(join(src, log), "utf-8")))) continue;
+      if (!dumps.some(isCrashDump) && !(log && hasCrashEntry(readFileSync(join(src, log), "utf-8")))) continue;
       const all = crashFiles(files).copy;
       // A file that cannot be read now is reported and left out of the match below, so the rest is saved once; a later sweep may still get it.
       const bad = all.flatMap((f) => {

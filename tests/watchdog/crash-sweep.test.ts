@@ -11,8 +11,11 @@ import { sweepCrashes } from "../../src/watchdog/wb-watch.js";
 const HEADER = "---------------------------------------------\r\nLog C:\\Users\\user\\Documents\\My Games\\ArmaReforgerWorkbench\\logs\\logs_2026-11-01_10-00-00\\crash.log started at 2026-11-01 10:02:00 (2026-11-01 15:02:00 UTC)\r\n\r\n\r\n\r\n";
 const LEAK_ENTRY = "------------------------------------\r\n31.10 2026 09:32:55\r\nAssertion failed\r\n\r\nLine: 1287\r\n\r\nReason: Resources are leaking! Check log!\r\n";
 const OOW_ENTRY = "------------------------------------\r\n31.10 2026 09:40:01\r\nAssertion failed\r\n\r\nLine: 77\r\n\r\nReason: Entity out of world bounds\r\n";
+const AIWORLD_ENTRY = "------------------------------------\r\n24.10 2026 14:48:30\r\nAssertion failed\r\n\r\nProgram: C:\\Game\\Workbench\\Workbench.exe\r\nFile: E:\\build\\AIWorld.cpp\r\nLine: 890\r\n\r\nReason: This is not the only AIWorld that is present in the world! Make sure You know what You are doing\r\n";
+const UNHANDLED_ENTRY = "------------------------------------\r\n26.10 2026 16:59:06\r\nUnhandled exception\r\n\r\nProgram: C:\\Game\\Workbench\\Workbench.exe\r\nReason: Access violation. Illegal read by 0x7ff786855576 at 0xffffffffffffffff\r\n\r\n[zlibVersion]: ??? addr:0x7ff787c02929\r\n";
 const LEAK = HEADER + LEAK_ENTRY;
 const OUT_OF_WORLD = HEADER + OOW_ENTRY;
+const CRASHED = HEADER + UNHANDLED_ENTRY;
 const name = (h: number, m = 0, s = 0) => `logs_2026-11-01_${String(h).padStart(2, "0")}-${String(m).padStart(2, "0")}-${String(s).padStart(2, "0")}`;
 const startMs = (h: number) => new Date(2026, 10, 1, h, 0, 0).getTime();
 
@@ -39,32 +42,50 @@ const hashes = (dir: string) => Object.fromEntries(walk(dir).map((p) => [p, crea
 const listing = (dir: string) => (existsSync(dir) ? readdirSync(dir).sort() : []);
 
 describe("saveCrashFolders", () => {
-  it("copies a folder with a dump, a hang dump only and a crash.log with a real entry; skips leak-only and empty ones; sources stay byte-identical", () => {
+  it("copies a folder with a dump and one with an Unhandled exception entry; skips hang-dump-only, assert-only and empty ones; sources stay byte-identical", () => {
     const t = setup();
     t.folder(name(10), { "crash_1.mdmp": "dump-a", "crash.log": LEAK, "console.log": "c", "error.log": "e", "script.log": "s" });
     t.folder(name(11), { "FREEZE_x.mdmp": "hang", "console.log": "c2" });
     t.folder(name(12), { "crash.log": LEAK, "console.log": "c3" });
-    t.folder(name(13), { "crash.log": HEADER + OOW_ENTRY + LEAK_ENTRY, "console.log": "c4" }); // the real entry first: only the last entry would be the leak assert
+    t.folder(name(13), { "crash.log": HEADER + UNHANDLED_ENTRY + LEAK_ENTRY, "console.log": "c4" }); // the crash entry first: only the last entry would be the leak assert
     t.folder(name(14), { "console.log": "c5" });
     const before = hashes(t.logs);
     const r = saveCrashFolders(t.logs, t.dest);
-    expect(r.saved.map((s) => s.folder).sort()).toEqual([name(10), name(11), name(13)]);
+    expect(r.saved.map((s) => s.folder).sort()).toEqual([name(10), name(13)]);
     expect(r.errors).toEqual([]);
-    expect(listing(t.dest)).toEqual([name(10), name(11), name(13)]);
+    expect(listing(t.dest)).toEqual([name(10), name(13)]);
     expect(listing(join(t.dest, name(10)))).toEqual(["console.log", "crash.log", "crash_1.mdmp", "error.log", "script.log"]);
-    expect(listing(join(t.dest, name(11)))).toEqual(["FREEZE_x.mdmp", "console.log"]);
     expect(listing(join(t.dest, name(13)))).toEqual(["console.log", "crash.log"]);
     expect(hashes(t.logs)).toEqual(before);
-    expect(sweepLine(r, t.dest)).toBe(`Saved 3 crash folder(s) to ${t.dest}`);
+    expect(sweepLine(r, t.dest)).toBe(`Saved 2 crash folder(s) to ${t.dest}`);
+  });
+
+  it.each([
+    ["an Unhandled exception entry", { "crash.log": CRASHED }, true],
+    ["a dump that is not a FREEZE dump", { "ArmaReforgerWorkbenchSteamDiag_2026-10-24_03-11-58.mdmp": "dump" }, true],
+    ["only FREEZE dumps", { "FREEZE_a.mdmp": "hang", "freeze_b.MDMP": "hang" }, false],
+    ["only the leak assert", { "crash.log": LEAK }, false],
+    ["only an Entity out of world bounds assert", { "crash.log": OUT_OF_WORLD }, false],
+    ["only an AIWorld assert", { "crash.log": HEADER + AIWORLD_ENTRY }, false],
+    ["only the header block", { "crash.log": HEADER }, false],
+    ["the leak assert and an Unhandled exception entry", { "crash.log": HEADER + LEAK_ENTRY + UNHANDLED_ENTRY + LEAK_ENTRY }, true],
+    ["a FREEZE dump and an Unhandled exception entry", { "FREEZE_a.mdmp": "hang", "crash.log": CRASHED }, true],
+    ["a FREEZE dump, a leak assert and a non-FREEZE dump", { "FREEZE_a.mdmp": "hang", "crash.log": LEAK, "b.mdmp": "dump" }, true],
+  ] as [string, Record<string, string>, boolean][])("a folder with %s is saved or skipped as listed", (_what, files, saved) => {
+    const t = setup();
+    t.folder(name(10), { ...files, "console.log": "c" });
+    expect(saveCrashFolders(t.logs, t.dest).saved.map((s) => s.folder)).toEqual(saved ? [name(10)] : []);
+    if (saved) expect(listing(join(t.dest, name(10)))).toEqual(["console.log", ...Object.keys(files)].sort());
+    else expect(existsSync(t.dest)).toBe(false);
   });
 
   it("a folder already saved (a <stamp>_<pid> copy holding all its files) is not copied; a second sweep copies nothing", () => {
     const t = setup();
-    t.folder(name(10), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "console.log": "c" });
+    t.folder(name(10), { "crash.log": HEADER + LEAK_ENTRY + UNHANDLED_ENTRY, "console.log": "c" });
     t.folder(name(11), { "a.mdmp": "first", "b.mdmp": "second" });
-    t.folder(name(12), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "console.log": "c" });
+    t.folder(name(12), { "crash.log": HEADER + LEAK_ENTRY + UNHANDLED_ENTRY, "console.log": "c" });
     mkdirSync(join(t.dest, "20261101_100500_4242"), { recursive: true });
-    writeFileSync(join(t.dest, "20261101_100500_4242", "crash.log"), HEADER + LEAK_ENTRY + OOW_ENTRY); // the watcher's copy of folder 10 (same bytes)
+    writeFileSync(join(t.dest, "20261101_100500_4242", "crash.log"), HEADER + LEAK_ENTRY + UNHANDLED_ENTRY); // the watcher's copy of folder 10 (same bytes)
     writeFileSync(join(t.dest, "20261101_100500_4242", "console.log"), "c");
     mkdirSync(join(t.dest, "20261101_110500_77"), { recursive: true });
     writeFileSync(join(t.dest, "20261101_110500_77", "a.mdmp"), "first");
@@ -72,7 +93,7 @@ describe("saveCrashFolders", () => {
     const first = saveCrashFolders(t.logs, t.dest);
     // folder 12 has the same files as the saved copy of folder 10, so it counts as saved too
     expect(first.saved).toEqual([]);
-    t.folder(name(13), { "crash.log": OUT_OF_WORLD });
+    t.folder(name(13), { "crash.log": CRASHED });
     const second = saveCrashFolders(t.logs, t.dest);
     expect(second.saved.map((s) => s.folder)).toEqual([name(13)]);
     expect(saveCrashFolders(t.logs, t.dest).saved).toEqual([]);
@@ -94,13 +115,13 @@ describe("saveCrashFolders", () => {
   it("a copy with every file but one of a different size is not saved: a longer console.log, a shorter b.mdmp; each gets _2", () => {
     const t = setup();
     t.folder(name(10), { "crash.log": OUT_OF_WORLD, "a.mdmp": "first", "console.log": "console, then more lines" });
-    t.folder(name(11), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "a.mdmp": "first", "b.mdmp": "second dump, finished" });
+    t.folder(name(11), { "crash.log": HEADER + LEAK_ENTRY + UNHANDLED_ENTRY, "a.mdmp": "first", "b.mdmp": "second dump, finished" });
     const copy = (n: string, files: Record<string, string>) => {
       mkdirSync(join(t.dest, n), { recursive: true });
       for (const [f, text] of Object.entries(files)) writeFileSync(join(t.dest, n, f), text);
     };
     copy(name(10), { "crash.log": OUT_OF_WORLD, "a.mdmp": "first", "console.log": "console" });
-    copy(name(11), { "crash.log": HEADER + LEAK_ENTRY + OOW_ENTRY, "a.mdmp": "first", "b.mdmp": "second" }); // the right name, fewer bytes
+    copy(name(11), { "crash.log": HEADER + LEAK_ENTRY + UNHANDLED_ENTRY, "a.mdmp": "first", "b.mdmp": "second" }); // the right name, fewer bytes
     const r = saveCrashFolders(t.logs, t.dest);
     expect(r.saved.map((s) => s.dest).sort()).toEqual([join(t.dest, `${name(10)}_2`), join(t.dest, `${name(11)}_2`)]);
     expect(readFileSync(join(t.dest, `${name(11)}_2`, "b.mdmp"), "utf-8")).toBe("second dump, finished");
@@ -142,7 +163,7 @@ describe("saveCrashFolders", () => {
     const t = setup();
     const stateDir = join(t.root, "watch");
     mkdirSync(stateDir);
-    const src = t.folder(name(10), { "FREEZE_x.mdmp": "hang", "console.log": "c" });
+    const src = t.folder(name(10), { "x.mdmp": "dump", "console.log": "c" });
     const runs = [1, 2, 3, 4, 5].map(() => {
       const r = sweepCrashes(t.logs, t.dest, stateDir, { pids: () => [] });
       appendFileSync(join(src, "console.log"), " more");
@@ -171,7 +192,7 @@ describe("saveCrashFolders", () => {
 
   it("a name clash gets _2 and then _3, and the folder already there is not touched", () => {
     const t = setup();
-    t.folder(name(10), { "crash.log": OUT_OF_WORLD, "console.log": "new" });
+    t.folder(name(10), { "crash.log": CRASHED, "console.log": "new" });
     for (const clash of [name(10), `${name(10)}_2`]) {
       mkdirSync(join(t.dest, clash), { recursive: true });
       writeFileSync(join(t.dest, clash, "crash.log"), `other ${clash}`);
