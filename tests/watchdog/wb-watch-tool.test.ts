@@ -105,7 +105,7 @@ describe("wb_watch stop", () => {
     // Holder 600 runs wb-watch for this PID, but the state names watcher 650 (600 is a reused PID).
     writeFileSync(join(d.stateDir, "19524.lock"), "600");
     writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 650, auto: true }));
-    expect(await watchAction({ action: "stop", pid: 19524 }, d)).toEqual({ text: "PID 600 holds the watch lock for 19524 but is not its watcher. Not stopped.", isError: true });
+    expect(await watchAction({ action: "stop", pid: 19524 }, d)).toEqual({ text: "PID 600 holds the watch lock for 19524 but is not its watcher. Not stopped; check wb_watch status.", isError: true });
     expect(await watchAction({ action: "start", pid: 19524 }, d)).toEqual({ text: "already watched by watcher PID 600", isError: true });
     // Holder 601 is named by the state, but watches Workbench 195240: --pid must match as a whole argument.
     writeFileSync(join(d.stateDir, "19524.lock"), "601");

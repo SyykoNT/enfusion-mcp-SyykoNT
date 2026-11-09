@@ -287,4 +287,21 @@ describe("leakAssertButton and portOwner", () => {
     expect(portOwner(out, 5775)).toBe(22172);
     expect(portOwner(out, 5776)).toBeUndefined();
   });
+  it("finds the listener by its empty foreign address, whatever the state word is", () => {
+    // ABHOEREN stands in for the German state word (forum netstat dumps show it as ABHÖREN; not from Microsoft docs).
+    const de = "  TCP    0.0.0.0:5775    0.0.0.0:0    ABHOEREN    111\r\n";
+    expect(portOwner(de, 5775)).toBe(111);
+    expect(portOwner("  TCP    [::]:5775    [::]:0    ABHÖREN    222\r\n", 5775)).toBe(222);
+    expect(portOwner("  TCP    [::1]:5775    [::]:0    LISTENING    333\r\n", 5775)).toBe(333);
+    expect(portOwner("  TCP    127.0.0.1:5775    *:*    ECOUTE    444\r\n", 5775)).toBe(444);
+  });
+  it("ignores an established row on the port and a longer port that starts with it", () => {
+    const out =
+      "  TCP    127.0.0.1:5775    127.0.0.1:50000    ESTABLISHED    999\r\n" +
+      "  TCP    127.0.0.1:57750   0.0.0.0:0          LISTENING      888\r\n" +
+      "  TCP    0.0.0.0:5775      0.0.0.0:0          LISTENING      555\r\n";
+    expect(portOwner(out, 5775)).toBe(555);
+    expect(portOwner(out.split("\r\n")[0] + "\r\n", 5775)).toBeUndefined();
+    expect(portOwner(out.split("\r\n")[1] + "\r\n", 5775)).toBeUndefined();
+  });
 });

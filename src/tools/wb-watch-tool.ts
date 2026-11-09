@@ -76,7 +76,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
 
   if (a.action === "stop") {
     if (!watcher) return fail(`No watcher runs for Workbench PID ${pid}.`);
-    if (!isOurWatcher(d, pid, watcher)) return fail(`PID ${watcher} holds the watch lock for ${pid} but is not its watcher. Not stopped.`);
+    if (!isOurWatcher(d, pid, watcher)) return fail(`PID ${watcher} holds the watch lock for ${pid} but is not its watcher. Not stopped; check wb_watch status.`);
     // Written before the kill: the stopped Workbench run is not watched again automatically (a new run has another start time).
     const created = d.proc(pid)?.created;
     if (created) writeFileSync(noautoFile(d.stateDir, pid), String(created));
