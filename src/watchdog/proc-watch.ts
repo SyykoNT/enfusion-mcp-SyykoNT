@@ -78,8 +78,12 @@ export interface ProcWatchDeps {
 
 const isVme = (w: WinInfo) => w.cls === VME_CLASS && w.text === VME_TITLE;
 const norm = (p: string) => p.replace(/\//g, "\\").toLowerCase();
-/** The command line starts with the instance's exe path, quoted or not. */
-const sameImage = (cmd: string, exe: string) => !!exe && norm(cmd).replace(/^"/, "").startsWith(norm(exe));
+/** The command line starts with the instance's exe path, quoted or not, and the path ends there (end, space or quote). */
+const sameImage = (cmd: string, exe: string) => {
+  const c = norm(cmd).replace(/^"/, "");
+  const e = norm(exe);
+  return !!exe && c.startsWith(e) && (c.length === e.length || " \"".includes(c[e.length]));
+};
 
 /** Watch `o.pid` until it is gone. Returns the exit code: 0 done, 3 already watched. */
 export async function runProcWatcher(o: ProcWatchOpts, over: Partial<ProcWatchDeps> = {}): Promise<number> {
@@ -94,7 +98,9 @@ export async function runProcWatcher(o: ProcWatchOpts, over: Partial<ProcWatchDe
     return 3;
   }
   const lock = join(o.stateDir, `${o.pid}.lock`);
-  const file = join(o.stateDir, `${o.pid}_${d.readInstance(o.instance)?.startedAt ?? d.now()}.json`);
+  // The name comes from a file the watcher does not own: only a whole number may reach the path.
+  const started = d.readInstance(o.instance)?.startedAt;
+  const file = join(o.stateDir, `${o.pid}_${Number.isSafeInteger(started) ? started : d.now()}.json`);
   let latest: ProbeSample | undefined;
   let samples = 0;
   let lastSample: number | undefined;
@@ -117,10 +123,12 @@ export async function runProcWatcher(o: ProcWatchOpts, over: Partial<ProcWatchDe
     const info = d.processInfo(o.pid);
     if (!info) return { why: "the process was not found" };
     if (!sameImage(info.cmd, inst.exe)) return { why: "the process image is not the one in the instance file" };
-    if (s.start === undefined || Math.abs(s.start - inst.startedAt) > 10_000) return { why: "the process start time does not match the instance file" };
+    if (s.start === undefined || !Number.isFinite(inst.startedAt) || Math.abs(s.start - inst.startedAt) > 10_000) return { why: "the process start time does not match the instance file" };
     const owner = { pid: o.ownerPid, startedAt: o.ownerStarted };
     const mine = inst.ownerPid === owner.pid && inst.ownerStartedAt === owner.startedAt;
-    const cls = classify(inst, { ...info, created: s.start }, mine ? undefined : d.processInfo(inst.ownerPid)?.created, owner);
+    // The live creation time (`info`) is checked too, so a reused PID is caught even when the sample is from the old process.
+    const cls = classify(inst, info, mine ? undefined : d.processInfo(inst.ownerPid)?.created, owner);
+    if (cls === "stale") return { why: "the running process was not created when the instance file says" };
     if (cls === "orphan") return { why: "it was started by an MCP session that has ended" };
     if (cls !== "own") return { why: "it was not started by this MCP session" };
     return { start: s.start };
@@ -143,11 +151,16 @@ export async function runProcWatcher(o: ProcWatchOpts, over: Partial<ProcWatchDe
       gone = !d.alive(o.pid);
     }
     // Copied after the end attempt: the engine writes crash.log only as the process ends. A failed copy never changes the result.
-    const logDir = newestDir(o.logsRoot, check.start - 5000) ?? undefined;
+    let logDir: string | undefined;
     let saved: string | undefined;
     let note: string | undefined;
-    if (!o.crashDir) note = "no crash logs folder is set, nothing was copied";
-    else {
+    try {
+      logDir = newestDir(o.logsRoot, check.start - 5000) ?? undefined;
+    } catch (e) {
+      note = `the log folder lookup failed (${e instanceof Error ? e.message : String(e)})`;
+    }
+    if (!o.crashDir) note ??= "no crash logs folder is set, nothing was copied";
+    else if (!note) {
       try {
         const when = stamp(d.now());
         const c = copyCrashFiles(logDir, o.crashDir, when, o.pid, `${o.kind}_${when}_${o.pid}`);

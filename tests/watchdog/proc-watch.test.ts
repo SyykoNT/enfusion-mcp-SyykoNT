@@ -40,7 +40,7 @@ const otherWin = (title = "Script Authorization Required"): WinInfo => ({
 const run5s = (n: number, wins: WinInfo[], start = START + 1000): ProbeSample[] =>
   Array.from({ length: n }, (_, i) => ({ t: NOW + i * 5000, alive: true, start, wins }));
 
-interface Rig { script: ProbeSample[]; inst?: Partial<Instance> | "missing" | "garbage"; info?: Partial<ProcInfo>; ownerInfo?: ProcInfo; killWorks?: boolean; crashDir?: "ok" | "none" | "blocked"; lag?: number }
+interface Rig { script: ProbeSample[]; inst?: Partial<Instance> | "missing" | "garbage"; info?: Partial<ProcInfo>; ownerInfo?: ProcInfo; killWorks?: boolean; crashDir?: "ok" | "none" | "blocked"; lag?: number; lookupThrows?: boolean }
 
 function rig(r: Rig) {
   const root = mkdtempSync(join(tmpdir(), "emcp-pw-"));
@@ -73,6 +73,10 @@ function rig(r: Rig) {
     seen.savedAtKill = existsSync(crashRoot) ? readdirSync(crashRoot).length : 0;
     writeFileSync(join(logDir, "crash.log"), CRASH_TEXT); // the engine writes it as the process ends
     if (r.killWorks !== false) dead = true;
+    if (r.lookupThrows) {
+      rmSync(logsRoot, { recursive: true, force: true }); // the logs root becomes a file: reading it as a folder throws
+      writeFileSync(logsRoot, "not a folder");
+    }
   });
   const probeStop = vi.fn();
   const probe = vi.fn((_pid: number, _port: number, onSample: (s: ProbeSample) => void) => {
@@ -104,7 +108,7 @@ function rig(r: Rig) {
         },
       }
     );
-  return { run, kill, probe, probeStop, state, states, stateDir, crashRoot, logDir, seen };
+  return { run, kill, probe, probeStop, state, states, root, stateDir, crashRoot, logDir, seen };
 }
 
 describe("proc-watch ends a process only for a VM exception window", () => {
@@ -176,6 +180,9 @@ describe("proc-watch ends a process only for a VM exception window", () => {
     ["the instance file is unreadable", { inst: "garbage" as const }, "missing or unreadable"],
     ["the instance file is for another PID", { inst: { pid: 999 } }, "for PID 999"],
     ["the start time is off by over 10 s", { inst: { startedAt: START - 11_000 } }, "start time does not match"],
+    ["the instance file has no start time", { inst: { startedAt: undefined } }, "start time does not match"],
+    ["the running process was created an hour off the instance file (a reused PID)", { info: { created: START + 3_600_000 } }, "not created when"],
+    ["the command line only starts like the instance exe", { info: { cmd: `"${EXE}.x" -server x` } }, "not the one in the instance file"],
     ["another owner whose MCP process is dead", { inst: { ownerPid: 222 } }, "session that has ended"],
     ["another live owner", { inst: { ownerPid: 222 }, ownerInfo: { pid: 222, ppid: 1, cmd: "node", created: 4000 } }, "not started by this MCP session"],
     ["the process image is another program", { info: { cmd: '"C:\\Windows\\notepad.exe" -server x' } }, "not the one in the instance file"],
@@ -187,6 +194,24 @@ describe("proc-watch ends a process only for a VM exception window", () => {
     const refused = t.states.find((s) => s.state === "blocked_dialog");
     expect(refused?.why).toContain(why);
     expect(refused?.dialog?.title).toBe("Virtual machine exception");
+  });
+
+  it("writes no state outside the state folder for a crafted start time in the instance file", async () => {
+    const t = rig({ script: run5s(4, [vmeWin()]), inst: { startedAt: "/../../escaped" as never } });
+    await t.run();
+    expect(t.kill).not.toHaveBeenCalled();
+    expect(readdirSync(t.root).sort()).toEqual(["emcp-instance.json", "logs", "state"]);
+    expect(t.states.find((s) => s.state === "blocked_dialog")?.why).toContain("start time does not match");
+  });
+
+  it("still writes ended_vme with a note when the log folder lookup fails after the end", async () => {
+    const t = rig({ script: run5s(3, [vmeWin()]), lookupThrows: true });
+    expect(await t.run()).toBe(0);
+    expect(t.kill).toHaveBeenCalledTimes(1);
+    const s = t.state();
+    expect(s.state).toBe("ended_vme");
+    expect(s.note).toContain("lookup failed");
+    expect(s.saved).toBeUndefined();
   });
 
   it("states end_failed when the process stays alive after the end request", async () => {
