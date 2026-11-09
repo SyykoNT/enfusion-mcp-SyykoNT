@@ -80,4 +80,38 @@ describe("tuner.html while a write is in flight", () => {
     reply({ ok: false, status: 409, json: async () => ({ status: "error", message: "no" }) });
     await done;
   });
+  it("disables the value panels, the vehicle select and Reload during a write, and enables them again on every path", async () => {
+    const locked = (page: ReturnType<typeof loadPage>) => ["panels", "vehicle", "reloadBtn"].map((id) => page.el(id).disabled);
+    let reply!: (v: unknown) => void;
+    const get = () => Promise.resolve(json({ status: "ok", mtimeMs: 1, fields: {} }));
+    const page = loadPage((url, init) => (init?.method === "POST" ? new Promise((r) => (reply = r)) : get()));
+    page.run("refreshWriteState()");
+    expect(locked(page)).toEqual([false, false, false]);
+    const refused = page.run("writeChanges()") as Promise<void>;
+    expect(locked(page)).toEqual([true, true, true]);
+    reply({ ok: false, status: 409, json: async () => ({ status: "error", message: "no" }) });
+    await refused;
+    expect(locked(page)).toEqual([false, false, false]);
+    // A good write reloads the vehicle, then lets go as well
+    const written = page.run("writeChanges()") as Promise<void>;
+    expect(locked(page)).toEqual([true, true, true]);
+    reply(json({ status: "ok", written: ["a"], message: "m" }));
+    await written;
+    expect(locked(page)).toEqual([false, false, false]);
+  });
+
+  it("warns, and does not reject, when the reload after a good write throws", async () => {
+    let reply!: (v: unknown) => void, posted = false; // the page's own startup fetches must still succeed
+    const page = loadPage((url, init) => {
+      if (init?.method === "POST") { posted = true; return new Promise((r) => (reply = r)); }
+      return posted ? Promise.reject(new Error("down")) : Promise.resolve(json({ status: "ok", vehicles: [], mtimeMs: 1, fields: {} }));
+    });
+    const done = page.run("writeChanges()") as Promise<void>;
+    reply(json({ status: "ok", written: ["a.et"], message: "m" }));
+    await done;
+    expect(page.el("banner").className).toBe("banner warn");
+    expect(page.el("banner").textContent).toContain("Wrote a.et");
+    expect(page.el("banner").textContent).toContain("could not reload");
+    expect(page.el("writeBtn").disabled).toBe(false);
+  });
 });

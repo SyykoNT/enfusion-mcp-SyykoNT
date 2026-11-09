@@ -24,6 +24,7 @@ button:disabled{opacity:.45;cursor:default}
 .banner.err{display:block;background:rgba(226,75,74,.15);color:#f0a3a2;border:1px solid rgba(226,75,74,.4)}
 .banner.warn{display:block;background:rgba(214,150,44,.15);color:var(--warn);border:1px solid rgba(214,150,44,.4)}
 .rule{color:var(--muted);font-size:12px}
+#panels{border:0;min-width:0;display:flex;flex-direction:column;gap:12px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .ph{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:10px}
 .cls{font-family:Consolas,monospace;font-size:12px;color:var(--c2)}
@@ -76,10 +77,12 @@ summary,.gh{font-size:11px;font-weight:600;color:var(--dim);letter-spacing:.08em
   <div id="banner" class="banner" role="status"></div>
   <p class="rule">Apply writes the changed values as inline overrides into this vehicle's own .et, never into a shared .conf, and only into a block that already exists in that .et. For a missing block the server answers: "Add the override in Workbench first; this tool never creates blocks. Nothing was written." Close the prefab in Workbench before applying.</p>
   <p class="rule">Where a value comes from: <span class="src own">own</span> is set in this .et; <span class="src inh">inherited from</span> names the parent prefab, the vanilla original of this file or the .conf it came from; <span class="src tpl">template</span> is the component template default; <span class="src unr">unset</span> means no file sets it (counted as 0 in the curves).</p>
+  <fieldset id="panels">
   <section class="panel" id="tyre"></section>
   <section class="panel" id="axles"></section>
   <section class="panel" id="diffs"></section>
   <section class="panel" id="engine"></section>
+  </fieldset>
 </div>
 
 <script type="module">
@@ -409,6 +412,8 @@ function refreshWriteState() {
   const btn = $("writeBtn");
   btn.disabled = writing || !$("allowWrite").checked || n === 0 || !cur;
   btn.textContent = n ? `Apply ${n} change(s) to prefab` : "Apply to prefab";
+  // Nothing can be edited or switched while a write is out: a successful write reloads the page values.
+  $("panels").disabled = $("vehicle").disabled = $("reloadBtn").disabled = writing;
 }
 
 function setRow(sr, v, touched) {
@@ -547,7 +552,12 @@ async function writeChanges() {
     }
     const wb = body.workbench || "";
     const reached = wb.indexOf("not reachable") === -1 && wb.indexOf("not notified") === -1;
-    await loadVehicle(cur.rel);
+    try {
+      await loadVehicle(cur.rel);
+    } catch {
+      showBanner("warn", `Wrote ${(body.written || []).join(", ")} to ${cur.rel}, but the page could not reload the values. Reload the page.`);
+      return;
+    }
     showBanner(wb && !reached ? "warn" : "ok",
       `Wrote ${(body.written || []).join(", ")} to ${cur.rel}.\n${body.message || ""}${wb ? "\n" + wb : ""}`);
   } finally {
