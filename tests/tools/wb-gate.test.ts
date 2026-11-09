@@ -37,7 +37,7 @@ function mockWorkbench(handler: (apiFunc: string, params: Record<string, unknown
 function editorTools(client: WorkbenchClient): Record<string, Handler> {
   const tools: Record<string, Handler> = {};
   const fake = { registerTool: (name: string, _def: unknown, handler: Handler) => { tools[name] = handler; } };
-  registerWbEditorTools(fake as unknown as McpServer, client);
+  registerWbEditorTools(fake as unknown as McpServer, client, {} as Config);
   return tools;
 }
 
@@ -68,9 +68,11 @@ describe("mode gate on wb_* tools", () => {
   });
 
   it("wb_stop works right after wb_play with no other call between", async () => {
+    const world = join(mkdtempSync(join(tmpdir(), "emcp-gate-")), "W.ent");
     let mode = "edit";
     mock = mockWorkbench((f, p) => {
       if (f === "EMCP_WB_GetState") return { status: "ok", mode };
+      if (p.action === "worldInfo") return { status: "ok", worldPath: "$T:W.ent", absPath: world };
       if (f === "EMCP_WB_EditorControl") mode = p.action === "play" ? "game" : "edit";
       return { status: "ok" };
     });

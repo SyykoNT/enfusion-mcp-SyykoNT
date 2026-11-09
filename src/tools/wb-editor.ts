@@ -4,14 +4,29 @@ import { dirname } from "node:path";
 import { WorkbenchError, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 import { diffSnapshots, snapshotDir } from "../workbench/files.js";
+import { forbiddenRoot } from "../utils/safe-path.js";
+import type { Config } from "../config.js";
 
-export function registerWbEditorTools(server: McpServer, client: WorkbenchClient): void {
+/** The open world's worldInfo, or the refusal text; an old handler cannot guard its action, so never fall through to it. */
+async function readWorld(client: WorkbenchClient, nothing: string): Promise<{ info: Record<string, unknown> } | { error: string }> {
+  try {
+    return { info: await client.call<Record<string, unknown>>("EMCP_WB_EditorControl", { action: "worldInfo" }) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith("Unknown action")) return { error: `EMCP_WB_EditorControl is out of date; refresh the handlers (see CHANGELOG). ${nothing}` };
+    return { error: `Could not read the open world: ${msg}. ${nothing}` };
+  }
+}
+
+export function registerWbEditorTools(server: McpServer, client: WorkbenchClient, config: Config): void {
   // wb_play — Switch to game mode (Play in Editor)
   server.registerTool(
     "wb_play",
     {
       description:
-        "Switch Workbench to game (play) mode. Compiles scripts and launches the world for testing. Equivalent to pressing Play in the World Editor. Requires edit mode.",
+        "Switch Workbench to game (play) mode. Compiles scripts and launches the world for testing. Equivalent to pressing Play in the World Editor. Requires edit mode. " +
+        "Refuses, without playing, an unnamed world and a world with no writable file (inside a .pak, the game or Tools folders, or the Workshop cache): " +
+        "play may ask to save it and Save would write into those folders. Play a sub-scene of it in your own test addon.",
       inputSchema: {
         debugMode: z
           .boolean()
@@ -27,6 +42,24 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       const modeErr = await ensureMode(client, "edit", "start play mode");
       if (modeErr) {
         return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
+      }
+      const refuse = (text: string) => ({ content: [{ type: "text" as const, text: text + formatConnectionStatus(client) }], isError: true });
+      const world = await readWorld(client, "Play was not started.");
+      if ("error" in world) return refuse(world.error);
+      const worldPath = typeof world.info.worldPath === "string" ? world.info.worldPath : "";
+      if (!worldPath) {
+        return refuse(
+          "No world file: the open world is unnamed. Play may ask to save it, which opens Workbench's \"Save world as\" dialog and blocks every MCP call. " +
+            "Save it once in Workbench (File > Save World As) or open a world from a file. Play was not started."
+        );
+      }
+      const absPath = typeof world.info.absPath === "string" ? world.info.absPath : "";
+      const root = absPath ? forbiddenRoot(config, absPath) : null;
+      if (!absPath || root) {
+        return refuse(
+          `Play is refused on a world without a writable file: ${worldPath} ${root ? `is inside ${root}` : "has no file on disk (inside a .pak, Workshop or vanilla)"}. ` +
+            "Play may ask to save it, and Save would write into the game or Workshop folders. Play a sub-scene of it in your own test addon. Play was not started."
+        );
       }
       try {
         const params: Record<string, unknown> = { action: "play" };
@@ -97,7 +130,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
     {
       description:
         "Save the open world in the World Editor (edit mode only) and list the files written under the world's folder. " +
-        "Refuses, without saving, an unnamed world or prefab edit mode (both would open a blocking \"Save world as\" dialog). " +
+        "Refuses, without saving, an unnamed world or prefab edit mode (both would open a blocking \"Save world as\" dialog), and a world file inside the game or Tools folders or the Workshop cache. " +
         "Save As is not reachable from the 1.8 script API, so a path is refused.",
       inputSchema: {
         path: z
@@ -115,17 +148,9 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       const modeErr = await ensureMode(client, "edit", "save");
       if (modeErr) return reply(modeErr, true);
 
-      let info: Record<string, unknown>;
-      try {
-        info = await client.call<Record<string, unknown>>("EMCP_WB_EditorControl", { action: "worldInfo" });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        // An old handler cannot guard its save, so never fall through to it.
-        if (msg.startsWith("Unknown action")) {
-          return reply("EMCP_WB_EditorControl is out of date; refresh the handlers (see CHANGELOG). Nothing was saved.", true);
-        }
-        return reply(`Could not read the open world: ${msg}. Nothing was saved.`, true);
-      }
+      const world = await readWorld(client, "Nothing was saved.");
+      if ("error" in world) return reply(world.error, true);
+      const info = world.info;
       // The handler guards too; these repeat it so the reason reads the same either way.
       if (info.prefabEditMode) return reply("Prefab edit mode: wb_save saves worlds. Use wb_prefabs save for the prefab.", true);
       if (info.gameMode) return reply("Play mode: stop it with wb_stop before saving. Nothing was saved.", true);
@@ -140,6 +165,8 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
       // Until probed, a world without a disk path (packed addon, unresolved path) is not saved: no folder to check, unknown dialogs.
       const absPath = typeof info.absPath === "string" ? info.absPath : "";
       if (!absPath) return reply(`World ${worldPath} has no file on disk that Workbench could resolve (packed addon?). Nothing was saved.`, true);
+      const root = forbiddenRoot(config, absPath);
+      if (root) return reply(`World ${worldPath} is inside ${root} (game or Tools install, Workshop cache, or ENFUSION_FORBIDDEN_DIRS): a save would write there. Nothing was saved.`, true);
 
       const folder = dirname(absPath);
       const before = await snapshotDir(folder);

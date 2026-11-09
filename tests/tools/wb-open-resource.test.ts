@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient, WorkbenchError } from "../../src/workbench/client.js";
 import { formatDialogs, type DialogProbe, type WinInfo } from "../../src/watchdog/signals.js";
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
+import type { Config } from "../../src/config.js";
 import { decodeInt32LE, decodePascalString, encodePascalString } from "../../src/workbench/protocol.js";
 
 // The timeout path lists Workbench processes; keep the test off the real process list and, with dialogProbe stubbed, off the desktop.
@@ -53,7 +54,8 @@ function setup(handler: (apiFunc: string, params: Record<string, unknown>) => un
   const tools: Record<string, { description: string; run: Handler }> = {};
   registerWbEditorTools(
     { registerTool: (n: string, d: { description: string }, h: Handler) => (tools[n] = { description: d.description, run: h }) } as unknown as McpServer,
-    client
+    client,
+    {} as Config
   );
   return { client, tool: tools.wb_open_resource };
 }

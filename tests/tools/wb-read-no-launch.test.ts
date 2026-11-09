@@ -21,7 +21,7 @@ function setup() {
   const tools: Record<string, Handler> = {};
   const fake = { registerTool: (name: string, _d: unknown, h: Handler) => { tools[name] = h; } } as unknown as McpServer;
   for (const register of [registerWbState, registerWbConnect, registerWbEntityTools, registerWbReadProps, registerWbTerrain, registerWbValidate, registerWbLayers, registerWbEditorTools]) {
-    register(fake, client);
+    register(fake, client, {} as Config);
   }
   return { tools, launch };
 }

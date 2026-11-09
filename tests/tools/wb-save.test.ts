@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient } from "../../src/workbench/client.js";
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
+import type { Config } from "../../src/config.js";
 import { decodeInt32LE, decodePascalString, encodePascalString } from "../../src/workbench/protocol.js";
 
 type Result = { content: { text: string }[]; isError?: boolean };
@@ -43,11 +44,12 @@ function mockWorkbench(handler: (apiFunc: string, params: Record<string, unknown
 
 let mock: ReturnType<typeof mockWorkbench> | undefined;
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await mock?.close();
   mock = undefined;
 });
 
-/** A temp world folder, a mock answering GetState (edit), worldInfo and save, and the wb_save handler. */
+/** A temp world folder, a mock answering GetState (edit), worldInfo and save, and the wb_save and wb_play handlers. */
 function setup(info: Record<string, unknown>, onSave: (folder: string) => unknown) {
   const folder = mkdtempSync(join(tmpdir(), "emcp-save-"));
   mkdirSync(join(folder, "W_Layers"));
@@ -61,8 +63,13 @@ function setup(info: Record<string, unknown>, onSave: (folder: string) => unknow
   });
   const client = new WorkbenchClient("127.0.0.1", mock.port);
   const tools: Record<string, Handler> = {};
-  registerWbEditorTools({ registerTool: (n: string, _d: unknown, h: Handler) => (tools[n] = h) } as unknown as McpServer, client);
-  return { folder, actions, client, save: (args: Record<string, unknown> = {}) => tools.wb_save(args) };
+  const descriptions: Record<string, string> = {};
+  registerWbEditorTools(
+    { registerTool: (n: string, d: { description: string }, h: Handler) => ((tools[n] = h), (descriptions[n] = d.description)) } as unknown as McpServer,
+    client,
+    {} as Config
+  );
+  return { folder, actions, client, descriptions, save: (args: Record<string, unknown> = {}) => tools.wb_save(args), play: () => tools.wb_play({}) };
 }
 const later = (folder: string, f: string) => writeFileSync(join(folder, f), "changed by the save");
 
@@ -88,7 +95,17 @@ describe("wb_save", () => {
     expect(t.actions).toEqual(["worldInfo"]);
   });
 
-  it("an old handler (no worldInfo) is refused and never asked to save", async () => {
+  it("refuses a world inside a forbidden root without a save call", async () => {
+    const t = setup({}, () => ({ status: "ok", saved: true }));
+    vi.stubEnv("ENFUSION_FORBIDDEN_DIRS", t.folder);
+    const r = await t.save();
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain(`is inside ${t.folder}`);
+    expect(r.content[0].text).toContain("Nothing was saved");
+    expect(t.actions).toEqual(["worldInfo"]);
+  });
+
+  it.each(["wb_save", "wb_play"])("an old handler (no worldInfo) is refused by %s and never asked to act", async (tool) => {
     const t = setup({}, () => ({ status: "ok", saved: true }));
     mock!.close();
     mock = mockWorkbench((f, p) => {
@@ -98,8 +115,8 @@ describe("wb_save", () => {
     });
     const client = new WorkbenchClient("127.0.0.1", mock.port);
     const tools: Record<string, Handler> = {};
-    registerWbEditorTools({ registerTool: (n: string, _d: unknown, h: Handler) => (tools[n] = h) } as unknown as McpServer, client);
-    const r = await tools.wb_save({});
+    registerWbEditorTools({ registerTool: (n: string, _d: unknown, h: Handler) => (tools[n] = h) } as unknown as McpServer, client, {} as Config);
+    const r = await tools[tool]({});
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("EMCP_WB_EditorControl is out of date");
     expect(t.actions).toEqual(["worldInfo"]);
@@ -151,5 +168,44 @@ describe("wb_save", () => {
     const r = await t.save();
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("No answer from Workbench in 30 s. A dialog is probably open and blocks every MCP call until it is answered (B-007). Files changed so far: W.ent.");
+  });
+});
+
+describe("wb_play", () => {
+  const ok = () => ({ status: "ok", message: "playing" });
+
+  it.each([
+    ["no file on disk", { absPath: "" }],
+    ["a world in a forbidden root", {}],
+  ])("refuses %s before the play call and says to play a sub-scene in a test addon", async (_n, info) => {
+    const t = setup(info, ok);
+    if (!("absPath" in info)) vi.stubEnv("ENFUSION_FORBIDDEN_DIRS", t.folder);
+    const r = await t.play();
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("Play is refused on a world without a writable file");
+    expect(r.content[0].text).toContain("sub-scene of it in your own test addon");
+    expect(t.actions).toEqual(["worldInfo"]);
+  });
+
+  it("an unnamed world gets the unnamed-world text, no play call", async () => {
+    const t = setup({ worldPath: "" }, ok);
+    const r = await t.play();
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("No world file: the open world is unnamed");
+    expect(t.actions).toEqual(["worldInfo"]);
+  });
+
+  it("plays a world whose file is in a test folder", async () => {
+    const t = setup({}, ok);
+    const r = await t.play();
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("**Play Mode Started**");
+    expect(t.actions).toEqual(["worldInfo", "play"]);
+  });
+
+  it("the description states the refusal", () => {
+    const d = setup({}, ok).descriptions.wb_play;
+    expect(d).toContain("Refuses, without playing,");
+    expect(d).toContain("Play a sub-scene of it in your own test addon");
   });
 });

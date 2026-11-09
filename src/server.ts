@@ -118,7 +118,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerWbDiagnose(server, wbClient);
   registerWbWatch(server, config);
   registerWbReload(server, wbClient);
-  registerWbEditorTools(server, wbClient);
+  registerWbEditorTools(server, wbClient, config);
   registerWbExecuteAction(server, wbClient);
   registerWbEntityTools(server, wbClient);
   registerWbComponent(server, wbClient);
