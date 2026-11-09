@@ -201,8 +201,14 @@ function missionInspect(config: Config, p: Params): string {
   // ── progress, settings, standards ──
   const nodes = want.has("progress") || want.has("settings") ? lobbyNodes(config, roots, m) : [];
   const steps = want.has("progress") ? progress(m, nodes) : undefined;
-  const gamemode = want.has("settings") ? lobbyCopy.list("Scripts/Game").find((f) => f.endsWith("/COA_Gamemode.c")) : undefined;
-  const table = want.has("settings") ? settings(m, nodes, enums, attributeDefaults((gamemode && textOf(lobbyCopy, gamemode)) ?? "")) : undefined;
+  // [Attribute] defaults: the gamemode's fields, then each side's gearscript container (CRF adds m_bEnableShareableMarkers)
+  const defaultsOf = (copy: Layer, file: string) => {
+    const f = copy.list("Scripts/Game").find((x) => x.endsWith(`/${file}`));
+    return f ? attributeDefaults(textOf(copy, f) ?? "") : new Map<string, string>();
+  };
+  const table = want.has("settings")
+    ? settings(m, nodes, enums, new Map([...defaultsOf(lobbyCopy, "COA_Gamemode.c"), ...defaultsOf(lobbyCopy, "COA_GearscriptConfig.c"), ...defaultsOf(crf, "CRF_COA_GearscriptConfig.c")]))
+    : undefined;
   const norms = want.has("standards") ? standards(m) : undefined;
 
   if (p.format === "json") {

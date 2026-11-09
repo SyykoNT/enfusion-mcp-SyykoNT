@@ -105,6 +105,13 @@ export function attributeDefaults(script: string): Map<string, string> {
   return new Map([...script.matchAll(ATTRIBUTE)].map((a) => [a[2], a[1]]));
 }
 
+const CIV_FACTION_INDEX = 3;
+const SHAREABLE = "m_bEnableShareableMarkers";
+const FLAGS = [
+  ["Enable Leadership Radios", "m_bEnableLeadershipRadios"], ["Enable GI Radios", "m_bEnableGIRadios"], ["Enable RTO Radios", "m_bEnableRTORadios"],
+  ["Enable BFT", "m_bEnableBFT"], ["Enable Shareable Markers", SHAREABLE],
+] as const;
+
 const yesNo = (v: string) => (v === "1" || v.toLowerCase() === "true" ? "yes" : v === "0" || v.toLowerCase() === "false" ? "no" : v);
 
 /** Plugin 2 to 4 values as saved: the mission's COA_Lobby, then COA_Lobby.et, then COA_Gamemode.c's attribute defaults. */
@@ -147,6 +154,12 @@ export function settings(m: Lobby, nodes: EnfusionNode[], enums: LobbyEnums, def
     field(`${s} tickets (0 off, -1 unlimited)`, TICKETS_FIELD[s]);
     const g = at((n) => prop(member(n, SETTINGS_FIELD[s]), "m_rGearScript"));
     rows.push({ name: `${s} gearscript`, ...g, value: g.value && stripGuid(g.value) });
+    // COA_GearscriptConfig.c:14-24 (defaults) and CRF_COA_GearscriptConfig.c:7-8, in the dialog's order
+    for (const [label, key] of FLAGS) {
+      const r = at((n) => prop(member(n, SETTINGS_FIELD[s]), key), defaults.get(key));
+      // Without CRF's script the field has no default and the dialog has no such row
+      if (r.from !== "unset" || key !== SHAREABLE) rows.push({ name: `${s} ${label}`, ...r, value: r.from === "unset" ? "" : yesNo(r.value) });
+    }
   }
   field("Faction one key", "m_sFactionOneKey");
   field("Faction one ratio", "m_iFactionOneRatio");
@@ -157,9 +170,11 @@ export function settings(m: Lobby, nodes: EnfusionNode[], enums: LobbyEnums, def
   // The prefab's faction manager is a child entity (an anonymous block) holding each faction's FactionKey
   const managerOf = (n: EnfusionNode) => n.children.filter((c) => c.type === "").flatMap((c) => c.children).find((c) => c.type === "SCR_FactionManager");
   const keyOf = (id: string | undefined) => firstOf(nodes.slice(1), (n) => prop(member(managerOf(n), "Factions")?.children.find((f) => f.id === id), "FactionKey"));
+  // The prefab gives CIV no FactionKey: the plugin addresses it as the 4th faction (COA_MissionFactionPlugin.c:13,236)
+  const civId = firstOf(nodes.slice(1), (n) => member(managerOf(n), "Factions")?.children[CIV_FACTION_INDEX]?.id);
   for (const f of member(manager?.node, "Factions")?.children ?? []) {
     const friends = member(f, "m_aFriendlyFactionsIds")?.values;
-    if (friends) rows.push({ name: `${keyOf(f.id) ?? `faction ${f.id}`} friendly with`, value: friends.join(", ") || "none", from: "mission" });
+    if (friends) rows.push({ name: `${keyOf(f.id) ?? (f.id === civId ? "CIVILIAN" : `faction ${f.id}`)} friendly with`, value: friends.join(", ") || "none", from: "mission" });
   }
   return rows;
 }

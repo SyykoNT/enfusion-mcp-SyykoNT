@@ -77,6 +77,23 @@ describe("mission_inspect", () => {
     expect(text).toContain("## Standards");
   });
 
+  it("reads the per-side radio, BFT and Shareable Markers flags with their defaults from the Lobby and CRF scripts", async () => {
+    write(fx.lobby, "Scripts/Game/Configs/COA_GearscriptConfig.c", `class COA_GearScriptContainer {\n [Attribute("true", UIWidgets.Hidden)]\n bool m_bEnableBFT;\n [Attribute("false", UIWidgets.Hidden)]\n bool m_bEnableGIRadios;\n}`);
+    write(fx.crf, "Scripts/Game/Overrides/CRF_COA_GearscriptConfig.c", `modded class COA_GearScriptContainer {\n [Attribute("false", UIWidgets.Hidden)]\n bool m_bEnableShareableMarkers;\n}`);
+    write(fx.crf, "Worlds/Test/Gear.ent", "SubScene {\n}\n");
+    write(
+      fx.crf,
+      "Worlds/Test/Gear_Layers/_INIT.layer",
+      `COA_Gamemode COA_Lobby : "{1000000000000002}Prefabs/Lobby/COA_Lobby.et" {\n m_BLUFORGearScriptSettings COA_GearScriptContainer "{5}" {\n  m_bEnableGIRadios 1\n  m_bEnableShareableMarkers 1\n }\n m_OPFORGearScriptSettings COA_GearScriptContainer "{6}" {\n  m_bEnableBFT 0\n }\n}\n`
+    );
+    const { text } = await call({ world: "Worlds/Test/Gear.ent", sections: ["settings"] });
+    expect(text).toContain("| BLUFOR Enable GI Radios | yes | mission |");
+    expect(text).toContain("| BLUFOR Enable BFT | yes | script default |");
+    expect(text).toContain("| BLUFOR Enable Shareable Markers | yes | mission |");
+    expect(text).toContain("| OPFOR Enable BFT | no | mission |");
+    expect(text).toContain("| OPFOR Enable Shareable Markers | no | script default |");
+  });
+
   it("warns on the PrefabsEditable (E_) copy of an avoid-list composition", async () => {
     const { text } = await call({ sections: ["rules"] });
     expect(text).toContain("avoid list (suspected server crashes): PrefabsEditable/Auto/Compositions/Slotted/SlotRoadSmall/E_Barricade_S_US_01.et");

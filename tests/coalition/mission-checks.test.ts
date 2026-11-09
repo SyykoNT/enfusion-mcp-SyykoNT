@@ -151,6 +151,71 @@ describe("settings (GI-04)", () => {
     expect(rows["BLUFOR gearscript"]).toBe("Configs/Gearscripts/GS.conf [mission]");
     expect(rows["BLUFOR friendly with"]).toBe("OPFOR [mission]");
   });
+
+  // A prefab whose faction manager lists four factions, the 4th (CIV) without a FactionKey, then BLUFOR
+  const faction = (id: string, key?: string) => `    SCR_Faction "{${id}}" {\n${key ? `     FactionKey "${key}"\n` : ""}    }\n`;
+  const prefabWith = (factions: string) =>
+    parseAll(`COA_Gamemode {\n {\n  SCR_FactionManager "6A39" {\n   Factions {\n${factions}   }\n  }\n }\n}\n`)[0];
+  const friendly = (id: string, ids: string) => `    SCR_Faction "{${id}}" {\n     m_aFriendlyFactionsIds {\n${ids}     }\n    }\n`;
+
+  it("names the CIVILIAN friendly row CIVILIAN, not its faction GUID, and leaves the other sides as they were", () => {
+    const m = mission({
+      [`${LAYERS}/_INIT.layer`]: lobbyEntity(
+        ` {\n  SCR_FactionManager "6A39" {\n   Factions {\n${friendly("607A", '      "BLUFOR"\n      "OPFOR"\n      "INDFOR"\n')}${friendly("628B", '      "CIVILIAN"\n')}   }\n  }\n }\n`
+      ),
+    });
+    const prefab = prefabWith(faction("1111") + faction("2222") + faction("3333") + faction("607A") + faction("628B", "BLUFOR"));
+    const rows = Object.fromEntries(settings(m, [m.lobby.node, prefab], new Map(), new Map()).map((r) => [r.name, r.value]));
+    expect(rows["CIVILIAN friendly with"]).toBe("BLUFOR, OPFOR, INDFOR");
+    expect(rows["BLUFOR friendly with"]).toBe("CIVILIAN");
+    // a prefab with fewer than four factions cannot name it: the GUID stays
+    const short = Object.fromEntries(settings(m, [m.lobby.node, prefabWith(faction("628B", "BLUFOR"))], new Map(), new Map()).map((r) => [r.name, r.value]));
+    expect(short["faction {607A} friendly with"]).toBe("BLUFOR, OPFOR, INDFOR");
+  });
+
+  const SCRIPT = `class COA_GearScriptContainer {\n [Attribute("true", UIWidgets.Hidden)]\n bool m_bEnableBFT;\n [Attribute("true", UIWidgets.Hidden)]\n bool m_bEnableLeadershipRadios;\n [Attribute("false", UIWidgets.Hidden)]\n bool m_bEnableGIRadios;\n [Attribute("true", UIWidgets.Hidden)]\n bool m_bEnableRTORadios;\n}`;
+  const CRF_SCRIPT = `modded class COA_GearScriptContainer {\n [Attribute("false", UIWidgets.Hidden)]\n bool m_bEnableShareableMarkers;\n}`;
+  const container = (side: string, body: string) => ` m_${side}GearScriptSettings COA_GearScriptContainer "{5}" {\n${body} }\n`;
+  const flagRows = (m: ReturnType<typeof mission>, nodes: ReturnType<typeof nodesOf>, scripts: string[]) =>
+    Object.fromEntries(
+      settings(m, nodes, new Map(), new Map(scripts.flatMap((s) => [...attributeDefaults(s)]))).filter((r) => /Enable/.test(r.name)).map((r) => [r.name, `${r.value} [${r.from}]`])
+    );
+
+  it("shows each side's four radio and BFT flags as saved, else the prefab's, else the script default", () => {
+    const m = mission({
+      [`${LAYERS}/_INIT.layer`]: lobbyEntity(
+        container("BLUFOR", "  m_bEnableLeadershipRadios 0\n  m_bEnableGIRadios 1\n  m_bEnableRTORadios 0\n  m_bEnableBFT 0\n") + container("OPFOR", `  m_rGearScript "{ABCDEF0123456789}Configs/GS.conf"\n`)
+      ),
+    });
+    const prefab = parseAll(`COA_Gamemode {\n${container("CIVILIAN", "  m_bEnableLeadershipRadios 0\n")} }\n`)[0];
+    const rows = flagRows(m, [m.lobby.node, prefab], [SCRIPT]);
+    expect(rows["BLUFOR Enable Leadership Radios"]).toBe("no [mission]");
+    expect(rows["BLUFOR Enable GI Radios"]).toBe("yes [mission]");
+    expect(rows["BLUFOR Enable RTO Radios"]).toBe("no [mission]");
+    expect(rows["BLUFOR Enable BFT"]).toBe("no [mission]");
+    // saved container without the flags: the script defaults (COA_GearscriptConfig.c:14-24)
+    expect(rows["OPFOR Enable Leadership Radios"]).toBe("yes [script default]");
+    expect(rows["OPFOR Enable GI Radios"]).toBe("no [script default]");
+    expect(rows["OPFOR Enable RTO Radios"]).toBe("yes [script default]");
+    expect(rows["OPFOR Enable BFT"]).toBe("yes [script default]");
+    expect(rows["CIV Enable Leadership Radios"]).toBe("no [COA_Lobby.et]");
+    expect(rows["CIV Enable GI Radios"]).toBe("no [script default]");
+    // without the Lobby script there is no default to show
+    expect(flagRows(m, [m.lobby.node, prefab], [])["OPFOR Enable BFT"]).toBe(" [unset]");
+  });
+
+  it("shows CRF's Shareable Markers flag per side when saved or when CRF's script gives a default, and no row otherwise", () => {
+    const m = mission({
+      [`${LAYERS}/_INIT.layer`]: lobbyEntity(container("BLUFOR", "  m_bEnableShareableMarkers 1\n") + container("OPFOR", "  m_bEnableShareableMarkers 0\n") + container("INDFOR", "  m_bEnableBFT 1\n")),
+    });
+    const withCrf = flagRows(m, [m.lobby.node, PREFAB], [SCRIPT, CRF_SCRIPT]);
+    expect(withCrf["BLUFOR Enable Shareable Markers"]).toBe("yes [mission]");
+    expect(withCrf["OPFOR Enable Shareable Markers"]).toBe("no [mission]");
+    expect(withCrf["INDFOR Enable Shareable Markers"]).toBe("no [script default]");
+    const lobbyOnly = flagRows(m, [m.lobby.node, PREFAB], [SCRIPT]);
+    expect(lobbyOnly["BLUFOR Enable Shareable Markers"]).toBe("yes [mission]");
+    expect(Object.keys(lobbyOnly).filter((k) => /Shareable/.test(k))).toEqual(["BLUFOR Enable Shareable Markers", "OPFOR Enable Shareable Markers"]);
+  });
 });
 
 describe("standards (GI-05)", () => {
