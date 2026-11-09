@@ -9,7 +9,7 @@ import {
   KNOWN_WORLDS,
   type ConflictBaseSpec,
 } from "../templates/scenario.js";
-import { worldMeta, stripGuid } from "../formats/config-override.js";
+import { worldMeta, overrideMeta, stripGuid } from "../formats/config-override.js";
 import { buildStack } from "../pak/stack.js";
 import { generateGuid } from "../formats/guid.js";
 import { validateFilename } from "../utils/safe-path.js";
@@ -109,7 +109,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
     "scenario_create_conflict",
     {
       description:
-        "Generate a Conflict multiplayer scenario: a mission header (.conf), a sub-scene world (.ent with its .meta) and 3 to 6 layer files " +
+        "Generate a Conflict multiplayer scenario: a mission header (.conf with its .meta), a sub-scene world (.ent with its .meta) and 3 to 6 layer files " +
         "(the result lists every file written). Generates the vanilla game mode (GameMode_Campaign) and CampaignFactionManager, each written only when the parent world has none, " +
         "military bases with seizing, radio and patrol spawnpoints, optional relay towers (base type='relay') and optional seeding mode. " +
         "Seeding needs a third-party mod (see the seedingEnabled input). " +
@@ -226,9 +226,12 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
         const parentText = "error" in target ? null : readParentWorld(config, target.gproj, resolveWorldRef(worldName));
         const parent = parentText === null ? null : parentWorldHas(parentText);
 
+        const worldGuid = generateGuid();
+        const headerGuid = generateGuid();
         const output = generateConflictScenario({
           scenarioName: scenarioDisplayName ?? scenarioName,
           worldName,
+          subSceneRef: `{${worldGuid}}Worlds/${scenarioName}.ent`,
           bases: bases as ConflictBaseSpec[],
           playerCount,
           xpMultiplier,
@@ -249,6 +252,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           const worldsDir   = resolve(basePath, "Worlds");
           const layersDir   = resolve(basePath, "Worlds", `${scenarioName}_Layers`);
           const confPath          = join(missionsDir, `${scenarioName}.conf`);
+          const confMetaPath      = confPath + ".meta";
           const entPath           = join(worldsDir,   `${scenarioName}.ent`);
           const metaPath          = entPath + ".meta";
           const defaultLayPath    = join(layersDir,   `default.layer`);
@@ -264,6 +268,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
 
           const existing: string[] = [];
           if (existsSync(confPath))         existing.push(`Missions/${scenarioName}.conf`);
+          if (existsSync(confMetaPath))     existing.push(`Missions/${scenarioName}.conf.meta`);
           if (existsSync(entPath))          existing.push(`Worlds/${scenarioName}.ent`);
           if (existsSync(metaPath))         existing.push(`Worlds/${scenarioName}.ent.meta`);
           if (existsSync(defaultLayPath))   existing.push(`Worlds/${scenarioName}_Layers/default.layer`);
@@ -292,8 +297,9 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           const writtenPaths: string[] = [];
           try {
             writeFileSync(confPath,        output.missionConf,  "utf-8"); writtenPaths.push(confPath);
+            writeFileSync(confMetaPath,    overrideMeta(headerGuid, `Missions/${scenarioName}.conf`), "utf-8"); writtenPaths.push(confMetaPath);
             writeFileSync(entPath,         output.worldEnt,     "utf-8"); writtenPaths.push(entPath);
-            writeFileSync(metaPath,        worldMeta(generateGuid(), `Worlds/${scenarioName}.ent`), "utf-8"); writtenPaths.push(metaPath);
+            writeFileSync(metaPath,        worldMeta(worldGuid, `Worlds/${scenarioName}.ent`), "utf-8"); writtenPaths.push(metaPath);
             writeFileSync(defaultLayPath,  output.defaultLayer, "utf-8"); writtenPaths.push(defaultLayPath);
             writeFileSync(basesLayPath,    output.basesLayer,   "utf-8"); writtenPaths.push(basesLayPath);
             writeFileSync(defendersLayPath, output.defendersLayer, "utf-8"); writtenPaths.push(defendersLayPath);
@@ -311,6 +317,7 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           const factions = [...new Set(bases.map(b => b.faction))];
           const writtenFiles = [
             `  Missions/${scenarioName}.conf`,
+            `  Missions/${scenarioName}.conf.meta`,
             `  Worlds/${scenarioName}.ent`,
             `  Worlds/${scenarioName}.ent.meta`,
             `  Worlds/${scenarioName}_Layers/default.layer`,
@@ -329,6 +336,8 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
                 ``,
                 `Files written:`,
                 ...writtenFiles,
+                ``,
+                `Mission header: {${headerGuid}}Missions/${scenarioName}.conf`,
                 ``,
                 `Bases (${bases.length}): ${bases.map(b => `${b.name} [${b.type ?? "base"}, ${b.faction}]`).join(", ")}`,
                 `Factions: ${factions.join(", ")}`,

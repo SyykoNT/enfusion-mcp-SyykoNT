@@ -99,7 +99,7 @@ describe("an explicit test addon still gets the same files", () => {
     const r = await tools.scenario_create_conflict({ ...scenario, projectPath: testAddon });
     expect(r.isError).toBeUndefined();
     expect(files(testAddon).filter((f) => !f.startsWith("Scripts"))).toEqual(
-      ["Missions", join("Missions", "WGA_Conflict.conf"), "Worlds", join("Worlds", "WGA_Conflict.ent"), join("Worlds", "WGA_Conflict.ent.meta"), join("Worlds", "WGA_Conflict_Layers"),
+      ["Missions", join("Missions", "WGA_Conflict.conf"), join("Missions", "WGA_Conflict.conf.meta"), "Worlds", join("Worlds", "WGA_Conflict.ent"), join("Worlds", "WGA_Conflict.ent.meta"), join("Worlds", "WGA_Conflict_Layers"),
         ...["Bases.layer", "Defenders.layer", "default.layer"].map((l) => join("Worlds", "WGA_Conflict_Layers", l))].sort()
     );
   });

@@ -49,6 +49,27 @@ describe("scenario_create_conflict world files", () => {
     expect(meta).toContain("ENTResourceClass HEADLESS : PC");
   });
 
+  it("points the header at the sub-scene, gives the .conf its own .meta and names the header as {GUID}path (B-066)", async () => {
+    const dir = addon("A0");
+    const r = await create(args(dir));
+    const worldGuid = /Name "\{([0-9A-F]{16})\}Worlds\/ScnT\.ent"/.exec(readFileSync(join(dir, "Worlds", "ScnT.ent.meta"), "utf-8"))![1];
+    const confMeta = readFileSync(join(dir, "Missions", "ScnT.conf.meta"), "utf-8");
+    const headerGuid = /^MetaFileClass \{\n Name "\{([0-9A-F]{16})\}Missions\/ScnT\.conf"\n/.exec(confMeta)![1];
+    expect(headerGuid).not.toBe(worldGuid);
+    expect(readFileSync(join(dir, "Missions", "ScnT.conf"), "utf-8")).toContain(` World "{${worldGuid}}Worlds/ScnT.ent"`);
+    expect(r.content[0].text).toContain(`Mission header: {${headerGuid}}Missions/ScnT.conf`);
+    expect(readFileSync(join(dir, "Worlds", "ScnT_Layers", "Bases.layer"), "utf-8")).not.toMatch(/m_fRadioAntennaServiceRange|m_bExcludeFromRandomization|m_RequiredGroupTypes/);
+  });
+
+  it("refuses when the .conf.meta already exists and writes nothing else", async () => {
+    const dir = addon("A0b");
+    mkdirSync(join(dir, "Missions"));
+    writeFileSync(join(dir, "Missions", "ScnT.conf.meta"), "keep");
+    const r = await create(args(dir));
+    expect(r.content[0].text).toMatch(/^Files already exist: Missions\/ScnT\.conf\.meta/);
+    expect(existsSync(join(dir, "Missions", "ScnT.conf"))).toBe(false);
+  });
+
   it("refuses when the .ent.meta already exists and writes nothing else", async () => {
     const dir = addon("A2");
     mkdirSync(join(dir, "Worlds"));
@@ -70,6 +91,7 @@ describe("scenario_create_conflict world files", () => {
     expect(r.content[0].text).toContain("disk full");
     expect(existsSync(join(dir, "Worlds", "ScnT.ent.meta"))).toBe(false);
     expect(existsSync(join(dir, "Worlds", "ScnT.ent"))).toBe(false);
+    expect(existsSync(join(dir, "Missions", "ScnT.conf.meta"))).toBe(false);
   });
 
   it("cleans up", () => {

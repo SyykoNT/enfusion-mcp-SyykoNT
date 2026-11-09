@@ -30,6 +30,13 @@ describe("generateConflictScenario", () => {
       expect(missionConf).toContain("Eden.ent");
     });
 
+    it("points World at the sub-scene when given, not the parent (B-066)", () => {
+      const subSceneRef = "{0123456789ABCDEF}Worlds/Scn.ent";
+      const { missionConf } = generateConflictScenario({ ...MINIMAL_OPTS, subSceneRef });
+      expect(missionConf).toContain(` World "${subSceneRef}"`);
+      expect(missionConf).not.toContain("Eden.ent");
+    });
+
     it("resolves Arland world ref", () => {
       const { missionConf } = generateConflictScenario({ ...MINIMAL_OPTS, worldName: "Arland" });
       expect(missionConf).toContain("CTI_Campaign_Arland.ent");
@@ -211,9 +218,14 @@ describe("generateConflictScenario", () => {
       expect(basesLayer).toContain("m_bIsSupplyHub 1");
     });
 
-    it("marks MOBs as m_bExcludeFromRandomization", () => {
-      const { basesLayer } = generateConflictScenario(MINIMAL_OPTS);
-      expect(basesLayer).toContain("m_bExcludeFromRandomization 1");
+    it("writes none of the properties the 1.9 classes do not declare (B-067)", () => {
+      const { basesLayer } = generateConflictScenario({
+        ...MINIMAL_OPTS,
+        bases: [...MINIMAL_OPTS.bases, { name: "Port", position: "0 0 0", faction: "US", type: "major" as const }, { name: "Hill", position: "9 0 9", faction: "US" }],
+      });
+      for (const old of ["m_fRadioAntennaServiceRange", "m_bExcludeFromRandomization", "m_RequiredGroupTypes"]) {
+        expect(basesLayer).not.toContain(old);
+      }
     });
 
     it("writes no mod spawn protection area (D-044)", () => {
@@ -261,7 +273,7 @@ describe("generateConflictScenario", () => {
         bases: [{ name: "Base1", position: "0 0 0", faction: "US" }],
       };
       const { basesLayer } = generateConflictScenario(opts);
-      expect(basesLayer).toContain("m_fRadioAntennaServiceRange 1470");
+      expect(basesLayer).toContain(`RelayTransceiver "{5C669673E8C94083}" {\n      "Transmitting Range" 1470\n`);
     });
 
     it("respects custom radioRange", () => {
@@ -271,7 +283,7 @@ describe("generateConflictScenario", () => {
         bases: [{ name: "Base1", position: "0 0 0", faction: "US", radioRange: 2500 }],
       };
       const { basesLayer } = generateConflictScenario(opts);
-      expect(basesLayer).toContain("m_fRadioAntennaServiceRange 2500");
+      expect(basesLayer).toContain('"Transmitting Range" 2500');
     });
 
     it("major type sets m_bRequiresCaptureAndHoldAreas", () => {

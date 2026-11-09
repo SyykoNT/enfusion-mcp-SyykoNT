@@ -39,8 +39,7 @@ const PREFAB_PATROL_SEEDING = "{0E66F798F84EEB58}Prefabs/Systems/AmbientPatrol/I
 // manager CampaignFactionManager.et) and diverges from BK's copy on purpose.
 // The keywords below are not in vanilla: Workbench logs "Unknown keyword" and ignores them.
 // They are kept for the Conflict mod family (ConflictEscalation / IRON / SeizeAMPSecure):
-//   m_fRadioAntennaServiceRange   m_bHideBasesOutsideRadioRange
-//   m_RequiredGroupTypes          m_bExcludeFromRandomization
+//   m_bHideBasesOutsideRadioRange
 //   m_aCaptureAndHoldAreaNames    m_bRequiresCaptureAndHoldAreas
 //   m_iAreaThreshold              m_bServerSeedingEnabled
 //   m_iServerSeedingThreshold     m_bAutoSizeToHQ
@@ -120,6 +119,8 @@ export interface ConflictScenarioOptions {
    * or a full resource ref like "{GUID}worlds/MyWorld.ent".
    */
   worldName: string;
+  /** The generated sub-scene as "{GUID}Worlds/<name>.ent": the header's World. Default: the parent world. */
+  subSceneRef?: string;
   /** Bases to place in the world */
   bases: ConflictBaseSpec[];
   /** Max player count (default 40) */
@@ -171,7 +172,7 @@ function buildMissionConf(opts: ConflictScenarioOptions, worldRef: string): stri
   const gameMode = opts.gameModeLabel ?? "Conflict";
   const lines: string[] = ["SCR_MissionHeaderCampaign {"];
 
-  lines.push(` World "${worldRef}"`);
+  lines.push(` World "${opts.subSceneRef ?? worldRef}"`);
   lines.push(` SystemsConfig "${GUID_CONFLICT_SYSTEMS}"`);
   lines.push(` m_sName "${opts.scenarioName}"`);
   if (opts.description) lines.push(` m_sDescription "${opts.description}"`);
@@ -346,17 +347,15 @@ function buildBasesLayer(opts: ConflictScenarioOptions): string {
         for (const z of zones) lines.push(`     "${z}"`);
         lines.push(`    }`);
       }
-      lines.push(`    m_RequiredGroupTypes {`);
-      lines.push(`     ASSAULT`);
-      lines.push(`     SF_ASSAULT`);
-      lines.push(`    }`);
     }
     lines.push(`   }`);
 
-    // SCR_CoverageRadioComponent
+    // SCR_CoverageRadioComponent. 1.9 has no m_fRadioAntennaServiceRange: the base's radio range is its
+    // transceiver's "Transmitting Range" (SCR_CampaignMilitaryBaseComponent.GetRelayRadioRange, ConflictMilitaryBase.et).
     lines.push(`   SCR_CoverageRadioComponent "${CID_RADIO}" {`);
     lines.push(`    Transceivers {`);
     lines.push(`     RelayTransceiver "${CID_RELAY_TX}" {`);
+    lines.push(`      "Transmitting Range" ${radioRange}`);
     lines.push(`     }`);
     lines.push(`    }`);
     if (isMOB) lines.push(`    m_bIsSource 1`);
@@ -370,8 +369,6 @@ function buildBasesLayer(opts: ConflictScenarioOptions): string {
     if (isMOB) lines.push(`    m_bCanBeHQ 1`);
     lines.push(`    m_sBaseName "${base.name}"`);
     lines.push(`    m_sBaseNameUpper "${base.name.toUpperCase()}"`);
-    lines.push(`    m_fRadioAntennaServiceRange ${radioRange}`);
-    if (isMOB || isMajor) lines.push(`    m_bExcludeFromRandomization 1`);
     lines.push(`   }`);
 
     // Supplies for MOB
