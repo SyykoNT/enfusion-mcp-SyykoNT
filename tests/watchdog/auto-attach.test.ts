@@ -219,3 +219,15 @@ describe("an unreadable watch lock (B-099 item 1)", () => {
     expect(await check(d)).toEqual({ ok: true, text: "Workbench not watched: the watch lock for PID 19524 cannot be read right now; wb_watch status shows what runs." });
   });
 });
+
+describe("start refusals that reach the footer carry no wb_watch caller wording (WATCH-TIDY2 change 4)", () => {
+  it("another MCP's watcher took the PID between the first read and the start: the footer names it as a fact", async () => {
+    const d = deps();
+    writeFileSync(join(d.stateDir, "19524.lock"), "800");
+    let n = 0;
+    // The first read sees a dead holder (free); the start reads the same lock again and finds it alive.
+    d.alive = (pid) => (pid === 800 ? ++n > 1 : pid in { 19524: 1 });
+    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: another watcher (PID 800) holds Workbench PID 19524." });
+    expect(d.start).not.toHaveBeenCalled();
+  });
+});

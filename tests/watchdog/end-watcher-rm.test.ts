@@ -3,14 +3,14 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Only rmSync of the state and lock files is stubbed, to fail like a scanner holding them (EBUSY). No watcher, PowerShell or Workbench runs.
-const rm = vi.hoisted(() => ({ fail: false }));
+// Only rmSync of the state, lock and stop-marker files is stubbed, to fail like a scanner holding them (EBUSY). No watcher, PowerShell or Workbench runs.
+const rm = vi.hoisted(() => ({ fail: [] as string[] }));
 vi.mock("node:fs", async (orig) => {
   const fs = await orig<typeof import("node:fs")>();
   return {
     ...fs,
     rmSync: (p: Parameters<typeof fs.rmSync>[0], o?: Parameters<typeof fs.rmSync>[1]) => {
-      if (rm.fail && (String(p).endsWith(".json") || String(p).endsWith(".lock"))) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+      if (rm.fail.some((ext) => String(p).endsWith(ext))) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
       return fs.rmSync(p, o);
     },
   };
@@ -32,13 +32,43 @@ describe("endWatcher's removes (R3)", () => {
     };
     writeFileSync(join(stateDir, "19524.lock"), "600");
     writeFileSync(join(stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600, owned: false, state: "ok", auto: true }));
-    rm.fail = true;
+    rm.fail = [".json", ".lock"];
     try {
       expect(await watchAction({ action: "stop", pid: 19524 }, d)).toEqual({ text: "Stopped watcher PID 600 for Workbench PID 19524." });
     } finally {
-      rm.fail = false;
+      rm.fail = [];
     }
     expect(d.kill).toHaveBeenCalledExactlyOnceWith(600);
     expect(existsSync(join(stateDir, "19524.lock"))).toBe(true); // left behind; the next claim takes it over
+  });
+
+  it("a replacing start still starts the new watcher when the stop marker cannot be removed, and the reply says so (WATCH-TIDY2 change 1)", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "emcp-ew-"));
+    const d: WatchToolDeps = {
+      stateDir,
+      proc: (pid) => ({ pid, ppid: 1, cmd: pid === 19524 ? "ArmaReforgerWorkbenchSteamDiag.exe -gproj x" : "node.exe dist/watchdog/wb-watch.js --pid 19524", created: 1 }),
+      owned: () => false,
+      alive: (pid) => [600, 700, 19524].includes(pid),
+      start: vi.fn(() => (writeFileSync(join(stateDir, "19524.lock"), "700"), 700)),
+      kill: vi.fn(),
+      base: { host: "127.0.0.1", port: 5775 },
+      settleMs: 50,
+    };
+    writeFileSync(join(stateDir, "19524.lock"), "600");
+    writeFileSync(join(stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600, owned: false, state: "ok", auto: true }));
+    writeFileSync(join(stateDir, "19524.noauto"), "1");
+    rm.fail = [".noauto"];
+    let r;
+    try {
+      r = await watchAction({ action: "start", pid: 19524 }, d);
+    } finally {
+      rm.fail = [];
+    }
+    expect(r.isError).toBeUndefined();
+    expect(r.text).toContain("Replaced the automatic watcher PID 600 with watcher PID 700.");
+    expect(r.text).toContain("The stop marker for this Workbench run could not be removed (EBUSY), so the automatic attach stays off for it.");
+    expect(d.kill).toHaveBeenCalledExactlyOnceWith(600);
+    expect(d.start).toHaveBeenCalledOnce();
+    expect(existsSync(join(stateDir, "19524.noauto"))).toBe(true);
   });
 });

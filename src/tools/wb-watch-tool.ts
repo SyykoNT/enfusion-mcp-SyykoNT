@@ -114,9 +114,18 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
   if (!proc || !WB_EXE.test(proc.cmd)) return fail(`PID ${pid} is not a Workbench process.`);
   // An explicit start replaces an automatic watcher (only one that really is a watcher); any other watcher is kept.
   const replace = !!watcher && !o.auto && readStates(d.stateDir).states.some((s) => s.pid === pid && s.auto) && isOurWatcher(d, pid, watcher);
-  if (watcher && !replace) return fail(`already watched by watcher PID ${watcher}`);
+  // The automatic attach shows this as its own footer ("Workbench not watched: ..."), so it reads as a fact, not as a refusal of a call.
+  if (watcher && !replace) return fail(o.auto ? `another watcher (PID ${watcher}) holds Workbench PID ${pid}.` : `already watched by watcher PID ${watcher}`);
   if (replace) endWatcher(d, pid, watcher!);
-  if (!o.auto) rmSync(noautoFile(d.stateDir, pid), { force: true });
+  // A marker that cannot be removed (EBUSY/EPERM) must not abort a start whose old watcher is already killed; the reply says so.
+  let markerNote = "";
+  if (!o.auto) {
+    try {
+      rmSync(noautoFile(d.stateDir, pid), { force: true });
+    } catch (e) {
+      markerNote = ` The stop marker for this Workbench run could not be removed (${(e as NodeJS.ErrnoException).code ?? "error"}), so the automatic attach stays off for it.`;
+    }
+  }
   // Ownership only from the instance registry (D-026): nothing a caller passes can make a Workbench owned.
   const owned = d.owned(pid);
   const w = d.start({
@@ -125,7 +134,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
   });
   const text =
     `Watching Workbench PID ${pid} (${owned ? "owned" : "not owned: never closed or killed"}) with watcher PID ${w}. ` +
-    `dismissLeakAssert = ${a.dismissLeakAssert ?? "watched"}, authorizeScripts = ${a.authorizeScripts ?? "watched"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.`;
+    `dismissLeakAssert = ${a.dismissLeakAssert ?? "watched"}, authorizeScripts = ${a.authorizeScripts ?? "watched"}, autoRecover = ${!!a.autoRecover && owned}. Check it with wb_watch status.${markerNote}`;
   if (!replace) return { text };
   // Another MCP may start its own automatic watcher in the same moment; the lock says who got the PID.
   const until = Date.now() + (d.settleMs ?? 2000);

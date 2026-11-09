@@ -174,7 +174,8 @@ describe("watcher main loop", () => {
     const code = await runWatcher(t.opts({ logsRoot: undefined }), {
       probe: () => ({ stop }),
       alive: () => alive,
-      wait: async () => { alive = false; },
+      // setImmediate: a loop-exit regression then times out in vitest instead of hanging (MCP-0035).
+      wait: () => new Promise((r) => setImmediate(() => { alive = false; r(undefined); })),
     });
     expect(code).toBe(0);
     expect(stop).toHaveBeenCalled();
@@ -236,7 +237,7 @@ describe("automatic watch", () => {
     const t = setup();
     const stop = vi.fn();
     let alive = true;
-    expect(await runWatcher(t.opts({ auto: true, logsRoot: undefined }), { probe: () => ({ stop }), alive: () => alive, wait: async () => { alive = false; } })).toBe(0);
+    expect(await runWatcher(t.opts({ auto: true, logsRoot: undefined }), { probe: () => ({ stop }), alive: () => alive, wait: () => new Promise((r) => setImmediate(() => { alive = false; r(undefined); })) })).toBe(0);
     expect(events(t.stateDir).filter((e) => e.kind === "watch")).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(t.stateDir, "19524.json"), "utf-8")).auto).toBe(true);
 
