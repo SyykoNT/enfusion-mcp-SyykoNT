@@ -211,6 +211,19 @@ describe("headless runs that sit on a dialog (B-047)", () => {
     expect(r.dialog).toContain("Script Authorization Required");
   });
 
+  it("a Validating progress window never ends the run and is not named unless the run times out", async () => {
+    const c = setup(0);
+    seen(win(7, "Validating Worlds/A.ent"));
+    const { result } = await begin(() => runWorkbench(config().config, ["-wbSilent"], 600_000));
+    await tick(DIALOG_CHECK_AFTER_MS + DIALOG_CHECK_EVERY_MS * 3);
+    expect(sys.probed).toBe(4);
+    expect(c.kill).not.toHaveBeenCalled();
+    c.close?.(0);
+    const r = await result;
+    expect(r.dialog).toBeUndefined();
+    expect(r.timedOut).toBe(false);
+  });
+
   it("a leak assert ends the child, and the run is judged from console.log, not from the exit code", async () => {
     const c = setup(1);
     seen(win(7, "Assert", "", { children: [{ hwnd: 8, cls: "Static", text: LEAK_TEXT }, { hwnd: 9, cls: "Button", text: "&Ignore" }] }));

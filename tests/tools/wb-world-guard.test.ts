@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterAll, describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient } from "../../src/workbench/client.js";
 import type { TitleProbe } from "../../src/watchdog/probe.js";
@@ -19,6 +22,11 @@ const DIRTY = { cls: "Qt683QWindowIcon", text: "World Editor - MCPParity/Worlds/
 const CLEAN = { cls: "Qt683QWindowIcon", text: "World Editor - MCPParity/Worlds/MCPParity.ent" };
 const SAVEBITS = { cls: "Qt683QWindowToolSaveBits", text: "Arma Reforger Workbench" };
 const MAIN = { cls: "Qt683QWindowIcon", text: "Enfusion Workbench - MCP Parity Test (throwaway)" };
+// register needs an existing absolute file with no .meta
+const regDir = mkdtempSync(join(tmpdir(), "emcp-wg-"));
+const NEW_WORLD = join(regDir, "New.ent");
+writeFileSync(NEW_WORLD, "");
+afterAll(() => rmSync(regDir, { recursive: true, force: true }));
 const TARGET = "worlds/MP/MpTest/MpTest_Empty.ent";
 
 const TOOLS = [
@@ -138,7 +146,7 @@ describe("unsaved-world guard on a .ent open", () => {
     ["wb_projects", { action: "open", name: "C:/mods/MyMod/addon.gproj" }],
     ["wb_projects", { action: "open", name: "MyMod" }],
     ["wb_resources", { action: "open", path: "Prefabs/A.et" }],
-    ["wb_resources", { action: "register", path: "Worlds/New.ent" }], // only action open can raise the prompt
+    ["wb_resources", { action: "register", path: NEW_WORLD }], // only action open can raise the prompt
     ["wb_resources", { action: "rebuild", path: "Worlds/New.ent" }],
     ["wb_resources", { action: "getInfo", path: "Worlds/Other.ent" }],
   ])("%s %j never runs the check", async (name, args) => {

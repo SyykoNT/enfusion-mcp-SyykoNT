@@ -128,3 +128,20 @@ describe("crash folders saved before a headless run (B-044)", () => {
     expect((await mod({ action: "pack", addonName: "Clean" })).content[0].text).not.toContain("crash folder");
   });
 });
+
+describe("a headless run that stayed on a dialog", () => {
+  const run = { exitCode: 0, timedOut: false, seconds: 45, logDir: null, console: "", dialog: '"World data problem" (The data is broken)' };
+  const line = 'Workbench showed a dialog that nothing answered: "World data problem" (The data is broken).';
+
+  it("compile and pack results print the dialog line with its title", async () => {
+    vi.mocked(cli.compileAddon).mockResolvedValue({ ok: false, run, errors: [], warnings: [] });
+    const compiled = await mod({ action: "compile", addonName: "Clean" });
+    expect(compiled.isError).toBe(true);
+    expect(compiled.content[0].text).toContain(line);
+
+    vi.mocked(cli.packAddon).mockImplementation(async (_c, _g, outDir) => ({ ok: false, outDir, files: [], errors: [], run }));
+    const packed = await mod({ action: "pack", addonName: "Clean" });
+    expect(packed.isError).toBe(true);
+    expect(packed.content[0].text).toContain(line);
+  });
+});

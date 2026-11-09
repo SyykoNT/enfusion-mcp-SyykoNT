@@ -100,7 +100,7 @@ export async function runWorkbench(config: Config, args: string[], timeoutMs: nu
     // A dialog that stays open across two checks never closes by itself: end our own child and name it.
     // Script Authorization is never ended here (it only gets named if the run times out); the leak assert ends the run but is not a failure.
     let dialog: string | undefined;
-    let authDialog: string | undefined;
+    let waitingDialog: string | undefined;
     let leakEnded = false;
     let ending = false;
     let lastOpen = new Set<number>();
@@ -109,9 +109,11 @@ export async function runWorkbench(config: Config, args: string[], timeoutMs: nu
       if (ending || !proc.pid || Date.now() - start < DIALOG_CHECK_AFTER_MS) return;
       const wins = (await probeDialogs([proc.pid])).flatMap((p) => ("dialogs" in p ? p.dialogs : []));
       if (ending) return;
-      const auth = wins.find((w) => dialogKind(w) === "script_authorization");
-      if (auth) authDialog = describe(auth);
-      const open = wins.filter((w) => w !== auth);
+      // Script Authorization and "Validating ..." progress windows never end the run; the signals module counts the latter as a dialog but keeps its prefix private.
+      const waits = (w: WinInfo) => dialogKind(w) === "script_authorization" || w.text.startsWith("Validating ");
+      const waiting = wins.find(waits);
+      if (waiting) waitingDialog = describe(waiting);
+      const open = wins.filter((w) => !waits(w));
       const persisted = open.filter((w) => lastOpen.has(w.hwnd));
       lastOpen = new Set(open.map((w) => w.hwnd));
       const stop = persisted.find((w) => dialogKind(w) !== "leak_assert") ?? persisted[0];
@@ -125,7 +127,7 @@ export async function runWorkbench(config: Config, args: string[], timeoutMs: nu
       clearTimeout(timer);
       clearInterval(watcher);
       ending = true;
-      const shown = dialog ?? (timedOut ? authDialog : undefined);
+      const shown = dialog ?? (timedOut ? waitingDialog : undefined);
       const logDir = newestDir(logsDir, start - 5000);
       const consolePath = logDir ? join(logDir, "console.log") : "";
       done({
