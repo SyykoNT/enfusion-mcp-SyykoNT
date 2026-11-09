@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { appendFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthMode, Config } from "../config.js";
 import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { isOwned } from "../utils/instances.js";
 import { isAlive, killPids, processInfo, sleep, type ProcInfo } from "../utils/process.js";
-import { WATCH_DIR, formatReport, hms, noautoFile, readStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
+import { UNREADABLE, WATCH_DIR, formatReport, hms, noautoFile, readStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
 import { answerDialog, probeDialogs } from "../watchdog/probe.js";
 import { appendLockLine, authDetails, loadSetOf, type LoadSet } from "../watchdog/auth.js";
 import { authLine, authText, dialogKind, parseAuthWindow, textHash, type AuthLog, type WinInfo } from "../watchdog/signals.js";
@@ -45,7 +45,16 @@ const isOurWatcher = (d: WatchToolDeps, pid: number, watcher: number) =>
 /** Kill the watcher (its tree: the watcher's finally never runs under taskkill /F) and remove its files. */
 function endWatcher(d: WatchToolDeps, pid: number, watcher: number): void {
   d.kill(watcher);
-  for (const f of [`${pid}.lock`, `${pid}.json`]) rmSync(join(d.stateDir, f), { force: true });
+  rmSync(join(d.stateDir, `${pid}.json`), { force: true });
+  // Another watcher may have taken the lock while this one was killed: remove it only if it still names the killed one.
+  const lock = join(d.stateDir, `${pid}.lock`);
+  let by = 0;
+  try {
+    by = Number(readFileSync(lock, "utf-8"));
+  } catch {
+    // gone, or unreadable: leave it
+  }
+  if (by === watcher) rmSync(lock, { force: true });
 }
 
 /**
@@ -73,6 +82,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
   if (!a.pid) return fail(`pid is required for ${a.action}.`);
   const pid = a.pid;
   const watcher = watcherOf(d.stateDir, pid, d.alive);
+  if (watcher === UNREADABLE) return fail(`Nothing changed: the watch lock for PID ${pid} cannot be read right now. Try again; wb_watch status shows what runs.`);
 
   if (a.action === "stop") {
     if (!watcher) return fail(`No watcher runs for Workbench PID ${pid}.`);
@@ -108,6 +118,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
     await sleep(100);
     holder = watcherOf(d.stateDir, pid, d.alive);
   }
+  if (holder === UNREADABLE) return fail(`Stopped the automatic watcher PID ${watcher}, but the watch lock for PID ${pid} cannot be read right now; check wb_watch status.`);
   if (holder === w) return { text: `Replaced the automatic watcher PID ${watcher} with watcher PID ${w}. ${text}` };
   return fail(
     holder
@@ -134,7 +145,9 @@ export async function answerAction(a: WatchArgs, d: AnswerDeps): Promise<{ text:
   if (!a.pid) return fail("pid is required for answer.");
   if (a.choice !== "yes" && a.choice !== "no") return fail("choice must be yes or no (Yes to All and No to All are never pressed here).");
   if (!a.reason?.trim()) return fail("reason is required: name the rule that decided the answer.");
-  if (!watcherOf(d.stateDir, a.pid, d.alive)) return fail(`Workbench PID ${a.pid} is not watched. Start a watcher first: wb_watch start pid=${a.pid}.`);
+  const held = watcherOf(d.stateDir, a.pid, d.alive);
+  if (held === UNREADABLE) return fail(`Nothing was pressed: the watch lock for PID ${a.pid} cannot be read right now. Try again.`);
+  if (!held) return fail(`Workbench PID ${a.pid} is not watched. Start a watcher first: wb_watch start pid=${a.pid}.`);
   const w = (await d.dialogs(a.pid)).find((x) => dialogKind(x) === "script_authorization");
   if (!w) return fail(`No Script Authorization dialog is open in Workbench PID ${a.pid}; nothing was pressed.`);
   const parsed = parseAuthWindow(w);

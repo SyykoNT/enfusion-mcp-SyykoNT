@@ -557,6 +557,18 @@ describe("automatic watch check (B-093)", () => {
     expect(check).toHaveBeenCalledTimes(2);
   });
 
+  it("a check that started before a refusal cannot set a new 60 s pause afterwards (B-099 item 3)", async () => {
+    const c = new WorkbenchClient("127.0.0.1", 1, AUTO);
+    let release: (r: { ok: boolean; text: string }) => void = () => {};
+    const check = vi.fn(() => new Promise<{ ok: boolean; text: string }>((r) => (release = r)));
+    c.watchCheck = check;
+    await c.call("ReloadScripts", {}).catch(() => {}); // the check starts, the refusal ends the pause, the check is still open
+    release({ ok: true, text: "Workbench PID 19524 is watched by watcher PID 600." });
+    await flush();
+    await c.call("ReloadScripts", {}).catch(() => {});
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
   it("a watcher that never claims the lock is started once, not on every call within 60 s", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(T);

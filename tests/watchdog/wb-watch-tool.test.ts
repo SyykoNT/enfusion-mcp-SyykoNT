@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { watchAction, type WatchArgs, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
+import { answerAction, watchAction, type WatchArgs, type WatchToolDeps } from "../../src/tools/wb-watch-tool.js";
 import { formatConnectionStatus, watchAlerts } from "../../src/workbench/status.js";
 import { alertLine, autoBlocked, createWatcher, formatReport, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { WorkbenchClient } from "../../src/workbench/client.js";
@@ -269,5 +269,70 @@ describe("automatic watchers: replace, refuse, stop and noauto", () => {
     await watchAction({ action: "stop", pid: 19524 }, d);
     expect(d.kill).toHaveBeenCalledExactlyOnceWith(600);
     expect(existsSync(join(d.stateDir, "19524.noauto"))).toBe(false);
+  });
+});
+
+describe("an unreadable watch lock (B-099 items 1 and 4)", () => {
+  // A directory in place of the lock makes the read fail with EISDIR, standing in for EBUSY/EPERM from a scanner.
+  const unreadable = (d: WatchToolDeps) => mkdirSync(join(d.stateDir, "19524.lock"));
+  const alive = (pid: number) => [600, 700, 800, 19524].includes(pid);
+  const watched = (d: WatchToolDeps) => {
+    writeFileSync(join(d.stateDir, "19524.lock"), "600");
+    writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify({ pid: 19524, watcherPid: 600, owned: false, state: "ok", auto: true }));
+  };
+
+  it("start refuses with that text and starts nothing", async () => {
+    const d = deps();
+    unreadable(d);
+    const r = await watchAction({ action: "start", pid: 19524 }, d);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("the watch lock for PID 19524 cannot be read right now");
+    expect(d.start).not.toHaveBeenCalled();
+  });
+
+  it("stop says the lock cannot be read, not that no watcher runs, and kills nothing", async () => {
+    const d = deps();
+    unreadable(d);
+    const r = await watchAction({ action: "stop", pid: 19524 }, d);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("the watch lock for PID 19524 cannot be read right now");
+    expect(r.text).not.toContain("No watcher runs");
+    expect(d.kill).not.toHaveBeenCalled();
+  });
+
+  it("answer says the lock cannot be read, not that the Workbench is not watched, and presses nothing", async () => {
+    const press = vi.fn(async () => "answered Yes");
+    const d = deps();
+    unreadable(d);
+    const ad = { stateDir: d.stateDir, alive: () => true, dialogs: async () => [], press, loadSet: () => undefined, mode: "rules" as const, now: Date.now };
+    const r = await answerAction({ action: "answer", pid: 19524, choice: "no", reason: "x" }, ad);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("the watch lock for PID 19524 cannot be read right now");
+    expect(r.text).not.toContain("is not watched");
+    expect(press).not.toHaveBeenCalled();
+  });
+
+  it("a replacing start whose new lock cannot be read afterwards names that, not another watcher", async () => {
+    const d = deps({ alive, settleMs: 50 });
+    d.start = vi.fn(() => (unreadable(d), 700));
+    watched(d);
+    const r = await watchAction({ action: "start", pid: 19524 }, d);
+    expect(r.isError).toBe(true);
+    expect(r.text).toBe("Stopped the automatic watcher PID 600, but the watch lock for PID 19524 cannot be read right now; check wb_watch status.");
+  });
+
+  it("stop removes the lock only while it still names the killed watcher (item 4)", async () => {
+    const lock = (d: WatchToolDeps) => join(d.stateDir, "19524.lock");
+    const same = deps({ alive });
+    watched(same);
+    await watchAction({ action: "stop", pid: 19524 }, same);
+    expect(existsSync(lock(same))).toBe(false);
+    // Another MCP's watcher took the lock while this one was killed.
+    const other = deps({ alive });
+    watched(other);
+    other.kill = vi.fn(() => writeFileSync(lock(other), "800"));
+    await watchAction({ action: "stop", pid: 19524 }, other);
+    expect(readFileSync(lock(other), "utf-8")).toBe("800");
+    expect(existsSync(join(other.stateDir, "19524.json"))).toBe(false);
   });
 });

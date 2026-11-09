@@ -208,6 +208,8 @@ export class WorkbenchClient {
   watchWaitMs = 5_000;
   private watchRun: Promise<AttachResult> | null = null;
   private watchQuietUntil = 0;
+  /** Bumped when a refusal ends the pause: a check that started before it must not set a new pause for the old Workbench. */
+  private watchGen = 0;
   /** The line of the result that set the pause, repeated in timeout replies during it. */
   private watchLast = "";
 
@@ -269,11 +271,12 @@ export class WorkbenchClient {
 
   /** The running watch check, or a new one. Never rejects: a failure is logged at debug level and becomes the result line. */
   private runWatchCheck(): Promise<AttachResult> {
+    const gen = this.watchGen;
     return (this.watchRun ??= Promise.resolve()
       .then(() => this.watchCheck())
       .then((r) => {
         // ok (attached, already watched, or a result that will not change): no new check for 60 s; no listener or a failed check is checked again on the next request.
-        if (r.ok) {
+        if (r.ok && gen === this.watchGen) {
           this.watchQuietUntil = Date.now() + 60_000;
           this.watchLast = r.text;
         }
@@ -1084,6 +1087,7 @@ export class WorkbenchClient {
           // Workbench is gone (on every path, not only call): a restarted one must be checked at once, not after the pause set for the old one.
           this.watchQuietUntil = 0;
           this.watchLast = "";
+          this.watchGen++;
           reject(
             new WorkbenchError(
               `Cannot connect to Workbench at ${this.host}:${this.port}.`,

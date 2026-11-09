@@ -11,7 +11,7 @@ import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { WORKBENCH_INSTANCES, isOwned } from "../utils/instances.js";
 import { isAlive, processInfoAsync, sleep, type ProcInfo } from "../utils/process.js";
 import { WB_EXE, isWatcherCmd, watchAction } from "../tools/wb-watch-tool.js";
-import { WATCH_DIR, autoBlocked, readStates, startWatcher, watcherOf, type StartWatcher } from "./wb-watch.js";
+import { UNREADABLE, WATCH_DIR, autoBlocked, readStates, startWatcher, watcherOf, type StartWatcher } from "./wb-watch.js";
 import { portOwner } from "./signals.js";
 
 export interface AttachDeps {
@@ -74,6 +74,7 @@ export async function ensureWatched(port: number, host: string, d: AttachDeps): 
   if (!proc || !WB_EXE.test(proc.cmd)) return no(`port ${port} held by PID ${pid}, not a Workbench this MCP can watch`, !!proc);
 
   const holder = watcherOf(d.stateDir, pid, d.alive);
+  if (holder === UNREADABLE) return no(`the watch lock for PID ${pid} cannot be read right now`);
   if (holder) {
     const h = await d.proc(holder);
     // An empty command line is what a process of another user or an elevated MCP shows: it may be a live watcher, so leave its lock alone.
@@ -117,7 +118,7 @@ export async function ensureWatched(port: number, host: string, d: AttachDeps): 
   }
   if (held !== watcher) {
     // ok:true on purpose: the client then waits 60 s before the next check, so a watcher that never claims is not respawned on every call.
-    const why = held ? `another watcher (PID ${held}) holds Workbench PID ${pid}; wb_watch status shows it` : `watcher PID ${watcher} did not take Workbench PID ${pid}; wb_watch status shows what runs`;
+    const why = held === UNREADABLE ? `the watch lock for PID ${pid} cannot be read right now; wb_watch status shows what runs` : held ? `another watcher (PID ${held}) holds Workbench PID ${pid}; wb_watch status shows it` : `watcher PID ${watcher} did not take Workbench PID ${pid}; wb_watch status shows what runs`;
     return { ok: true, text: `Workbench not watched: ${why}.` };
   }
   return {

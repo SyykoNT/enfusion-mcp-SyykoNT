@@ -424,9 +424,14 @@ export function claimWatch(dir: string, pid: number, alive = isAlive, self = pro
   return { ok: false, by: 0 };
 }
 
-/** The running watcher of `pid`, if any. */
-export function watcherOf(dir: string, pid: number, alive = isAlive): number | undefined {
-  const by = Number(readText(join(dir, `${pid}.lock`)));
+/** What watcherOf returns for a lock that exists but cannot be read: neither free nor held by a known watcher. */
+export const UNREADABLE = "unreadable";
+
+/** The running watcher of `pid`, if any; UNREADABLE when the lock cannot be read (same rule as claimWatch). */
+export function watcherOf(dir: string, pid: number, alive = isAlive): number | typeof UNREADABLE | undefined {
+  const text = lockText(join(dir, `${pid}.lock`));
+  if (text === null) return UNREADABLE;
+  const by = Number(text);
   return by && alive(by) ? by : undefined;
 }
 
@@ -532,7 +537,13 @@ export async function runWatcher(
   } finally {
     probe.stop();
     // Strict: delete only a lock that was read and names this process (a read error here must not remove a rival's lock or throw).
-    if (Number(readText(lockFile)) === process.pid) rmSync(lockFile, { force: true });
+    if (Number(readText(lockFile)) === process.pid) {
+      try {
+        rmSync(lockFile, { force: true });
+      } catch {
+        // a scanner holding the file: the exit code stays, a stale lock is taken over by the next claim
+      }
+    }
   }
 }
 

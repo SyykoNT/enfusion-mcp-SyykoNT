@@ -68,3 +68,24 @@ describe("claimWatch", () => {
     expect(readFileSync(t.lock, "utf8")).toBe("101");
   });
 });
+
+describe("claimWatch, lock unreadable at the compare-and-delete re-read (B-099 item 5)", () => {
+  it("is held, not deleted: the stale lock stays for the next claim", () => {
+    const t = setup();
+    writeFileSync(t.lock, "999"); // a dead holder
+    let reads = 0;
+    const real = readFile.fn;
+    // The first read sees the dead holder, the second (the re-read) fails like a scanner's EBUSY, later ones read normally.
+    readFile.fn = () => {
+      if (++reads === 2) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+      return "999";
+    };
+    try {
+      expect(claimWatch(t.dir, 19524, () => false, 101)).toEqual({ ok: false, by: 0 });
+    } finally {
+      readFile.fn = real;
+    }
+    expect(reads).toBe(2);
+    expect(existsSync(t.lock)).toBe(true);
+  });
+});

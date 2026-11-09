@@ -177,9 +177,9 @@ export function lockHeldBy(lockText: string | undefined, who: { session?: string
   return !!l.session && l.session === who.session;
 }
 
-/** PID listening on `port` in `netstat -ano` output. The state word is localized, so a listener is the row whose foreign address is the empty one. */
+/** PID listening on `port` in `netstat -ano` output. The state word is localized, so a listener is the row whose foreign address is the empty one; the PID is the last number on the row. */
 export function portOwner(netstat: string, port: number): number | undefined {
-  const m = netstat.match(new RegExp(`^\\s*TCP\\s+\\S+:${port}\\s+(?:0\\.0\\.0\\.0:0|\\[::\\]:0|\\*:\\*)\\s+[^\\d\\r\\n]+(\\d+)`, "m"));
+  const m = netstat.match(new RegExp(`^[ \\t]*TCP[ \\t]+\\S+:${port}[ \\t]+(?:0\\.0\\.0\\.0:0|\\[::\\]:0|\\*:\\*)[ \\t]+[^\\r\\n]*?(\\d+)[ \\t]*$`, "m"));
   return m ? Number(m[1]) : undefined;
 }
 

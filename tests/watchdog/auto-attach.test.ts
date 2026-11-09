@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -178,5 +178,21 @@ describe("ensureWatched", () => {
     expect(args).not.toContain("--auto");
     expect(args).not.toContain("--auto-recover");
     expect([val("--start-time"), val("--logs-root"), val("--auth"), val("--crash-dir")]).toEqual([String(T0), "L:\\logs", "rules", "C:\\crash"]);
+  });
+});
+
+describe("an unreadable watch lock (B-099 item 1)", () => {
+  // A directory in place of the lock makes the read fail with EISDIR, standing in for EBUSY/EPERM from a scanner.
+  it("the check names it, replies not ok and starts nothing", async () => {
+    const d = deps();
+    mkdirSync(join(d.stateDir, "19524.lock"));
+    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: the watch lock for PID 19524 cannot be read right now." });
+    expect(d.start).not.toHaveBeenCalled();
+  });
+
+  it("a lock that cannot be read after the watcher started is named, with ok so the next call is not a respawn", async () => {
+    const d = deps();
+    d.start = vi.fn(() => (mkdirSync(join(d.stateDir, "19524.lock")), 700));
+    expect(await check(d)).toEqual({ ok: true, text: "Workbench not watched: the watch lock for PID 19524 cannot be read right now; wb_watch status shows what runs." });
   });
 });

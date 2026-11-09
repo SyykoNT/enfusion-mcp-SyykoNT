@@ -305,3 +305,17 @@ describe("leakAssertButton and portOwner", () => {
     expect(portOwner(out.split("\r\n")[1] + "\r\n", 5775)).toBeUndefined();
   });
 });
+
+describe("portOwner row parsing (B-101 item 2)", () => {
+  it("takes the last number on the row, so a state word with a digit does not pick the wrong one", () => {
+    expect(portOwner("  TCP    0.0.0.0:5775    0.0.0.0:0    LISTEN2D    4321\r\n", 5775)).toBe(4321);
+    expect(portOwner("  TCP    0.0.0.0:5775    0.0.0.0:0    ECOUTE3   4321  \r\n", 5775)).toBe(4321);
+  });
+  it("a row without its PID does not borrow a number from the next row", () => {
+    // Ends right after the foreign address: the old \s+ crossed the line break into the next row.
+    expect(portOwner("  TCP    0.0.0.0:5775    0.0.0.0:0\r\n  TCP    0.0.0.0:6000    0.0.0.0:0    LISTENING    777\r\n", 5775)).toBeUndefined();
+    expect(portOwner("  TCP    0.0.0.0:5775    0.0.0.0:0    \r\n  TCP    0.0.0.0:6000    0.0.0.0:0    LISTENING    777\r\n", 5775)).toBeUndefined();
+    // A bare row (no PID) followed by a valid row for the same port: the valid one wins.
+    expect(portOwner("  TCP    0.0.0.0:5775    0.0.0.0:0    LISTENING\r\n  TCP    [::]:5775    [::]:0    LISTENING    555\r\n", 5775)).toBe(555);
+  });
+});
