@@ -4,6 +4,7 @@ import { createTuningServer } from "./server.js";
 import { WorkbenchClient } from "../workbench/client.js";
 import { PakVirtualFS } from "../pak/vfs.js";
 import { baseReader } from "../tools/config-override.js";
+import { reloadScripts } from "../tools/wb-reload.js";
 
 const config = loadConfig();
 const addonName = process.env.ENFUSION_TUNING_ADDON || "RoadForger";
@@ -17,8 +18,8 @@ const allowWrite = process.env.ENFUSION_TUNING_READONLY !== "1";
 
 // What to do in Workbench after a successful write, via ENFUSION_TUNING_POST_WRITE:
 //   rebuild        (default) ask Workbench to rebuild the changed .et file (ResourceManager.RebuildResourceFile); the reply only says it was requested, the result is in console.log
-//   scripts        EMCP_WB_Reload target=scripts (Script>Compile / Build>Compile All /
-//                  Script>Compile All / Plugins>Reload Scripts fallback chain)
+//   scripts        the built-in NET API ReloadScripts, as wb_reload does (180 s timeout); the reply says to confirm
+//                  with the "Reloading game scripts took" line in Workbench's console.log
 //   menu:A,B       run an exact menu path against WorldEditor, e.g. menu:Plugins,Reload Scripts
 //   none           write only
 //
@@ -45,7 +46,7 @@ async function notifyWorkbench(relPath: string): Promise<string | null> {
       const wbPath = `$${addonName}:${relPath}`;
       result = await wbClient.call("EMCP_WB_Resources", { action: "rebuild", path: wbPath }, CALL_OPTS);
     } else {
-      result = await wbClient.call("EMCP_WB_Reload", { target: "scripts" }, CALL_OPTS);
+      return `Workbench [scripts]: ReloadScripts answered Ok. ${await reloadScripts(wbClient)}`;
     }
 
     const msg = typeof result.message === "string" ? result.message : JSON.stringify(result);
