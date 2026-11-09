@@ -600,6 +600,15 @@ export function readStates(dir = WATCH_DIR): { states: WatchState[]; errors: str
   return { states, errors };
 }
 
+const SHOWN_FINISHED = 3;
+/** What wb_watch status and wb_diagnose print: every watcher that is not finished, and of the exited or crashed ones the newest few. `hidden` counts the rest. */
+export function recentStates(states: WatchState[]): { shown: WatchState[]; hidden: number } {
+  const old = new Set(states.filter((s) => s.state === "exited" || s.state === "crashed").sort((a, b) => b.updated - a.updated).slice(SHOWN_FINISHED));
+  return { shown: states.filter((s) => !old.has(s)), hidden: old.size };
+}
+
+export const olderLine = (n: number) => `and ${n} older finished watcher${n === 1 ? "" : "s"} (exited or crashed) not shown`;
+
 const BAD: WatchStateName[] = ["blocked_dialog", "not_responding", "stalled"];
 
 /** Worth telling a session now: a live watcher sees trouble, or a crash in the last 30 min. */

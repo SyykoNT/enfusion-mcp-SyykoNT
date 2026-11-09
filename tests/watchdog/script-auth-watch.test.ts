@@ -93,7 +93,7 @@ describe("Script Authorization in the watcher", () => {
     const w = t.watcher({}, { loadSet: () => loaded({ [path]: ["MCPAuthProbe", file] }) });
     await w.tick();
     expect(t.answer).not.toHaveBeenCalled();
-    expect(t.lockLines()[0]).toContain(`LEFT OPEN script '${path}:43' (MCPAuthProbe) method 'Workbench.RunCmd' command 'cmd /c exit 0' mode rules reason Workbench.RunCmd runs a program`);
+    expect(t.lockLines()[0]).toContain(`LEFT OPEN script '${path}:43' (MCPAuthProbe) method 'Workbench.RunCmd' command from the script source: 'cmd /c exit 0' mode rules reason Workbench.RunCmd runs a program`);
 
     // The call is more than two lines after the named line: the command is not read from it
     const u = setup();
@@ -236,12 +236,14 @@ describe("Script Authorization in the watcher", () => {
     try {
       await t.watcher({}, { loadSet: () => loaded({ "Scripts/Game/MCPAuthProbe/MCPAuthProbe_GameCalls.c": ["COALITION-Lobby", ""] }, { clones: [{ name: "COALITION-Lobby", root: clone }] }) }).tick();
     } finally {
-      process.env.PATH = path;
+      if (path === undefined) delete process.env.PATH; // assigning undefined would store the string "undefined"
+      else process.env.PATH = path;
     }
+    expect(process.env.PATH).toBe(path);
     expect(t.answer).toHaveBeenCalledOnce();
     const line = t.lockLines()[0];
     expect(line).toContain("YES");
-    expect(line).toContain("[git: COALITION-Lobby: git not available]");
+    expect(line).toContain("[git: COALITION-Lobby: git not available (git not found on PATH)]");
     expect(t.events().map((e) => [e.kind, e.action])).toEqual([["auth", line]]);
     expect(eventLines(t.stateDir, 0).lines).toHaveLength(1);
   });

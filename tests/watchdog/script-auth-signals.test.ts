@@ -135,7 +135,7 @@ describe("log lines", () => {
   it("a program run left open names the command, or says it is not readable; an explicit answer is marked", () => {
     const base = { time: "10:02:03", pid: 1, choice: "report" as const, parsed: parseAuthDialog(RUNCMD), addon: "MCPAuthProbe", mode: "rules" as const, reason: "runs a program" };
     expect(authLine({ ...base, command: "cmd /c exit 0" })).toContain("LEFT OPEN script");
-    expect(authLine({ ...base, command: "cmd /c exit 0" })).toContain("method 'Workbench.RunCmd' command 'cmd /c exit 0' mode rules");
+    expect(authLine({ ...base, command: "cmd /c exit 0" })).toContain("method 'Workbench.RunCmd' command from the script source: 'cmd /c exit 0' mode rules");
     expect(authLine(base)).toContain("command not readable from source");
     expect(authLine({ ...base, choice: "no", explicit: true })).toContain("NO explicit script");
     expect(authLine({ ...base, choice: "yes_to_all", parsed: undefined, addon: undefined })).toContain("YES TO ALL script (unreadable) method (unreadable)");

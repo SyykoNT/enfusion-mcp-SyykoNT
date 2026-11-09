@@ -1,8 +1,33 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { WorkbenchClient } from "../workbench/client.js";
-import { formatReport, readStates } from "../watchdog/wb-watch.js";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { WATCH_DIR, formatReport, olderLine, readStates, recentStates } from "../watchdog/wb-watch.js";
+import { workbenchCommandLines } from "../utils/process.js";
 
-export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): void {
+export interface DiagnoseDeps {
+  /** Running Workbench processes with the -gproj of each. */
+  workbenches(): { pid: number; gproj: string }[];
+  watchDir: string;
+}
+
+/** The handler folder of each addon a running Workbench loaded, from the -gproj on its command line (the Default Mod is only where wb_launch injects). */
+function loadedAddonLines(deps: DiagnoseDeps): string[] {
+  const list = deps.workbenches();
+  if (!list.length) return ["- **Loaded addon:** no running Workbench found, so no -gproj to read"];
+  return list.map(({ pid, gproj }) => {
+    if (!gproj) return `- **Loaded addon:** PID ${pid} has no -gproj on its command line`;
+    const dir = join(dirname(gproj), "Scripts", "WorkbenchGame", "EnfusionMCP");
+    const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.startsWith("EMCP_") && f.endsWith(".c")).length : 0;
+    return `- **Loaded addon (PID ${pid}, from its -gproj):** ${files ? `${files} .c files` : "no handler files"} → \`${dir}\``;
+  });
+}
+
+export function registerWbDiagnose(
+  server: McpServer,
+  client: WorkbenchClient,
+  deps: DiagnoseDeps = { workbenches: workbenchCommandLines, watchDir: WATCH_DIR }
+): void {
   server.registerTool(
     "wb_diagnose",
     {
@@ -46,6 +71,7 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
           : "not present (correct)";
         lines.push(`- **Standalone addon:** ${mark}, \`${r.standaloneAddon.path}\``);
       }
+      lines.push(...loadedAddonLines(deps));
       if (r.installedMods.length === 0) {
         lines.push("- **Installed in mods:** none found, handlers not injected into any mod");
       } else {
@@ -111,10 +137,12 @@ export function registerWbDiagnose(server: McpServer, client: WorkbenchClient): 
       }
 
       // --- Watchdog ---
-      const watch = readStates();
+      const watch = readStates(deps.watchDir);
+      const { shown, hidden } = recentStates(watch.states);
       lines.push("\n### Watchdog");
       if (!watch.states.length && !watch.errors.length) lines.push("- No Workbench is watched. The next live call attaches a watcher to the Workbench on the NET API port unless ENFUSION_WB_AUTOWATCH is off; wb_watch start pid=<n> attaches one now.");
-      for (const s of watch.states) lines.push("```", formatReport(s), "```");
+      for (const s of shown) lines.push("```", formatReport(s), "```");
+      if (hidden) lines.push(`- ${olderLine(hidden)}`);
       for (const e of watch.errors) lines.push(`- ${e}`);
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };

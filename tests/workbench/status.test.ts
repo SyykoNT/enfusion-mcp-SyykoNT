@@ -106,6 +106,25 @@ describe("ensureMode", () => {
     expect(await ensureMode(clientInMode("edit"), "edit", "create entity")).toBeNull();
   });
 
+  // B-013: the gate reads the state itself (22e2bee, 489ed99); a refusal never says "mode unknown, run wb_state".
+  it("reads the state itself: a fresh client knows no mode until the gate's own query, which records it", async () => {
+    const client = clientInMode("edit");
+    expect(client.state.mode).toBe("unknown");
+    expect(await ensureMode(client, "edit", "create entity")).toBeNull();
+    expect(client.state.mode).toBe("edit");
+  });
+
+  it("when the state query fails, the refusal says why", async () => {
+    mock = createMockWorkbench(() => { throw new Error("Undefined API func"); });
+    const noHandlers = await ensureMode(new WorkbenchClient("127.0.0.1", mock.port), "edit", "save");
+    expect(noHandlers).toBe("Cannot save: the MCP handlers are not loaded in this Workbench; run wb_diagnose.");
+    await mock.close();
+    mock = createMockWorkbench((apiFunc) => (apiFunc === "EMCP_WB_GetState" ? { status: "error", message: "boom" } : {}));
+    const failed = await ensureMode(new WorkbenchClient("127.0.0.1", mock.port), "edit", "save");
+    expect(failed).toBe("Cannot save: could not read the Workbench mode; run wb_diagnose.");
+    expect(failed).not.toContain("wb_state");
+  });
+
   it("refuses edit actions during play and names wb_stop", async () => {
     const result = await ensureMode(clientInMode("game"), "edit", "create entity");
     expect(result).toContain("play mode");

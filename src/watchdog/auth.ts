@@ -58,8 +58,8 @@ export function gitReport(clones: { name: string; root: string }[]): string {
         const changed = (gitOrNull(root, ["status", "--porcelain"]) ?? "").split("\n").filter(Boolean).length;
         const stat = (gitOrNull(root, ["diff", "--stat", "--", GEAR_LIST]) ?? "").trim().split("\n").pop()?.trim();
         return `${name}: ${changed} changed files, GearScriptsConfigList.json ${stat || "unchanged"}`;
-      } catch {
-        return `${name}: git not available`; // gitOrNull throws when git is not on PATH; the press must still be logged
+      } catch (e) {
+        return `${name}: git not available (${String((e as Error).message ?? e).split("\n")[0]})`; // gitOrNull throws when git is not on PATH; the press must still be logged
       }
     })
     .join("; ");

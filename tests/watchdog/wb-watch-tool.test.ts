@@ -172,6 +172,19 @@ describe("status line and reports", () => {
     expect(text).toContain("watcher not running; last report 09:32:58");
     expect(text).toMatch(/watch state unreadable: .*1\.json/);
   });
+
+  it("status lists live watchers and the newest finished ones, then counts the older finished ones", async () => {
+    const d = deps();
+    const put = (pid: number, state: WatchState["state"], updated: number) => writeFileSync(join(d.stateDir, pid + ".json"), JSON.stringify(st(state, { pid, updated })));
+    put(100, "ok", at("01:00:00.000")); // the oldest file, but still running
+    for (let i = 0; i < 5; i++) put(200 + i, "exited", at("0" + (2 + i) + ":00:00.000"));
+    put(300, "crashed", at("08:00:00.000"));
+    const text = (await watchAction({ action: "status" }, d)).text;
+    expect(text).toContain("Workbench PID 100 (not owned): OK");
+    for (const pid of [204, 203, 300]) expect(text).toContain("Workbench PID " + pid + " ");
+    for (const pid of [200, 201, 202]) expect(text).not.toContain("Workbench PID " + pid + " ");
+    expect(text).toContain("and 3 older finished watchers (exited or crashed) not shown");
+  });
 });
 
 describe("automatic watchers: replace, refuse, stop and noauto", () => {

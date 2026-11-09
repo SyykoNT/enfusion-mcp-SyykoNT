@@ -353,7 +353,7 @@ const clip = (s: string) => s.replace(/\s+/g, " ").slice(0, 200);
 export function authLine(e: AuthLog): string {
   const p = e.parsed;
   const what = p ? `script '${clip(p.script)}:${p.line}' (${clip(e.addon ?? "not in a loaded addon")}) method '${p.method}'` : "script (unreadable) method (unreadable)";
-  const cmd = p && PROGRAM_METHODS.includes(p.method) ? ` command ${e.command !== undefined ? `'${clip(e.command)}'` : "not readable from source"}` : "";
+  const cmd = p && PROGRAM_METHODS.includes(p.method) ? ` command ${e.command !== undefined ? `from the script source: '${clip(e.command)}'` : "not readable from source"}` : "";
   return (
     `AUTH ${e.time} PID ${e.pid} ${CHOICE_LABEL[e.choice]}${e.explicit ? " explicit" : ""} ${what}${cmd} mode ${e.mode} reason ${clip(e.reason)}` +
     (e.git ? ` [git: ${e.git}]` : "") +

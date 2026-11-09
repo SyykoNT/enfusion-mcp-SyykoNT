@@ -6,7 +6,7 @@ import type { AuthMode, Config } from "../config.js";
 import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { isOwned } from "../utils/instances.js";
 import { isAlive, killPids, processInfo, sleep, type ProcInfo } from "../utils/process.js";
-import { UNREADABLE, WATCH_DIR, formatReport, hms, noautoFile, readStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
+import { UNREADABLE, WATCH_DIR, formatReport, hms, noautoFile, olderLine, readStates, recentStates, startWatcher, watcherOf, type StartWatcher } from "../watchdog/wb-watch.js";
 import { answerDialog, probeDialogs } from "../watchdog/probe.js";
 import { appendLockLine, authDetails, loadSetOf, type LoadSet } from "../watchdog/auth.js";
 import { authLine, authText, dialogKind, parseAuthWindow, textHash, type AuthLog, type WinInfo } from "../watchdog/signals.js";
@@ -88,11 +88,12 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
       };
     }
     const now = Date.now();
-    const reports = states.map((s) => {
+    const { shown, hidden } = recentStates(states);
+    const reports = shown.map((s) => {
       const gone = s.state !== "exited" && s.state !== "crashed" && !d.alive(s.watcherPid);
       return formatReport(s, now) + (gone ? `\n  (watcher not running; last report ${hms(s.updated)})` : "");
     });
-    return { text: [...reports, ...errors].join("\n\n") };
+    return { text: [...reports, ...(hidden ? [olderLine(hidden)] : []), ...errors].join("\n\n") };
   }
   if (!a.pid) return fail(`pid is required for ${a.action}.`);
   const pid = a.pid;

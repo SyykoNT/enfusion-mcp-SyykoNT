@@ -66,8 +66,9 @@ while ($true) {
     $o
   })
   $crs = @(Get-CimInstance Win32_Process -Filter "Name='CrashReporter.exe'" | ForEach-Object { [ordered]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId } })
-  $port = (Get-NetTCPConnection -LocalPort $Port -State Listen | Select-Object -First 1).OwningProcess
-  Say ([ordered]@{ t = [DateTimeOffset]::Now.ToUnixTimeMilliseconds(); alive = $true; start = ([DateTimeOffset]$p.StartTime).ToUnixTimeMilliseconds(); ws = $p.WorkingSet64; cpu = $p.TotalProcessorTime.TotalSeconds; wins = $wins; crs = $crs; port = $port })
+  # Not $port: PowerShell names are case-insensitive, so that would overwrite $Port and the second sample would look up the owner's PID as a port.
+  $listener = (Get-NetTCPConnection -LocalPort $Port -State Listen | Select-Object -First 1).OwningProcess
+  Say ([ordered]@{ t = [DateTimeOffset]::Now.ToUnixTimeMilliseconds(); alive = $true; start = ([DateTimeOffset]$p.StartTime).ToUnixTimeMilliseconds(); ws = $p.WorkingSet64; cpu = $p.TotalProcessorTime.TotalSeconds; wins = $wins; crs = $crs; port = $listener })
   Start-Sleep -Seconds 5
 }
 `;

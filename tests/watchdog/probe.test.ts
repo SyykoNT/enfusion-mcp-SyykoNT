@@ -24,6 +24,15 @@ describe("probe scripts", () => {
     expect(DIALOG_SCRIPT).not.toContain("]::PostMessage(");
   });
 
+  // PowerShell variable names ignore case: `$port = ...` once overwrote `$Port`, so every sample after the first read "NET API port owner: none".
+  it.each([["probe", PROBE_SCRIPT, ["WbPid", "Port"]], ["dismiss", DISMISS_SCRIPT, ["WbPid", "Hwnd", "Button"]], ["dialogs", DIALOG_SCRIPT, ["WbPid"]]] as const)(
+    "%s never assigns to a variable named like one of its parameters, whatever the case",
+    (_n, script, params) => {
+      const assigned = [...script.matchAll(/^\s*\$(\w+)\s*=/gm)].map((m) => m[1].toLowerCase());
+      for (const p of params) expect(assigned).not.toContain(p.toLowerCase());
+    }
+  );
+
   it("takes integer parameters only", () => {
     expect(withArgs("x", { WbPid: 12, Hwnd: 34 })).toBe("$WbPid = 12\n$Hwnd = 34\nx");
     expect(() => withArgs("x", { WbPid: Number("1; Stop") })).toThrow(/integer/);
