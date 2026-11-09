@@ -395,7 +395,7 @@ export function registerMod(
           .array(z.string())
           .optional()
           .describe(
-            "(build/compile/pack) Folders for -addonsDir on this run (read only), in place of ENFUSION_ADDONS_DIR; each an existing absolute folder with no quote or comma. " +
+            "(build/compile/pack) Folders for -addonsDir on this run (read only), in place of ENFUSION_ADDONS_DIR (an empty list [] counts as omitted: ENFUSION_ADDONS_DIR applies); each an existing absolute folder with no quote or comma. " +
             "Use a mission folder that holds the addon and junctions to its dependencies to build against that copy and no other. A pack output inside any of them is refused."
           ),
 

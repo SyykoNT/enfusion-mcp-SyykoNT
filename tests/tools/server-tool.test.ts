@@ -276,6 +276,18 @@ describe("server start and status: -noThrow once, and the script error report", 
     expectClean((await h({ action: "status" })).content[0].text);
   });
 
+  it("a closing fence inside the console tail cannot close the reply's code block, in start and in logs", async () => {
+    const dir = join(cfg.serverProfilePath, "logs", "logs_2026-11-09_13-00-00");
+    rmSync(join(cfg.serverProfilePath, "logs"), { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "console.log"), "13:00:00.000 DEFAULT      : first\r\n13:00:01.000 DEFAULT      : ``` **not bold** [link](x)\r\n");
+    for (const reply of [await h({ action: "start" }), await h({ action: "logs", lines: 5 })]) {
+      const t = reply.content[0].text;
+      expect(t).toContain("''' **not bold** [link](x)");
+      expect(t.match(/```/g)).toHaveLength(2);
+    }
+  });
+
   it("the description says every server runs with -noThrow and the replies report script exceptions", () => {
     let def!: { description: string };
     registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, cfg);

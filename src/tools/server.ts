@@ -11,7 +11,7 @@ import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { protectedAddonOf } from "../utils/game-paths.js";
 import { findPids, killPids, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
-import { runErrors } from "../utils/logwatch.js";
+import { fenced, runErrors } from "../utils/logwatch.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
 import { procWatchLines } from "../watchdog/proc-watch.js";
 import { MISSION_ROOT, watchStarted } from "./mission-server.js";
@@ -275,7 +275,7 @@ export function registerServer(server: McpServer, config: Config): void {
           const errors = logDir ? runErrors(logDir) : "";
           return text(
             `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
-            (logDir ? `Logs: ${logDir}\n\n\`\`\`\n${tail(join(logDir, "console.log"), 25)}\n\`\`\`` : "") +
+            (logDir ? `Logs: ${logDir}\n\n${fenced(tail(join(logDir, "console.log"), 25))}` : "") +
             (errors && `\n\n${errors}`) +
             `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${port} (and the same local addons).${note}`,
             !alive
@@ -330,7 +330,7 @@ export function registerServer(server: McpServer, config: Config): void {
           const logDir = newestDir(serverLogsDir(config));
           if (!logDir) return text(`No server logs in ${serverLogsDir(config)} yet.`, true);
           const re = a.errorsOnly ? /\((E|W|F)\)/ : a.filter ? new RegExp(a.filter, "i") : undefined;
-          return text(`**${join(logDir, "console.log")}**\n\n\`\`\`\n${tail(join(logDir, "console.log"), a.lines, re)}\n\`\`\``);
+          return text(`**${join(logDir, "console.log")}**\n\n${fenced(tail(join(logDir, "console.log"), a.lines, re))}`);
         }
 
         return text(`Unknown action ${a.action}`, true);

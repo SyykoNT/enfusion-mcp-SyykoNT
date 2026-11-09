@@ -1116,3 +1116,77 @@ describe("mission_server: the final state of a process that exited", () => {
     }
   });
 });
+
+describe("mission_server: log text is data, and join reports the run (MS-1)", () => {
+  const tool = () => handler2(config(home));
+  const exes = () => {
+    writeFileSync(join(home, "ArmaReforgerServerDiag.exe"), "");
+    writeFileSync(join(home, "ArmaReforgerSteamDiag.exe"), "");
+  };
+  const serverLogs = (consoleText: string) => {
+    sys.onSpawn = (args) => {
+      const dir = join(args[args.indexOf("-profile") + 1], "logs", "logs_x");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "console.log"), consoleText);
+    };
+  };
+  const start = (port: number) => {
+    exes();
+    const t = addon();
+    return tool()({ action: "start", world: t.world, port, peers: 0, addonsDirs: [t.root], timeoutSec: 10 });
+  };
+
+  it("the line the start stopped on stays inside one code block, even with a closing fence in it", async () => {
+    serverLogs("01:23:09.071 ENGINE    (F): Application hangs ``` **bold** [link](x)\r\n");
+    const r = await start(2701);
+    const t = r.content[0].text;
+    expect(t).toContain("**Server not ready** (stopped on: the log line below).");
+    expect(t).toContain("```\n01:23:09.071 ENGINE    (F): Application hangs ''' **bold** [link](x)\n```");
+    expect(t.match(/```/g)).toHaveLength(2);
+  });
+
+  it("the matched online line stays inside one code block, even with a closing fence in it", async () => {
+    serverLogs("12:00:00.000 DEFAULT      : Entered online game state. ``` **bold** [link](x)\r\n");
+    const r = await start(2702);
+    const t = r.content[0].text;
+    expect(t).toContain("**Server online** after");
+    expect(t).toContain("```\n12:00:00.000 DEFAULT      : Entered online game state. ''' **bold** [link](x)\n```");
+    expect(t.match(/```/g)).toHaveLength(2);
+  });
+
+  /** A running server of port with a script exception and a crash.log in its log folder, as the join tests need it. */
+  const runningServer = (port: number, cpu?: { server: number; client: number }) => {
+    exes();
+    const t = addon();
+    const dir = join(MISSION_ROOT, String(port));
+    const serverDir = join(dir, "server");
+    const logDir = join(serverDir, "logs", "logs_x");
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(join(logDir, "console.log"), VME_LOG + "\r\n12:15:00.000   NETWORK      : Players connected: 1 / 1\r\n");
+    writeFileSync(join(logDir, "crash.log"), CRASH_LOG);
+    writeFileSync(join(serverDir, INSTANCE_FILE), JSON.stringify({ kind: "server", name: `mission-${port}`, pid: 701, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: Date.now(), exe: "x" }));
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ port, gproj: join(t.dir, "addon.gproj"), world: "Worlds/Map/Me_TVT_Test.ent", addonsDirs: [t.root], addons: ["TestMission"], cpu }));
+    sys.servers = [{ pid: 701, ppid: 1, cmd: `x.exe -profile "${serverDir}"`, created: Date.now() }];
+    sys.clients = [];
+  };
+
+  it("join includes the run report when the new client cannot start", async () => {
+    runningServer(2703);
+    sys.freeBytes = 1 * 2 ** 30;
+    const r = await tool()({ action: "join", port: 2703, joinTimeoutSec: 1 });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("Not enough free RAM for another game client");
+    expect(sys.spawned).toEqual([]);
+    expectReport(r.content[0].text);
+  });
+
+  it("join includes the run report when the client CPU mask cannot be applied", async () => {
+    runningServer(2704, { server: 0x3000, client: 0xc00 });
+    sys.pids = [730];
+    sys.failPins = new Set([730]);
+    const r = await tool()({ action: "join", port: 2704, joinTimeoutSec: 1 });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("clientCpuMask 0xc00 could not be applied to the new peer 1 (PID 730).");
+    expectReport(r.content[0].text);
+  });
+});

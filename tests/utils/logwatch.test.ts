@@ -220,6 +220,20 @@ describe("runErrors", () => {
     expect(runErrors(join(dir, "f"))).toContain("a ''' b");
   });
 
+  it("a crash.log whose first Reason is past line 40 still shows it, after the 40-line head; a Reason inside the head is not repeated", () => {
+    const body = Array.from({ length: 70 }, (_, i) => (i === 49 ? "Reason: Late reason" : i === 60 ? "Reason: Second" : `crash-line-${i + 1}`));
+    put("late/crash.log", body.join("\n"));
+    const r = runErrors(join(dir, "late"));
+    expect(r).toContain("crash-line-40\n...\nReason: Late reason\n```");
+    expect(r).not.toContain("crash-line-41");
+    expect(r).not.toContain("Second");
+    put("early/crash.log", body.map((l, i) => (i === 4 ? "Reason: Early reason" : l)).join("\n"));
+    const e = runErrors(join(dir, "early"));
+    expect(e).toContain("Reason: Early reason\n");
+    expect(e).not.toContain("Late reason");
+    expect(e).not.toContain("...");
+  });
+
   it("markdown in a crash.log reason is shown only inside the code block", () => {
     put("m/crash.log", "Reason: **x** [link](y)\n");
     const [head, inside, tail] = runErrors(join(dir, "m")).split("```");

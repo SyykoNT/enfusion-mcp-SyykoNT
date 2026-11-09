@@ -10,7 +10,7 @@ import { procWatchLines, startProcWatcher, type StartProcWatcher } from "../watc
 import { duplicateAddonError } from "../pak/stack.js";
 import { DISABLE_CRASH_REPORTER, NO_THROW, argValue, clientProcesses, isAlive, killPids, limitProcess, newestDir, refusedArg, serverProcesses, sleep, spawnDetached } from "../utils/process.js";
 import { INSTANCE_FILE, OWNER, instanceTable, isUnder, planStop, scan, writeInstance, type Entry } from "../utils/instances.js";
-import { DEFAULT_FAIL_PATTERNS, resolveLogFile, runErrors, waitFor } from "../utils/logwatch.js";
+import { DEFAULT_FAIL_PATTERNS, fenced, resolveLogFile, runErrors, waitFor } from "../utils/logwatch.js";
 import { findMissionHeader } from "./server-params.js";
 
 /** Everything this tool starts lives here, one folder per port: server/, peer<n>/, run.json. */
@@ -303,7 +303,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         "Run a mission the way Workbench's Dedicated Server Tool does, without Workbench: an ArmaReforgerServerDiag server on the mission world and " +
         "its Mission Header, with unpacked addons from -addonsDir, on its own loopback port and profile, plus Diag game clients that join it. " +
         "start (server, waits until it accepts clients, then peers), join (one more client, the guide's Start only clients), status, stop (only its own processes). " +
-        "Starts processes: ask the user (or the Workbench lock owner) first, and keep within the CPU and port slots they give. " +
+        "Starts processes on this PC, so ask the user before start or join; port picks the loopback port, and serverCpuMask and clientCpuMask choose the cores. " +
         "A start is refused, before anything is spawned, when the world's addon, an addon in addons or one of their dependencies exists as two copies with the same GUID in the listed folders. " +
         "Every client needs at least 4 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
         "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority. " +
@@ -315,7 +315,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         world: z.string().optional().describe("(start) Absolute path of the mission .ent inside an unpacked addon"),
         missionHeader: z.string().optional().describe("(start) Header .conf as {GUID}path; default the one in the world's addon whose World is this .ent. Without one the world starts bare"),
         addons: z.array(z.string()).optional().describe("(start) Addon IDs for -addons; default the world's addon (the server resolves its dependencies)"),
-        addonsDirs: z.array(z.string()).optional().describe("(start) Folders for -addonsDir (read only); default ENFUSION_ADDONS_DIR, else the project folder and the Workbench addons folder"),
+        addonsDirs: z.array(z.string()).optional().describe("(start) Folders for -addonsDir (read only); default ENFUSION_ADDONS_DIR, else the project folder and the Workbench addons folder; [] is an empty list (no default), so only the world's addon folder is listed"),
         port: z.number().int().min(1024).max(65535).optional().describe("Loopback game port (-addr 127.0.0.1:<port>), one run per port; start and join default to 2521, stop without it stops every run of this tool"),
         peers: z.number().int().min(0).max(4).default(0).describe("(start) Game clients to start once the server is online"),
         extraArgs: z.array(z.string()).optional().describe("(start) Extra server args, e.g. ['-jobsysShortWorkerCount','2']"),
@@ -377,9 +377,10 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             : "";
           const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}${cpuNote}`;
           if (w.status !== "matched") {
-            const why = w.status === "failed" ? `stopped on: ${w.fatal[0]?.line}` : w.status === "exited" ? "the server exited" : `not online within ${a.timeoutSec} s`;
+            const why = w.status === "failed" ? "stopped on: the log line below" : w.status === "exited" ? "the server exited" : `not online within ${a.timeoutSec} s`;
+            const failLine = w.status === "failed" ? `\n\n${fenced(w.fatal[0].line.trim())}` : "";
             const ended = w.status === "exited" ? await exitedStates(portDir(port), [pid], started) : "";
-            return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}\n\n${head}${ended}${runReport(port)}`, true);
+            return text(`**Server not ready** (${why}). No peers started.${isAlive(pid) ? " It is still running: mission_server stop." : ""}${failLine}\n\n${head}${ended}${runReport(port)}`, true);
           }
           const peers: string[] = [];
           const startedPeers: { n: number; pid: number }[] = [];
@@ -407,7 +408,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             ? `\nAll ${a.peers} peer(s) joined (Players connected: ${a.peers}).`
             : `\nNot all peers joined within ${a.joinTimeoutSec} s: players connected ${playersConnected(readFileSync(w.file!, "utf-8"))} of ${a.peers}.${stopped}`;
           return text(
-            `**Server online** after ${w.elapsedSec.toFixed(0)} s (${w.matched[0].line.trim()})${run.header ? "" : "\nNo Mission Header: the world started without one."}${joinLine}\n\n${head}` +
+            `**Server online** after ${w.elapsedSec.toFixed(0)} s, matched log line:\n${fenced(w.matched[0].line.trim())}${run.header ? "" : "\nNo Mission Header: the world started without one."}${joinLine}\n\n${head}` +
               (peers.length ? `\n\n${peers.join("\n")}\nPeer command: ArmaReforgerSteamDiag.exe ${peerArgs(run, "<peer profile>").join(" ")}` : "") + ended + runReport(port),
             a.peers > 0 && !joined
           );
@@ -427,10 +428,10 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const offset = statSync(log).size;
           const since = Date.now();
           const p = startPeer(run, config);
-          if (typeof p === "string") return text(p, true);
+          if (typeof p === "string") return text(`${p}${runReport(port)}`, true);
           if (p.pinned === false) {
             const stopped = await stopOwn(port, [p]);
-            return text(`clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to the new peer ${p.n} (PID ${p.pid}).${stopped}`, true);
+            return text(`clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to the new peer ${p.n} (PID ${p.pid}).${stopped}${runReport(port)}`, true);
           }
           const joined = await waitPlayers(log, offset, before + 1, srv.proc.pid, a.joinTimeoutSec);
           const ended = joined ? "" : await exitedStates(portDir(port), [p.pid, srv.proc.pid], since);

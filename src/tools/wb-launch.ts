@@ -58,7 +58,7 @@ export function registerWbLaunch(
           .array(z.string())
           .optional()
           .describe(
-            "Folders for -addonsDir on this launch (read only), in place of ENFUSION_ADDONS_DIR; each an existing absolute folder with no quote or comma. " +
+            "Folders for -addonsDir on this launch (read only), in place of ENFUSION_ADDONS_DIR (an empty list [] counts as omitted: ENFUSION_ADDONS_DIR applies); each an existing absolute folder with no quote or comma. " +
             "Use a mission folder that holds the addon and junctions to its dependencies to load that copy and no other. " +
             "Only on a fresh start: a running or starting Workbench keeps its own, and the reply says addonsDirs was not applied."
           ),

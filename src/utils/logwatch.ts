@@ -278,7 +278,7 @@ export function scan(o: ScanOptions): ScanResult {
 
 const CRASH_LINES = 40;
 /** A code block for log text: a fence inside the text must not close it. */
-const fenced = (t: string) => `\`\`\`\n${t.replace(/```/g, "'''")}\n\`\`\``;
+export const fenced = (t: string) => `\`\`\`\n${t.replace(/```/g, "'''")}\n\`\`\``;
 
 /**
  * Script exceptions (VM exceptions in console.log) and crash.log of one run's log folder, as reply text; "" when it holds neither.
@@ -302,7 +302,11 @@ export function runErrors(logDir: string): string {
     const crash = join(logDir, "crash.log");
     if (existsSync(crash)) {
       const text = readFileSync(crash, "utf-8");
-      parts.push(`**crash.log** ${crash}\n${fenced(text.split(/\r?\n/).slice(0, CRASH_LINES).join("\n"))}`);
+      const lines = text.split(/\r?\n/);
+      const head = lines.slice(0, CRASH_LINES);
+      // A Reason past the head would be cut off, and it is the line the reader needs.
+      const late = head.some((l) => /^Reason:/.test(l)) ? undefined : lines.slice(CRASH_LINES).find((l) => /^Reason:/.test(l));
+      parts.push(`**crash.log** ${crash}\n${fenced([...head, ...(late ? ["...", late.slice(0, MAX_LINE)] : [])].join("\n"))}`);
     }
     return parts.join("\n\n");
   } catch {
