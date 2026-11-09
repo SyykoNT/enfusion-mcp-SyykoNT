@@ -40,7 +40,7 @@ const otherWin = (title = "Script Authorization Required"): WinInfo => ({
 const run5s = (n: number, wins: WinInfo[], start = START + 1000): ProbeSample[] =>
   Array.from({ length: n }, (_, i) => ({ t: NOW + i * 5000, alive: true, start, wins }));
 
-interface Rig { script: ProbeSample[]; inst?: Partial<Instance> | "missing" | "garbage"; info?: Partial<ProcInfo>; ownerInfo?: ProcInfo; killWorks?: boolean; crashDir?: "ok" | "none" | "blocked"; lag?: number; lookupThrows?: boolean }
+interface Rig { script: ProbeSample[]; inst?: Partial<Instance> | "missing" | "garbage"; info?: Partial<ProcInfo>; ownerInfo?: ProcInfo; killWorks?: boolean; crashDir?: "ok" | "none" | "blocked"; lag?: number; lookupThrows?: boolean; infoThrows?: number }
 
 function rig(r: Rig) {
   const root = mkdtempSync(join(tmpdir(), "emcp-pw-"));
@@ -67,9 +67,10 @@ function rig(r: Rig) {
   const stateFile = () => readdirSync(stateDir).filter((f) => f.endsWith(".json"))[0];
   const state = () => JSON.parse(readFileSync(join(stateDir, stateFile()), "utf-8")) as ProcWatchState;
   const states: ProcWatchState[] = []; // the state after each tick
-  const seen: { atKill?: ProcWatchState["state"]; savedAtKill?: number } = {};
+  const seen: { atKill?: ProcWatchState["state"]; savedAtKill?: number; statesAtKill?: ProcWatchState["state"][] } = {};
   const kill = vi.fn((_pids: number[], _force?: boolean, _tree?: boolean) => {
     seen.atKill = state().state;
+    seen.statesAtKill = states.map((s) => s.state);
     seen.savedAtKill = existsSync(crashRoot) ? readdirSync(crashRoot).length : 0;
     writeFileSync(join(logDir, "crash.log"), CRASH_TEXT); // the engine writes it as the process ends
     if (r.killWorks !== false) dead = true;
@@ -85,7 +86,11 @@ function rig(r: Rig) {
     return { stop: probeStop };
   });
   const info: ProcInfo = { pid: PID, ppid: 1, cmd: `"${EXE}" -server x -profile y`, created: START, ...r.info };
-  const processInfo = vi.fn((pid: number) => (pid === PID ? info : pid === 222 ? r.ownerInfo : undefined));
+  let infoThrows = r.infoThrows ?? 0;
+  const processInfo = vi.fn((pid: number) => {
+    if (infoThrows-- > 0) throw new Error("the process query failed");
+    return pid === PID ? info : pid === 222 ? r.ownerInfo : undefined;
+  });
   const tick = () => new Promise((done) => setImmediate(done));
   const run = () =>
     runProcWatcher(
@@ -180,8 +185,9 @@ describe("proc-watch ends a process only for a VM exception window", () => {
     ["the instance file is unreadable", { inst: "garbage" as const }, "missing or unreadable"],
     ["the instance file is for another PID", { inst: { pid: 999 } }, "for PID 999"],
     ["the start time is off by over 10 s", { inst: { startedAt: START - 11_000 } }, "start time does not match"],
-    ["the instance file has no start time", { inst: { startedAt: undefined } }, "start time does not match"],
+    ["the probe sample has no start time", { script: run5s(4, [vmeWin()]).map((s) => ({ ...s, start: undefined })) }, "start time does not match"],
     ["the running process was created an hour off the instance file (a reused PID)", { info: { created: START + 3_600_000 } }, "not created when"],
+    ["the running process has no creation time", { info: { created: undefined } }, "not created when"],
     ["the command line only starts like the instance exe", { info: { cmd: `"${EXE}.x" -server x` } }, "not the one in the instance file"],
     ["another owner whose MCP process is dead", { inst: { ownerPid: 222 } }, "session that has ended"],
     ["another live owner", { inst: { ownerPid: 222 }, ownerInfo: { pid: 222, ppid: 1, cmd: "node", created: 4000 } }, "not started by this MCP session"],
@@ -201,7 +207,33 @@ describe("proc-watch ends a process only for a VM exception window", () => {
     await t.run();
     expect(t.kill).not.toHaveBeenCalled();
     expect(readdirSync(t.root).sort()).toEqual(["emcp-instance.json", "logs", "state"]);
-    expect(t.states.find((s) => s.state === "blocked_dialog")?.why).toContain("start time does not match");
+    expect(t.states.find((s) => s.state === "blocked_dialog")?.why).toContain("field startedAt");
+  });
+
+  // Every instance file field the re-check reads, damaged each way a hand edit could: a refusal that names it, never a throw.
+  const fieldCases: [string, string, unknown][] = [
+    ...Object.entries({ pid: PID, startedAt: START, ownerPid: OWNER, ownerStartedAt: OWNER_STARTED }).flatMap(([f, good]): [string, string, unknown][] => [[f, "missing", undefined], [f, "null", null], [f, "the right number as a string", String(good)]]),
+    ["exe", "missing", undefined], ["exe", "null", null], ["exe", "a number", 5], ["exe", "an empty string", ""],
+  ];
+  it.each(fieldCases)("refuses an instance file whose %s is %s, and keeps watching", async (field, _case, value) => {
+    const t = rig({ script: run5s(4, [vmeWin()]), inst: { [field]: value } });
+    await expect(t.run()).resolves.toBe(0);
+    expect(t.kill).not.toHaveBeenCalled();
+    expect(existsSync(t.crashRoot)).toBe(false);
+    const refused = t.states.filter((s) => s.state === "blocked_dialog");
+    expect(refused.length).toBe(2); // samples 3 and 4: the re-check ran again on the next sample
+    expect(refused[0].why).toBe(`not ended: the instance file field ${field} is missing or not valid`);
+    expect(t.state().state).toBe("exited");
+  });
+
+  it("refuses when a re-check step throws, keeps watching, and ends the PID once the step works again", async () => {
+    const t = rig({ script: run5s(4, [vmeWin()]), infoThrows: 1 });
+    expect(await t.run()).toBe(0);
+    expect(t.states.find((s) => s.state === "blocked_dialog")?.why).toBe("not ended: the re-check failed: the process query failed");
+    expect(t.seen.statesAtKill).toContain("blocked_dialog"); // refused on sample 3, ended on sample 4
+    expect(t.kill).toHaveBeenCalledTimes(1);
+    expect(t.kill).toHaveBeenCalledWith([PID], true, false);
+    expect(t.state().state).toBe("ended_vme");
   });
 
   it("still writes ended_vme with a note when the log folder lookup fails after the end", async () => {

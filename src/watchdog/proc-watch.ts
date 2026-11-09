@@ -85,6 +85,22 @@ const sameImage = (cmd: string, exe: string) => {
   return !!exe && c.startsWith(e) && (c.length === e.length || " \"".includes(c[e.length]));
 };
 
+type Checked = Pick<Instance, "pid" | "exe" | "startedAt" | "ownerPid" | "ownerStartedAt">;
+/** The instance file comes from disk: every field the re-check reads is checked here, and a bad one is named in the refusal. */
+function validInstance(raw: unknown, pid: number): { inst: Checked } | { why: string } {
+  if (!raw || typeof raw !== "object") return { why: "the instance file is missing or unreadable" };
+  const r = raw as Record<string, unknown>;
+  const bad = (field: string) => ({ why: `the instance file field ${field} is missing or not valid` });
+  const posInt = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) > 0;
+  if (!posInt(r.pid)) return bad("pid");
+  if (r.pid !== pid) return { why: `the instance file is for PID ${r.pid}` };
+  if (typeof r.exe !== "string" || !r.exe) return bad("exe");
+  if (!Number.isSafeInteger(r.startedAt)) return bad("startedAt");
+  if (!posInt(r.ownerPid)) return bad("ownerPid");
+  if (!Number.isSafeInteger(r.ownerStartedAt)) return bad("ownerStartedAt");
+  return { inst: { pid, exe: r.exe, startedAt: r.startedAt as number, ownerPid: r.ownerPid, ownerStartedAt: r.ownerStartedAt as number } };
+}
+
 /** Watch `o.pid` until it is gone. Returns the exit code: 0 done, 3 already watched. */
 export async function runProcWatcher(o: ProcWatchOpts, over: Partial<ProcWatchDeps> = {}): Promise<number> {
   const d: ProcWatchDeps = {
@@ -117,27 +133,36 @@ export async function runProcWatcher(o: ProcWatchOpts, over: Partial<ProcWatchDe
 
   /** Everything that must hold right before the end; any miss returns why, and nothing is ended. */
   const recheck = (s: ProbeSample): { why: string } | { start: number } => {
-    const inst = d.readInstance(o.instance);
-    if (!inst) return { why: "the instance file is missing or unreadable" };
-    if (inst.pid !== o.pid) return { why: `the instance file is for PID ${inst.pid}` };
+    const v = validInstance(d.readInstance(o.instance), o.pid);
+    if ("why" in v) return v;
+    const { inst } = v;
     const info = d.processInfo(o.pid);
     if (!info) return { why: "the process was not found" };
     if (!sameImage(info.cmd, inst.exe)) return { why: "the process image is not the one in the instance file" };
-    if (s.start === undefined || !Number.isFinite(inst.startedAt) || Math.abs(s.start - inst.startedAt) > 10_000) return { why: "the process start time does not match the instance file" };
+    const start = s.start ?? NaN;
+    // Written as "not within" so a missing or NaN start refuses too.
+    if (!(Math.abs(start - inst.startedAt) <= 10_000)) return { why: "the process start time does not match the instance file" };
     const owner = { pid: o.ownerPid, startedAt: o.ownerStarted };
     const mine = inst.ownerPid === owner.pid && inst.ownerStartedAt === owner.startedAt;
     // The live creation time (`info`) is checked too, so a reused PID is caught even when the sample is from the old process.
-    const cls = classify(inst, info, mine ? undefined : d.processInfo(inst.ownerPid)?.created, owner);
+    // classify reads only the checked fields. Its stale test lets a NaN creation time through, so that is refused here.
+    const cls = Number.isFinite(info.created) ? classify(inst as Instance, info, mine ? undefined : d.processInfo(inst.ownerPid)?.created, owner) : "stale";
     if (cls === "stale") return { why: "the running process was not created when the instance file says" };
     if (cls === "orphan") return { why: "it was started by an MCP session that has ended" };
     if (cls !== "own") return { why: "it was not started by this MCP session" };
-    return { start: s.start };
+    return { start };
   };
 
   /** Ends the process for an open VM exception window. Returns the final state's name, or undefined when nothing was ended. */
   const end = async (s: ProbeSample, win: WinInfo): Promise<ProcWatchStateName | undefined> => {
     const dialog = { title: win.text, text: dialogText(win) };
-    const check = recheck(s);
+    let check: ReturnType<typeof recheck>;
+    try {
+      check = recheck(s);
+    } catch (e) {
+      // A throw refuses like any other miss: nothing is ended, and the next new sample runs the re-check again.
+      check = { why: `the re-check failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
     if ("why" in check) {
       save("blocked_dialog", { dialog, why: `not ended: ${check.why}` });
       return undefined;
