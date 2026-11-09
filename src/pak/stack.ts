@@ -331,7 +331,12 @@ export function duplicateAddonError(
     for (const root of subdirs(d)) {
       const gproj = findGproj(root);
       if (!gproj || existsSync(join(root, "ServerData.json")) || openedKeys.has(real(root))) continue;
-      const info = readInfo(gproj);
+      let info: Info;
+      try {
+        info = readInfo(gproj);
+      } catch {
+        continue; // an unreadable listed folder (dangling link, no permission) is not this launch's business
+      }
       folders.push({ root, info });
       if (opts.ids?.some((id) => id.toLowerCase() === info.id.toLowerCase())) targets.push(info.guid);
     }

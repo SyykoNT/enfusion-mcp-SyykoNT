@@ -71,6 +71,22 @@ function addon(parent: string, name: string, guid: string, deps: string[] = [], 
   return dir;
 }
 const gprojOf = (dir: string) => join(dir, "addon.gproj");
+/** A listed addon folder whose .gproj is a dangling link, so reading it throws. */
+function brokenAddon(parent: string, name: string): string {
+  const dir = join(parent, name);
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(join(dir, "missing.gproj"), gprojOf(dir), "file");
+  return dir;
+}
+// File links need a privilege on some Windows PCs; without it the dangling-link tests are skipped
+const canLink = (() => {
+  try {
+    brokenAddon(tmp, "probe");
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const G = "AAAAAAAAAAAAAAAA";
 const DEP = "BBBBBBBBBBBBBBBB";
@@ -120,7 +136,7 @@ describe("duplicateAddonError", () => {
       return { projects, gproj: gprojOf(opened) };
     };
 
-    it("the Boat Patrol shape: projects\\CRF opened with -addonsDir projects", () => {
+    it("an addon folder directly inside the listed folder", () => {
       const { projects, gproj } = setup();
       expect(duplicateAddonError([gproj], [projects])).toBeNull();
     });
@@ -203,6 +219,43 @@ describe("duplicateAddonError", () => {
     });
   });
 
+  describe("a listed folder whose .gproj cannot be read is skipped", () => {
+    it.skipIf(!canLink)("a dangling .gproj link", () => {
+      const base = fresh();
+      const projects = join(base, "projects");
+      brokenAddon(projects, "Broken");
+      const opened = addon(projects, "App", G);
+      expect(duplicateAddonError([gprojOf(opened)], [projects])).toBeNull();
+    });
+
+    it("a .gproj with invalid content", () => {
+      const base = fresh();
+      const projects = join(base, "projects");
+      mkdirSync(join(projects, "Junk"), { recursive: true });
+      writeFileSync(join(projects, "Junk", "addon.gproj"), "}{ \0 not a game project");
+      const opened = addon(projects, "App", G);
+      expect(duplicateAddonError([gprojOf(opened)], [projects])).toBeNull();
+    });
+
+    it.skipIf(!canLink)("a second copy of the opened GUID is still refused beside an unreadable folder", () => {
+      const base = fresh();
+      const projects = join(base, "projects"), mission = join(base, "mission");
+      brokenAddon(projects, "Broken");
+      const copy = addon(projects, "Base", G);
+      const opened = addon(mission, "Base", G);
+      const err = duplicateAddonError([gprojOf(opened)], [projects]);
+      expect(err).toContain(G);
+      expect(err).toContain(copy);
+    });
+
+    it.skipIf(!canLink)("an opened addon whose own .gproj cannot be read still throws", () => {
+      const base = fresh();
+      const projects = join(base, "projects");
+      const broken = brokenAddon(projects, "Broken");
+      expect(() => duplicateAddonError([gprojOf(broken)], [projects])).toThrow();
+    });
+  });
+
   it("refuses a packed build of the same GUID in a listed folder", () => {
     const base = fresh();
     const packs = join(base, "packs"), src = join(base, "src");
@@ -255,6 +308,33 @@ describe("wb_launch (launchWorkbench) refuses two copies before writing or start
     expect(existsSync(join(t.mission, "EnfusionMCP"))).toBe(false);
     expect(sys.spawned).toEqual([]);
     expect(sys.detached).toEqual([]);
+  });
+});
+
+describe("an unreadable listed folder does not block a launch", () => {
+  it.skipIf(!canLink)("wb_launch reaches the spawn", async () => {
+    const base = fresh();
+    const projects = join(base, "projects");
+    brokenAddon(projects, "Broken");
+    const opened = addon(projects, "App", G);
+    const config = { projectPath: projects, addonsDir: projects, workbenchPath: join(home, "Tools") } as Config;
+    const client = new WorkbenchClient("127.0.0.1", 1, config);
+    vi.spyOn(client as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockRejectedValueOnce(new Error("refused")).mockResolvedValue({});
+    await client.ensureRunning(gprojOf(opened));
+    expect(sys.spawned.length).toBe(1);
+  });
+
+  it.skipIf(!canLink)("mod compile reaches the compile stub", async () => {
+    const base = fresh();
+    const projects = join(base, "projects");
+    brokenAddon(projects, "Broken");
+    const opened = addon(projects, "App", G);
+    const config = { projectPath: projects, addonsDir: projects, packedPath: join(base, "packed"), gamePath: join(base, "game"), workbenchPath: join(home, "Tools") } as Config;
+    let mod!: (a: Record<string, unknown>) => Promise<Result>;
+    registerMod({ registerTool: (_n: string, _d: unknown, h: typeof mod) => { mod = h; } } as unknown as McpServer, config, {} as SearchEngine, {} as PatternLibrary);
+    const r = await mod({ action: "compile", gprojPath: gprojOf(opened) });
+    expect(r.content[0].text).not.toMatch(/Refused/);
+    expect(cli.compileAddon).toHaveBeenCalled();
   });
 });
 

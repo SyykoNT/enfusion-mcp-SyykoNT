@@ -305,7 +305,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           if (typeof planned === "string") return text(planned, true);
           const dup = duplicateAddonError([planned.gproj], planned.addonsDirs, { ids: planned.addons, via: "addonsDirs" });
           if (dup) return text(dup, true);
-          const cpu =cpuMasks(a.serverCpuMask, a.clientCpuMask);
+          const cpu = cpuMasks(a.serverCpuMask, a.clientCpuMask);
           if (typeof cpu === "string") return text(cpu, true);
           const run: Run = { ...planned, cpu };
           const extraErr = checkExtra(a.extraArgs ?? []);
