@@ -286,6 +286,16 @@ describe("watcher keeps its own lock honest (B-097) and the state after Ignore (
     expect(await run(u, { alive: () => true, wait: () => new Promise((r) => setImmediate(() => { rmSync(gone); r(undefined); })) })).toBe(3);
   });
 
+  it("a lock that cannot be read at exit is left in place and does not change the return code", async () => {
+    const t = setup();
+    const lock = join(t.stateDir, "19524.lock");
+    let n = 0;
+    // The Workbench is gone at the second check; the lock becomes unreadable (a directory stands in for EBUSY/EPERM) just before the exit-time read.
+    const alive = () => { if (++n === 2) { rmSync(lock); mkdirSync(lock); } return n < 2; };
+    expect(await run(t, { alive, wait: () => new Promise((r) => setImmediate(() => r(undefined))) })).toBe(0);
+    expect(existsSync(lock)).toBe(true);
+  });
+
   it("exits with a foreign lock (taken during the last tick): the lock is left; a normal exit deletes its own", async () => {
     const t = setup();
     const lock = join(t.stateDir, "19524.lock");
@@ -294,6 +304,20 @@ describe("watcher keeps its own lock honest (B-097) and the state after Ignore (
     const u = setup();
     expect(await run(u, { alive: () => false })).toBe(0);
     expect(existsSync(join(u.stateDir, "19524.lock"))).toBe(false);
+  });
+
+  it("claimWatch: a lock that cannot be read is held whatever its age; an empty one older than 5 s is stale", () => {
+    const t = setup();
+    const lock = join(t.stateDir, "4242.lock");
+    mkdirSync(lock); // EISDIR on read, standing in for EBUSY/EPERM
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    expect(claimWatch(t.stateDir, 4242, () => false)).toEqual({ ok: false, by: 0 });
+    expect(existsSync(lock)).toBe(true);
+    rmSync(lock, { recursive: true });
+    writeFileSync(lock, "");
+    utimesSync(lock, old, old);
+    expect(claimWatch(t.stateDir, 4242, () => false)).toEqual({ ok: true });
   });
 
   it("an empty lock (a claim being written) logs 'already watched (lock being written)', not 'watcher PID 0'", async () => {

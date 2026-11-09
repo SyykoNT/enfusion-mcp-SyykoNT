@@ -256,9 +256,6 @@ export class WorkbenchClient {
         }
         // Only wb_launch starts Workbench (D-025): a shared PC may have someone else's session waiting on it.
         if (err.code === "CONNECTION_REFUSED") {
-          // Workbench is gone: a restarted one must be checked at once, not after the pause set for the old one.
-          this.watchQuietUntil = 0;
-          this.watchLast = "";
           throw new WorkbenchError(
             `Workbench is not running on ${this.endpoint}. Tools do not start Workbench; start it with ` +
               `wb_launch after checking that nobody else is using Workbench.`,
@@ -1084,6 +1081,9 @@ export class WorkbenchClient {
         cleanup();
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "ECONNREFUSED") {
+          // Workbench is gone (on every path, not only call): a restarted one must be checked at once, not after the pause set for the old one.
+          this.watchQuietUntil = 0;
+          this.watchLast = "";
           reject(
             new WorkbenchError(
               `Cannot connect to Workbench at ${this.host}:${this.port}.`,

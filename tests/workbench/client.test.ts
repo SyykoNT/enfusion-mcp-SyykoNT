@@ -546,6 +546,17 @@ describe("automatic watch check (B-093)", () => {
     expect(check).toHaveBeenCalledTimes(2);
   });
 
+  it("a refused path that does not go through call() (probeMode) also ends the pause", async () => {
+    const c = new WorkbenchClient("127.0.0.1", 1, AUTO);
+    const check = vi.fn(attached);
+    c.watchCheck = check;
+    await c.probeMode();
+    await flush();
+    expect(check).toHaveBeenCalledOnce();
+    await c.probeMode();
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+
   it("a watcher that never claims the lock is started once, not on every call within 60 s", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(T);

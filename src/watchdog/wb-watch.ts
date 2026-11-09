@@ -378,9 +378,18 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
   };
 }
 
+/** The lock's text, "" when it is gone, null when it exists but cannot be read (EBUSY/EPERM from a scanner): that is held, not stale. */
+const lockText = (p: string) => {
+  try {
+    return readFileSync(p, "utf-8");
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? "" : null;
+  }
+};
+
 /**
  * One watcher per PID: `<pid>.lock` holds the watcher's PID. A lock whose watcher is dead (or names this very process, a reused PID) is taken over.
- * An empty or unparsable lock is a claim in progress while it is under 5 s old. `self` is for tests.
+ * An empty or unparsable lock is a claim in progress while it is under 5 s old; a lock that cannot be read is held. `self` is for tests.
  */
 export function claimWatch(dir: string, pid: number, alive = isAlive, self = process.pid): { ok: true } | { ok: false; by: number } {
   const file = join(dir, `${pid}.lock`);
@@ -394,7 +403,9 @@ export function claimWatch(dir: string, pid: number, alive = isAlive, self = pro
       return last === self ? { ok: true } : { ok: false, by: last };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const by = Number(readText(file)) || 0;
+      const text = lockText(file);
+      if (text === null) return { ok: false, by: 0 }; // unreadable: held, whatever its age
+      const by = Number(text) || 0;
       if (by && by !== self && alive(by)) return { ok: false, by };
       let age = Infinity;
       try {
@@ -404,7 +415,9 @@ export function claimWatch(dir: string, pid: number, alive = isAlive, self = pro
       }
       if (!by && age < 5_000) return { ok: false, by: 0 };
       // Compare-and-delete: a rival may have replaced the stale lock while it was checked.
-      if ((Number(readText(file)) || 0) !== by) continue;
+      const now = lockText(file);
+      if (now === null) return { ok: false, by: 0 };
+      if ((Number(now) || 0) !== by) continue;
       rmSync(file, { force: true });
     }
   }
@@ -518,7 +531,8 @@ export async function runWatcher(
     }
   } finally {
     probe.stop();
-    if (holdsLock()) rmSync(lockFile, { force: true });
+    // Strict: delete only a lock that was read and names this process (a read error here must not remove a rival's lock or throw).
+    if (Number(readText(lockFile)) === process.pid) rmSync(lockFile, { force: true });
   }
 }
 

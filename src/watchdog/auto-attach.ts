@@ -28,7 +28,7 @@ export interface AttachDeps {
   settleMs?: number;
 }
 
-/** ok: no recheck for 60 s (attached, already watched, a watcher was just started, or a result that will not change: unreadable holder, stopped by the user, not a Workbench). text: one line for a timeout reply. */
+/** ok: no recheck for 60 s (attached, already watched, a watcher was just started, or a result that will not change: a live holder with an empty command line, stopped by the user, not a Workbench); a failed process query is not ok and is checked again. text: one line for a timeout reply. */
 export interface AttachResult {
   ok: boolean;
   text: string;
