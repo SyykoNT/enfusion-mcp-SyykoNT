@@ -141,7 +141,7 @@ export function registerWbLaunch(
         "Close a Workbench this MCP session started (recorded at launch); any other Workbench is refused and left running. " +
         "By default saves the open world first and exits cleanly through the NET API (skipped while another Workbench runs, " +
         "because that one may own the NET API port); force=true kills the owned process if it does not exit. " +
-        "With save=false it refuses, without closing, a world with unsaved changes (local Workbench on Windows only), because Workbench would ask to save and that dialog blocks every MCP call.",
+        "Unless force=true, a close that does not save first (save=false, or another Workbench running) refuses, without closing, a world with unsaved changes (local Workbench on Windows only), because Workbench would ask to save and that dialog blocks every MCP call.",
       inputSchema: {
         save: z.boolean().default(true).describe("Save the open world before exiting (default true)"),
         force: z.boolean().default(false).describe("Kill the process if it does not exit on its own (unsaved work is lost)"),
@@ -161,8 +161,11 @@ export function registerWbLaunch(
       if (!owned.length) {
         return { content: [{ type: "text" as const, text: `**Not closed.**${untouched}` }], isError: true };
       }
-      // Only a close that discards the world can raise Workbench's save prompt; the default saves first.
-      const guard = save === false ? await client.checkUnsaved("Closing Workbench", "save-changes prompt") : undefined;
+      // Only a close that does not save first can raise Workbench's save prompt (save=false, or the NET API exit skipped for another Workbench); force documents that unsaved work is lost.
+      // With another Workbench running, only a port owner that is ours can be judged.
+      const guard = !force && (save === false || others.length)
+        ? await client.checkUnsaved("Closing Workbench", "save-changes prompt", undefined, others.length ? owned : undefined)
+        : undefined;
       if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
       const alive = () => findPids(image).filter((pid) => owned.includes(pid));
       const notes: string[] = guard ? [guard.warn] : [];

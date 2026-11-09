@@ -7,9 +7,10 @@ import { WorkbenchClient } from "../../src/workbench/client.js";
 import type { TitleProbe } from "../../src/watchdog/probe.js";
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
 import { registerWbLayers } from "../../src/tools/wb-layers.js";
+import { registerWbResources } from "../../src/tools/wb-resources.js";
 import type { Config } from "../../src/config.js";
 
-// A layer the MCP creates does not put * in the World Editor title, so the client remembers it until wb_save writes files.
+// A layer the MCP creates does not put * in the World Editor title, so the client remembers it until a wb_save call succeeds.
 // Nothing here runs netstat or PowerShell or reads a window: worldProbe and rawCall are stubbed on every client.
 
 type Result = { content: { text: string }[]; isError?: boolean };
@@ -28,7 +29,8 @@ const OPEN_PATH = "Worlds/Other.ent";
 const tail = (doing: string, prompt: string) =>
   `${doing} now would show Workbench's ${prompt}, which blocks every MCP call until a person answers it. Run wb_save first, or save or discard the changes in Workbench, then try again.`;
 const markRefusal = (doing: string, prompt: string) =>
-  `Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world has unsaved changes. ${tail(doing, prompt)}`;
+  `Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world may have unsaved changes. ` +
+  `${doing} now would show Workbench's ${prompt}, which blocks every MCP call until a person answers it. Run wb_save, even if you already saved the world in Workbench, then try again.`;
 const OPEN_MARK = markRefusal(`Opening ${OPEN_PATH}`, '"Loading world" save prompt');
 const PLAY_MARK = markRefusal("Starting play", '"World needs to be saved" prompt');
 const PLAY_WARN = (why: string) =>
@@ -40,7 +42,9 @@ function setup(host = "127.0.0.1") {
     wins: [CLEAN] as { cls: string; text: string }[],
     titles: undefined as undefined | (() => Promise<TitleProbe>),
     saveWrites: true,
+    saveFails: false,
     openFails: false,
+    resourcesOpenMessage: "done",
   };
   const client = new WorkbenchClient(host, PORT);
   const netstat = vi.fn(() => env.netstat());
@@ -53,21 +57,25 @@ function setup(host = "127.0.0.1") {
     if (f === "EMCP_WB_GetState") return { status: "ok", mode: "edit" };
     if (p.action === "worldInfo") return { status: "ok", worldPath: "$T:W.ent", absPath: WORLD };
     if (p.action === "save") {
+      if (env.saveFails) return { status: "error", message: "save refused by the handler" };
       if (env.saveWrites) writeFileSync(WORLD, `saved ${++n}`);
       return { status: "ok", saved: false }; // 1.9.0.37 returns false even when it writes
     }
     if (f === "EMCP_WB_Layers") return { status: "ok", layerPath: "L1", activeLayer: "default" };
     if (p.action === "openResource" && env.openFails) return { status: "error", message: "Workbench could not open" };
+    if (f === "EMCP_WB_Resources") return { status: "ok", message: env.resourcesOpenMessage };
     return { status: "ok", message: "done" };
   });
   const tools: Record<string, Handler> = {};
   const server = { registerTool: (name: string, _d: unknown, h: Handler) => (tools[name] = h) } as unknown as McpServer;
   registerWbEditorTools(server, client, {} as Config);
   registerWbLayers(server, client);
+  registerWbResources(server, client);
   return {
     env, netstat, titles, sent,
     layer: () => tools.wb_layers({ action: "create", name: "L1" }),
     open: () => tools.wb_open_resource({ path: OPEN_PATH }),
+    resOpen: () => tools.wb_resources({ action: "open", path: OPEN_PATH }),
     save: () => tools.wb_save({}),
     play: () => tools.wb_play({}),
     opens: () => sent.filter((s) => s.endsWith(":openResource")).length,
@@ -97,16 +105,41 @@ describe("a layer created by the MCP counts as unsaved", () => {
     expect(s.opens()).toBe(1);
   });
 
-  it("a wb_save that wrote no file keeps the mark", async () => {
+  it("a wb_save that wrote no file (the world was saved by hand) clears the mark too", async () => {
     const s = setup();
     await s.layer();
     s.env.saveWrites = false;
     const saved = await s.save();
     expect(saved.content[0].text).toContain("no file changed");
     const r = await s.open();
+    expect(r.isError).toBeUndefined();
+    expect(s.opens()).toBe(1);
+  });
+
+  it("a wb_save call that errors keeps the mark", async () => {
+    const s = setup();
+    await s.layer();
+    s.env.saveFails = true;
+    expect((await s.save()).isError).toBe(true);
+    const r = await s.open();
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toBe(OPEN_MARK);
     expect(s.opens()).toBe(0);
+  });
+
+  it("a wb_resources open that answers ok but opened nothing keeps the mark", async () => {
+    const s = setup();
+    await s.layer();
+    s.env.netstat = async () => ""; // cannot tell: the open is sent
+    s.env.resourcesOpenMessage = "SetOpenedResource returned false for: Worlds/Other.ent";
+    expect((await s.resOpen()).isError).toBe(true);
+    s.env.netstat = async () => listening(4242);
+    expect((await s.play()).content[0].text).toContain(PLAY_MARK);
+    s.env.resourcesOpenMessage = "Opened";
+    s.env.netstat = async () => "";
+    expect((await s.resOpen()).isError).toBeUndefined();
+    s.env.netstat = async () => listening(4242);
+    expect((await s.play()).isError).toBeUndefined();
   });
 
   it("a successful .ent open clears the mark; a failed one does not", async () => {

@@ -191,6 +191,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         return reply(`Error saving: ${msg}. ${so}`, true);
       }
 
+      client.clearLayerMark(); // the call ran: a pending layer is written by it, and a hand-saved world has nothing left to write
       const w = await written();
       const saved = result.saved === true;
       if (!w.files.length) {
@@ -198,7 +199,6 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
           ? reply(`Save() returned true but no file under ${folder} changed. Check terrain files and the world path.`, true)
           : reply("Save() returned false and no file changed. Workbench may have had nothing to save (unverified meaning of false).");
       }
-      client.clearLayerMark();
       return reply(
         `**World saved**\nWorld: ${worldPath}\n` +
           `Written (${w.files.length}) under ${folder}: ${w.files.join(", ")}\n` +
@@ -254,7 +254,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
         "Open a resource file in the appropriate Workbench editor (e.g., a .et prefab in the Prefab Editor, a .c script in the Script Editor). " +
         "Opening a world (.ent) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it. " +
         "The tool refuses a world open when the World Editor title shows unsaved changes (local Workbench on Windows only) and opens with a warning when it cannot check. " +
-        "A layer this MCP created with wb_layers counts as unsaved until wb_save writes files. " +
+        "A layer this MCP created with wb_layers counts as unsaved until wb_save runs. " +
         "Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
         path: z

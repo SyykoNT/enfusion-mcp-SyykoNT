@@ -30,7 +30,12 @@ const { WorkbenchClient } = await import("../../src/workbench/client.js");
 const { loadConfig } = await import("../../src/config.js");
 
 type Result = { content: { text: string }[]; isError?: boolean };
-function wbClose(client = new WorkbenchClient("127.0.0.1", 1)): (a: Record<string, unknown>) => Promise<Result> {
+// wb_close may check for unsaved changes: a client without a stubbed probe would run netstat for real.
+const stubbed = (c: InstanceType<typeof WorkbenchClient>) => {
+  c.worldProbe = { netstat: async () => "", titles: async () => ({ unavailable: "not reached" }) };
+  return c;
+};
+function wbClose(client = stubbed(new WorkbenchClient("127.0.0.1", 1))): (a: Record<string, unknown>) => Promise<Result> {
   const tools: Record<string, (a: Record<string, unknown>) => Promise<Result>> = {};
   const fake = { registerTool: (name: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<Result>) => { tools[name] = h; } };
   registerWbLaunch(fake as unknown as McpServer, loadConfig(), client);
@@ -89,6 +94,9 @@ describe.runIf(process.platform === "win32")("wb_close without saving checks for
   const tail =
     "Closing Workbench now would show Workbench's save-changes prompt, which blocks every MCP call until a person answers it. " +
     "Run wb_save first, or save or discard the changes in Workbench, then try again.";
+  const markTail =
+    "Closing Workbench now would show Workbench's save-changes prompt, which blocks every MCP call until a person answers it. " +
+    "Run wb_save, even if you already saved the world in Workbench, then try again.";
 
   function setup(netstat: () => Promise<string>, wins: { cls: string; text: string }[]) {
     const client = new WorkbenchClient("127.0.0.1", 1);
@@ -118,7 +126,7 @@ describe.runIf(process.platform === "win32")("wb_close without saving checks for
     const r = await s.close({ save: false, force: false });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toBe(
-      `Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world has unsaved changes. ${tail}`
+      `Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world may have unsaved changes. ${markTail}`
     );
     expect(s.call).not.toHaveBeenCalled();
     expect(s.titles).not.toHaveBeenCalled();
@@ -161,5 +169,50 @@ describe.runIf(process.platform === "win32")("wb_close without saving checks for
     const r = await s.close({ save: false, force: false });
     expect(r.content[0].text).toContain("**Not closed.**");
     expect(s.net).not.toHaveBeenCalled();
+  });
+
+  it("save=false with force=true is not refused: force documents that unsaved work is lost", async () => {
+    const s = setup(async () => LISTENING, [DIRTY]);
+    await s.client.markLayerCreated();
+    s.net.mockClear();
+    const r = await s.close({ save: false, force: true });
+    expect(r.isError).toBeUndefined();
+    expect(s.net).not.toHaveBeenCalled();
+    expect(s.call).toHaveBeenCalledWith("EMCP_WB_Exit", { save: false }, { timeout: 20_000 });
+  });
+
+  describe("with another Workbench running", () => {
+    const withOther = (netstat: () => Promise<string>, wins: { cls: string; text: string }[]) => {
+      const s = setup(netstat, wins);
+      sys.alive = new Set([500, 600]); // 600 is the user's own Workbench
+      return s;
+    };
+
+    it("an unsaved world owned by our Workbench is refused even with the default save, and nothing is killed", async () => {
+      const s = withOther(async () => LISTENING, [DIRTY]); // port owner 500 is ours
+      const r = await s.close({ save: true, force: false });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain("has unsaved changes");
+      expect(s.call).not.toHaveBeenCalled();
+      expect(sys.taskkill).toEqual([]);
+    });
+
+    it("a clean world owned by our Workbench closes by window close, with no warning", async () => {
+      const s = withOther(async () => LISTENING, [CLEAN]);
+      const r = await s.close({ save: true, force: false });
+      expect(r.isError).toBeUndefined();
+      expect(r.content[0].text).not.toContain("Could not check");
+      expect(killed()).toEqual([500]);
+    });
+
+    it("a port owner that is not ours is not judged: it closes and adds one cannot-tell line", async () => {
+      const s = withOther(async () => LISTENING.replace("500", "600"), [DIRTY]);
+      const r = await s.close({ save: false, force: false });
+      expect(r.isError).toBeUndefined();
+      expect(s.titles).not.toHaveBeenCalled();
+      expect(r.content[0].text.split("Could not check for unsaved changes").length).toBe(2);
+      expect(r.content[0].text).toContain("(another Workbench runs and may own the NET API port)");
+      expect(killed()).toEqual([500]);
+    });
   });
 });

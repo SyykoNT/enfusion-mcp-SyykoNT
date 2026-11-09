@@ -16,7 +16,7 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
       description:
         "Manage layers in the World Editor. create makes a top-level layer in the sub-scene being edited (nested layers made " +
         "through the script API are not saved, so they are not offered); " +
-        "it is written to disk on the next wb_save, and until then wb_play, a world open and wb_close with save=false are refused as unsaved. setActive sets the layer new entities go to and confirms it by reading it back. " +
+        "it is written to disk on the next wb_save, and until a wb_save runs, wb_play, a world open and a wb_close that does not save are refused as unsaved. setActive sets the layer new entities go to and confirms it by reading it back. " +
         "getActive reports the current sub-scene and its active layer. Also list, isVisible, getInfo and toggleLock (layer IDs). " +
         "create, setActive and toggleLock only work in edit mode.",
       inputSchema: {

@@ -171,7 +171,7 @@ describe("unsaved-world guard on a .ent open", () => {
     const server = { registerTool: (n: string, d: { description: string }) => n === "wb_open_resource" && (description = d.description) } as unknown as McpServer;
     registerWbEditorTools(server, new WorkbenchClient("127.0.0.1", PORT), {} as Config);
     expect(description).toContain("refuses a world open when the World Editor title shows unsaved changes");
-    expect(description).toContain("A layer this MCP created with wb_layers counts as unsaved until wb_save writes files");
+    expect(description).toContain("A layer this MCP created with wb_layers counts as unsaved until wb_save runs");
     expect(description).not.toContain("is not detected");
     expect(description).not.toContain("cannot tell whether the world has unsaved changes");
   });
