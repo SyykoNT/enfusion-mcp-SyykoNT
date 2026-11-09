@@ -149,6 +149,25 @@ describe("tuner.html while a write is in flight", () => {
     expect(editedRow.classList.remove).toHaveBeenCalledWith("edited");
   });
 
+  it("keeps the warn banner after a failed reload while the polls see only that write, and goes back to normal on a later change", async () => {
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    let mtime = 2, reloads = 0;
+    const page = afterWrite(() => (reloads++ === 0 ? Promise.reject(new Error("down")) : Promise.resolve(json({ status: "ok", mtimeMs: mtime, fields: {} }))), { message: "Saved ok", workbench: "Workbench not notified (x)" });
+    await page.done;
+    const banner = page.el("banner");
+    expect(banner.className).toBe("banner warn");
+    // The file now carries the write's mtime (2); neither the first poll that sees it nor the second may swap the banner
+    for (let i = 0; i < 2; i++) { await page.run("pollForChanges()"); await tick(); }
+    expect(banner.className).toBe("banner warn");
+    expect(banner.textContent).toContain("Workbench not notified (x)");
+    // A real later change on disk reloads as before
+    mtime = 3;
+    await page.run("pollForChanges()");
+    await tick();
+    expect(banner.className).toBe("banner ok");
+    expect(banner.textContent).toContain("Loaded");
+  });
+
   describe("a failed load shows a warn banner instead of an unhandled rejection", () => {
     // Macrotask waits: a rejection that nobody awaits only surfaces after the microtask queue drains.
     const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -209,12 +228,16 @@ describe("tuner.html while a write is in flight", () => {
 });
 
 describe("tuner.html number boxes", () => {
-  /** Types `text` into the number box of the edited row. */
-  const type = (text: string) => {
+  /** A page plus a function that types `text` into the number box of the edited row. */
+  const open = () => {
     const page = loadPage(() => Promise.resolve(json({ status: "ok", mtimeMs: 1, fields: {} })));
     page.el("banner").textContent = "";
     const sr = { dataset: { id: "engine.MaxPower" }, querySelectorAll: () => [{ min: "0", max: "10", value: "" }, { value: "" }], classList: { toggle: () => {} } };
-    page.fire("input", { target: { dataset: {}, value: text, closest: () => sr } });
+    return { page, enter: (text: string) => page.fire("input", { target: { dataset: {}, value: text, closest: () => sr } }) };
+  };
+  const type = (text: string) => {
+    const { page, enter } = open();
+    enter(text);
     return page;
   };
 
@@ -222,11 +245,55 @@ describe("tuner.html number boxes", () => {
     const page = type("123456789012345678901");
     expect(page.el("banner").className).toBe("banner warn");
     expect(page.el("banner").textContent).toContain("123456789012345678901 cannot be stored exactly");
+    expect(page.el("banner").textContent).toContain("written as 123456789012345680000.");
     expect(page.run('rows.get("engine.MaxPower").value')).toBe(123456789012345680000);
   });
 
   it.each(["1.50", "0.1", "-2.5e3", "007", "0", "0.000", "1e-7", "123456789012345", "9007199254740991"])("stays quiet for %s", (text) => {
     expect(type(text).el("banner").textContent).toBe("");
+  });
+
+  it("writes tiny and huge values as plain decimals in the warning", () => {
+    expect(type("0.12345678901234567890123").el("banner").textContent).toContain("written as 0.12345678901234568.");
+    // JavaScript prints these two as 1.2345678901234568e+21 and 1.2345678901234568e-7; the file gets plain decimals
+    expect(type("1234567890123456789012").el("banner").textContent).toContain("written as 1234567890123456800000.");
+    expect(type("1.23456789012345678e-7").el("banner").textContent).toContain("written as 0.00000012345678901234568.");
+  });
+
+  // 17-digit shortest forms between 1e11 and 1e15 ending in a tie: toString and toPrecision(17) rounded them differently, which warned although they round-trip.
+  it.each(["1600559752013866.2", "846587145912647.2", "591584520101547.2", "672029393815994.2"])("stays quiet for the 17-digit value %s", (text) => {
+    expect(type(text).el("banner").textContent).toBe("");
+  });
+
+  it("never warns for the shortest text of a double", () => {
+    const { page } = open();
+    let seed = 1;
+    for (let i = 0; i < 3000; i++) {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      const v = 1e11 + (seed / 2147483648) * 9.99e14 / (i % 3 + 1); // mostly the 1e11 to 1e15 range, where the tie cases lived
+      expect(page.run(`exact("${String(v)}", ${v})`), String(v)).toBe(true);
+    }
+  });
+
+  it("clears the warning when the next entry round-trips, but not another banner", () => {
+    const { page, enter } = open();
+    enter("123456789012345678901");
+    expect(page.el("banner").className).toBe("banner warn");
+    enter("1500");
+    expect(page.el("banner").textContent).toBe("");
+    expect(page.el("banner").className).not.toContain("warn");
+    // Another banner on screen stays when an exact value is typed
+    page.run('showBanner("err", "something else")');
+    enter("1501");
+    expect(page.el("banner").textContent).toBe("something else");
+  });
+
+  it("forgets the warning when the vehicle is reloaded", async () => {
+    const { page, enter } = open();
+    enter("123456789012345678901");
+    await page.run('loadVehicle("Prefabs/Vehicles/X.et")');
+    expect(page.el("banner").textContent).toContain("Loaded");
+    expect(page.run("typedWarn")).toBe(null);
   });
 
   it.each(["9007199254740993", "0.12345678901234567890123", "1.00000000000000000001", "1e-400"])("warns for %s", (text) => {

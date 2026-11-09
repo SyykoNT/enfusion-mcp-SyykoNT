@@ -101,6 +101,8 @@ let cur = null;          // { rel, body } of the loaded vehicle
 let lastMtime = null;
 let deepLinkMiss = null;
 let writing = false;     // a POST is in flight: Apply stays disabled and the poll stays quiet
+let unseenWrite = false; // a write succeeded but its reload failed: the next new mtime is that write, not a change by someone else
+let typedWarn = null;    // text of the round-trip warning on the banner, so a later exact entry can clear it
 /** Every editable value on the page: id -> { target, loaded, value, touched }. */
 let rows = new Map();
 
@@ -437,12 +439,18 @@ function digitsOf(s) {
   return d ? d + "e" + (Number(m[3] || 0) + m[1].length - lead) : "0";
 }
 
-/** True when v, stored the way JavaScript does, still reads as the text that was typed. */
+/** The text the server writes for n: plain decimal, no exponent (same digits as et-write.ts formatNumber). */
+function formatNumber(n) {
+  const m = /^(-?)(\d)(?:\.(\d+))?e([+-]\d+)$/.exec(String(n));
+  if (!m) return String(n);
+  const [, sign, int, frac = "", exp] = m;
+  return Number(exp) < 0 ? `${sign}0.${"0".repeat(-Number(exp) - 1)}${int}${frac}` : `${sign}${int}${frac}${"0".repeat(Number(exp) - frac.length)}`;
+}
+
+/** True when the text that will be written for v reads as the same number as the text that was typed. */
 function exact(text, v) {
   const d = digitsOf(text);
-  if (d === null || d === "0") return true;
-  const n = d.indexOf("e");
-  return n <= 100 && digitsOf(v.toPrecision(n)) === d;
+  return d === null || d === "0" || digitsOf(formatNumber(v)) === d;
 }
 
 document.addEventListener("input", (e) => {
@@ -461,7 +469,10 @@ document.addEventListener("input", (e) => {
   if (!sr) return;
   const v = parseFloat(t.value);
   if (!Number.isFinite(v)) return;
-  if (!exact(t.value, v)) showBanner("warn", `${t.value} cannot be stored exactly; it will be written as ${v}.`);
+  const warn = exact(t.value, v) ? null : `${t.value} cannot be stored exactly; it will be written as ${formatNumber(v)}.`;
+  if (warn) showBanner("warn", warn);
+  else if (typedWarn && $("banner").textContent === typedWarn) showBanner("", "");
+  typedWarn = warn;
   setRow(sr, v, true);
   refreshWriteState();
   redraw();
@@ -516,6 +527,8 @@ async function loadVehicle(rel, manual) {
   }
   cur = { rel, body };
   lastMtime = body.mtimeMs;
+  unseenWrite = false;
+  typedWarn = null;
   rows = new Map();
   const ch = body.chassis || {};
   renderTyre(ch.tyreModel);
@@ -549,6 +562,11 @@ async function pollForChanges() {
     const body = await (await fetch(apiUrl(cur.rel))).json();
     // A write that began during the fetch changes the file itself; writeChanges reloads it afterwards.
     if (writing || body.status !== "ok" || body.mtimeMs === lastMtime) return;
+    if (unseenWrite) { // our own write: keep its banner
+      unseenWrite = false;
+      lastMtime = body.mtimeMs;
+      return;
+    }
     const pending = changedRows().length;
     if (pending) {
       lastMtime = body.mtimeMs;
@@ -586,6 +604,7 @@ async function writeChanges() {
     if (!(await tryLoad(cur.rel))) {
       // The file is written, so the edits are no longer unsaved even though the page could not show it.
       for (const r of changedRows()) r.loaded = r.value;
+      unseenWrite = true;
       for (const e of document.querySelectorAll(".sr.edited")) e.classList.remove("edited");
       showBanner("warn", `${wrote}, but the page could not reload the values. Reload the page.${tail}`);
       return;
