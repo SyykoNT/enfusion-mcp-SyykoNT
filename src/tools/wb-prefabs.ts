@@ -13,7 +13,7 @@ const MUTATING_PREFAB_ACTIONS = new Set(["createTemplate", "save"]);
  * projectPath "$MyAddon:Prefabs" (addon form inferred, not run live).
  * Returns undefined when the folder is a data root ("", "/", ".", "..", "...", "$Addon:", "$Addon:.", "$:"), an unprefixed single segment, or not a virtual
  * game path: control or format characters, a colon anywhere but the "$Addon:" prefix ("C:", "/C:/x", "D:Prefabs/X") or UNC input ("//server/share") are refused instead of being rewritten.
- * The optional "$Addon:" prefix is split off first so that it cannot hide a root behind it.
+ * The optional "$Addon:" prefix is split off first so that it cannot hide a root behind it; a blank or dot-only addon name ("$..:X") is refused too.
  */
 export function locateRequest(searchPath: string) {
   const input = searchPath.trim();
@@ -22,7 +22,7 @@ export function locateRequest(searchPath: string) {
   if (prefix && !prefix.startsWith("$")) return undefined;
   const segs = rest.replace(/\\/g, "/").split("/").map((x) => x.trim()).filter((x) => x && x !== ".");
   const addon = prefix.startsWith("$") ? prefix.slice(1, -1).trim() : undefined;
-  if (!segs.length || segs.some((x) => /^[.\s]+$|:/.test(x)) || addon === "" || (addon === undefined && segs.length < 2)) return undefined;
+  if (!segs.length || segs.some((x) => /^[.\s]+$|:/.test(x)) || (addon !== undefined && /^[.\s]*$/.test(addon)) || (addon === undefined && segs.length < 2)) return undefined;
   return {
     selectedProject: addon || "ArmaReforger",
     projectPath: prefix + segs[0],

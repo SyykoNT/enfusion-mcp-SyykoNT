@@ -55,12 +55,24 @@ describe("wb_prefabs locate", () => {
     expect(calls).toEqual([{ f: "LocatePrefabsFromPath", p: { selectedProject: "MyAddon", projectPath: "$MyAddon:Prefabs", selectedFolder: "$MyAddon:Prefabs/Props" } }]);
   });
 
-  it.each(["", "   ", "/", "\\", ".", "./", "..", "Prefabs/../..", "$MyAddon:", "$MyAddon:/", "C:", "C:/", "$ArmaReforger:.", "$ArmaReforger:./", "$MyAddon:..", "C:.", "/ /", "$:", "$:Prefabs/X", "$ :", "$MyAddon:/ . /", "$MyAddon:Prefabs/ .. ", "Prefabs", "Prefabs/", " Prefabs ", "C:Prefabs", "...", ". .", "Prefabs/...", "$ArmaReforger:...", "$ArmaReforger:. .", "$MyAddon:\u0000", "\u0000/\u0000", "\u0001/\u0001", "$ArmaReforger:\u200b", "\u200b/\u200b", "Prefabs/Weapons/\u200b", "D:Prefabs/X", "C:/Windows/System32", "C:\\Windows\\System32", "//server/share", "\\\\server\\share", "/C:/Windows/System32", "\\C:\\Windows\\System32", "./C:/Windows", " /C:/Users/x", "/D:Prefabs/X", "$MyAddon:C:/Windows", "Prefabs/C:/Windows", "/$MyAddon:/Prefabs"])("refuses %j before any NET API call", async (p) => {
+  it.each(["", "   ", "/", "\\", ".", "./", "..", "Prefabs/../..", "$MyAddon:", "$MyAddon:/", "C:", "C:/", "$ArmaReforger:.", "$ArmaReforger:./", "$MyAddon:..", "C:.", "/ /", "$:", "$:Prefabs/X", "$ :", "$MyAddon:/ . /", "$MyAddon:Prefabs/ .. ", "Prefabs", "Prefabs/", " Prefabs ", "C:Prefabs", "...", ". .", "Prefabs/...", "$ArmaReforger:...", "$ArmaReforger:. .", "$MyAddon:\u0000", "\u0000/\u0000", "\u0001/\u0001", "$ArmaReforger:\u200b", "\u200b/\u200b", "Prefabs/Weapons/\u200b", "D:Prefabs/X", "C:/Windows/System32", "C:\\Windows\\System32", "//server/share", "\\\\server\\share", "/C:/Windows/System32", "\\C:\\Windows\\System32", "./C:/Windows", " /C:/Users/x", "/D:Prefabs/X", "$MyAddon:C:/Windows", "Prefabs/C:/Windows", "/$MyAddon:/Prefabs", "$..:Prefabs/X", "$...:Prefabs/X", "$. .:Prefabs/X", "$.:Prefabs/X"])("refuses %j before any NET API call", async (p) => {
     expect(locateRequest(p)).toBeUndefined();
     const { calls, r } = await locate(p);
     expect(r.isError).toBe(true);
     expect(calls).toEqual([]);
     if (p.trim()) expect(r.content[0].text).toContain(`"${p}"`);
+  });
+
+  it.each([
+    ["Prefabs/Weapons/Rifles", "ArmaReforger", "Prefabs", "Prefabs/Weapons/Rifles"],
+    [" Prefabs\\Weapons\\Rifles\\ ", "ArmaReforger", "Prefabs", "Prefabs/Weapons/Rifles"],
+    ["./Prefabs//Weapons/./Rifles/.", "ArmaReforger", "Prefabs", "Prefabs/Weapons/Rifles"],
+    ["Prefabs/a.b/..x", "ArmaReforger", "Prefabs", "Prefabs/a.b/..x"],
+    ["$ArmaReforger:Prefabs/Weapons", "ArmaReforger", "$ArmaReforger:Prefabs", "$ArmaReforger:Prefabs/Weapons"],
+    ["$My Addon:Prefabs/Props", "My Addon", "$My Addon:Prefabs", "$My Addon:Prefabs/Props"],
+    ["$MyAddon.v2:Prefabs", "MyAddon.v2", "$MyAddon.v2:Prefabs", "$MyAddon.v2:Prefabs"],
+  ])("keeps %j", (p, selectedProject, projectPath, selectedFolder) => {
+    expect(locateRequest(p)).toEqual({ selectedProject, projectPath, selectedFolder });
   });
 
   it("allows a single segment under an addon prefix", async () => {
