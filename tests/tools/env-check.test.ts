@@ -110,4 +110,15 @@ describe("env_check", () => {
     const refused = (await register({ ...base, crashLogsDir: bad } as Config).h()).content[0].text;
     expect(refused).toContain(`❌ Crash logs folder: ENFUSION_CRASH_LOGS_DIR (crashLogsDir) "${bad}" is refused, it is inside ${join(root, "game")}; using ${fallback}`);
   });
+
+  it("says a refused crash logs setting cannot be read, not that it is inside itself, and that the default is used", async () => {
+    const root = mkdtempSync(join(tmpdir(), "emcp-env-"));
+    mkdirSync(join(root, "game"));
+    mkdirSync(join(root, "Workbench", "logs"), { recursive: true });
+    process.env.ENFUSION_WORKBENCH_PROFILE = join(root, "Workbench");
+    const bad = join(root, "bad\0folder"); // a path whose real path cannot be read
+    const text = (await register({ gamePath: join(root, "game"), workbenchPath: join(root, "tools"), serverPath: join(root, "server"), steamcmdPath: join(root, "sc"), projectPath: join(root, "projects"), packedPath: join(root, "packed"), serverProfilePath: join(root, "sp"), workbenchHost: "127.0.0.1", workbenchPort: 5775, crashLogsDir: bad } as Config).h()).content[0].text;
+    expect(text).toContain(`❌ Crash logs folder: ENFUSION_CRASH_LOGS_DIR (crashLogsDir) "${bad}" is refused, it cannot be read (missing drive or no access); using the default ${join(root, "Workbench Crash Logs")}`);
+    expect(text).not.toContain("is inside");
+  });
 });

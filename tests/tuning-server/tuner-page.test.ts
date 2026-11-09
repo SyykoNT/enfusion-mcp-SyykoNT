@@ -168,6 +168,24 @@ describe("tuner.html while a write is in flight", () => {
     expect(banner.textContent).toContain("Loaded");
   });
 
+  it("does not swallow the next change when the reload read the write's mtime and then failed while drawing", async () => {
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    let mtime = 2;
+    const page = afterWrite(() => Promise.resolve(json({ status: "ok", mtimeMs: mtime, fields: {} })), { message: "Saved ok" });
+    page.run("{ let n = 0; const draw = renderTyre; renderTyre = (t) => { if (n++ === 0) throw new Error('draw'); return draw(t); }; }");
+    await page.done;
+    const banner = page.el("banner");
+    expect(banner.className).toBe("banner warn");
+    expect(banner.textContent).toContain("could not reload");
+    expect(page.run("lastMtime")).toBe(2); // the failed load had already taken the write's mtime
+    expect(page.run("unseenWrite")).toBe(false);
+    mtime = 3;
+    await page.run("pollForChanges()");
+    await tick();
+    expect(banner.className).toBe("banner ok");
+    expect(banner.textContent).toContain("Loaded");
+  });
+
   describe("a failed load shows a warn banner instead of an unhandled rejection", () => {
     // Macrotask waits: a rejection that nobody awaits only surfaces after the microtask queue drains.
     const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -232,8 +250,13 @@ describe("tuner.html number boxes", () => {
   const open = () => {
     const page = loadPage(() => Promise.resolve(json({ status: "ok", mtimeMs: 1, fields: {} })));
     page.el("banner").textContent = "";
-    const sr = { dataset: { id: "engine.MaxPower" }, querySelectorAll: () => [{ min: "0", max: "10", value: "" }, { value: "" }], classList: { toggle: () => {} } };
-    return { page, enter: (text: string) => page.fire("input", { target: { dataset: {}, value: text, closest: () => sr } }) };
+    page.run(`rows.set("engine.MaxTorque", { target: { part: "engine", key: "MaxTorque" }, loaded: 200, value: 200, touched: false });`);
+    const sr = (id: string) => ({ dataset: { id }, querySelectorAll: () => [{ min: "0", max: "10", value: "" }, { value: "" }], classList: { toggle: () => {} } });
+    return {
+      page,
+      enter: (text: string, id = "engine.MaxPower") => page.fire("input", { target: { dataset: {}, value: text, closest: () => sr(id) } }),
+      reset: (id: string) => page.fire("click", { target: { closest: (q: string) => (q === ".rst" ? { closest: () => sr(id) } : null) } }),
+    };
   };
   const type = (text: string) => {
     const { page, enter } = open();
@@ -260,7 +283,7 @@ describe("tuner.html number boxes", () => {
     expect(type("1.23456789012345678e-7").el("banner").textContent).toContain("written as 0.00000012345678901234568.");
   });
 
-  // 17-digit shortest forms between 1e11 and 1e15 ending in a tie: toString and toPrecision(17) rounded them differently, which warned although they round-trip.
+  // 17-digit shortest forms from 1e11 up to the samples below (the largest is 1.6e15) ending in a tie: toString and toPrecision(17) rounded them differently, which warned although they round-trip.
   it.each(["1600559752013866.2", "846587145912647.2", "591584520101547.2", "672029393815994.2"])("stays quiet for the 17-digit value %s", (text) => {
     expect(type(text).el("banner").textContent).toBe("");
   });
@@ -286,6 +309,32 @@ describe("tuner.html number boxes", () => {
     page.run('showBanner("err", "something else")');
     enter("1501");
     expect(page.el("banner").textContent).toBe("something else");
+  });
+
+  it("keeps the warning for its own field: an exact entry in another field leaves it, resetting that field clears it", () => {
+    const { page, enter, reset } = open();
+    enter("123456789012345678901"); // engine.MaxPower
+    const warning = page.el("banner").textContent;
+    expect(warning).toContain("cannot be stored exactly");
+    enter("1500", "engine.MaxTorque");
+    expect(page.el("banner").textContent).toBe(warning);
+    expect(page.el("banner").className).toBe("banner warn");
+    reset("engine.MaxTorque"); // another field's reset leaves it too
+    expect(page.el("banner").textContent).toBe(warning);
+    reset("engine.MaxPower");
+    expect(page.el("banner").textContent).toBe("");
+    expect(page.run("typedWarn")).toBe(null);
+    // an exact entry in the field it is about still clears it
+    enter("123456789012345678901");
+    enter("1500");
+    expect(page.el("banner").textContent).toBe("");
+  });
+
+  it("forgets that a write is unseen when the vehicle is loaded again", async () => {
+    const page = loadPage(() => Promise.resolve(json({ status: "ok", mtimeMs: 1, fields: {} })));
+    page.run("unseenWrite = true");
+    await page.run('loadVehicle("Prefabs/Vehicles/X.et")');
+    expect(page.run("unseenWrite")).toBe(false);
   });
 
   it("forgets the warning when the vehicle is reloaded", async () => {

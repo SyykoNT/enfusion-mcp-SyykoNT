@@ -3,8 +3,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSyn
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import type { AddressInfo } from "node:net";
-import { createTuningServer } from "../../src/tuning-server/server.js";
+import type { IncomingMessage } from "node:http";
+import { createTuningServer, readBody, MAX_BODY_BYTES } from "../../src/tuning-server/server.js";
 import { VEHICLES_SUBPATH } from "../../src/tuning-server/discover.js";
 
 const REL = "Prefabs/Vehicles/Wheeled/M151A2/M151A2.et";
@@ -46,12 +48,12 @@ describe("tuning server write path, hostile requests", () => {
     headers: Record<string, string | undefined>,
     body?: string | Buffer
   ) =>
-    new Promise<{ status: number; body: string }>((resolve, reject) => {
+    new Promise<{ status: number; body: string; headers: IncomingMessage["headers"] }>((resolve, reject) => {
       const clean = Object.fromEntries(Object.entries(headers).filter(([, v]) => v !== undefined)) as Record<string, string>;
       const req = request({ host: "127.0.0.1", port, method, path, headers: clean }, (res) => {
         let data = "";
         res.on("data", (c) => (data += c));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data }));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data, headers: res.headers }));
       });
       req.on("error", reject);
       req.end(body);
@@ -151,17 +153,12 @@ describe("tuning server write path, hostile requests", () => {
       unchanged();
     });
 
-    it("413 reaches the client every time: the unread body is drained, so the socket is not reset", async () => {
-      // Closing with the 2 MB still unread made the OS reset the connection in a few posts per thousand (ECONNRESET), so send 1000.
-      const big = JSON.stringify({ pad: "x".repeat(2 * 1024 * 1024) });
-      const statuses: (number | string)[] = [];
-      for (let round = 0; round < 100; round++) {
-        const batch = await Promise.all(Array.from({ length: 10 }, () => post({}, big).then((r) => r.status, (e: Error) => e.message)));
-        statuses.push(...batch);
-      }
-      expect(statuses.filter((s) => s !== 413)).toEqual([]);
-      unchanged();
-    }, 60_000);
+    // A loop of posts caught this only by chance (5 of 5 runs at 1000 posts, 5 of 6 at 600, 2 of 5 at 300, 0 of 5 at 100); the header is the cause.
+    it("the 413 keeps the connection open: closing with the upload unread resets the socket and the client sometimes loses the 413", async () => {
+      const res = await post({}, JSON.stringify({ pad: "x".repeat(2 * 1024 * 1024) }));
+      expect(res.status).toBe(413);
+      expect(String(res.headers.connection ?? "")).not.toMatch(/close/i);
+    });
 
     it("413 for a chunked body over the cap (no Content-Length to check)", async () => {
       const res = await new Promise<{ status: number }>((resolve, reject) => {
@@ -178,6 +175,19 @@ describe("tuning server write path, hostile requests", () => {
       });
       expect(res.status).toBe(413);
       unchanged();
+    });
+
+    it("readBody stops collecting at the cap: later chunks are never looked at", async () => {
+      const req = new EventEmitter() as IncomingMessage; // readBody only listens for data, end and error
+      const body = readBody(req);
+      body.catch(() => {}); // rejected below, before the awaits
+      req.emit("data", Buffer.alloc(MAX_BODY_BYTES)); // exactly the cap is still allowed
+      req.emit("data", Buffer.alloc(1));
+      let looked = 0;
+      req.emit("data", { get length() { looked++; return 1; } });
+      await expect(body).rejects.toThrow();
+      expect(looked).toBe(0);
+      expect(req.listenerCount("data")).toBe(0);
     });
 
     it("a body just under the cap still gets through to the JSON check", async () => {

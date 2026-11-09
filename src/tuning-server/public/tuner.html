@@ -102,7 +102,7 @@ let lastMtime = null;
 let deepLinkMiss = null;
 let writing = false;     // a POST is in flight: Apply stays disabled and the poll stays quiet
 let unseenWrite = false; // a write succeeded but its reload failed: the next new mtime is that write, not a change by someone else
-let typedWarn = null;    // text of the round-trip warning on the banner, so a later exact entry can clear it
+let typedWarn = null;    // { id, text } of the round-trip warning on the banner: it belongs to one field, and only that field's exact entry or reset clears it
 /** Every editable value on the page: id -> { target, loaded, value, touched }. */
 let rows = new Map();
 
@@ -453,6 +453,12 @@ function exact(text, v) {
   return d === null || d === "0" || digitsOf(formatNumber(v)) === d;
 }
 
+function clearTypedWarn(id) {
+  if (typedWarn?.id !== id) return;
+  if ($("banner").textContent === typedWarn.text) showBanner("", "");
+  typedWarn = null;
+}
+
 document.addEventListener("input", (e) => {
   const t = e.target;
   if (t.dataset.in) {
@@ -469,10 +475,12 @@ document.addEventListener("input", (e) => {
   if (!sr) return;
   const v = parseFloat(t.value);
   if (!Number.isFinite(v)) return;
-  const warn = exact(t.value, v) ? null : `${t.value} cannot be stored exactly; it will be written as ${formatNumber(v)}.`;
-  if (warn) showBanner("warn", warn);
-  else if (typedWarn && $("banner").textContent === typedWarn) showBanner("", "");
-  typedWarn = warn;
+  if (exact(t.value, v)) clearTypedWarn(sr.dataset.id);
+  else {
+    const text = `${t.value} cannot be stored exactly; it will be written as ${formatNumber(v)}.`;
+    showBanner("warn", text);
+    typedWarn = { id: sr.dataset.id, text };
+  }
   setRow(sr, v, true);
   refreshWriteState();
   redraw();
@@ -484,6 +492,7 @@ document.addEventListener("click", (e) => {
   const sr = btn.closest(".sr[data-id]");
   const r = rows.get(sr.dataset.id);
   setRow(sr, r.loaded ?? 0, false);
+  clearTypedWarn(sr.dataset.id);
   refreshWriteState();
   redraw();
 });
@@ -601,10 +610,11 @@ async function writeChanges() {
     const wb = body.workbench || "";
     const reached = wb.indexOf("not reachable") === -1 && wb.indexOf("not notified") === -1;
     const wrote = `Wrote ${(body.written || []).join(", ")} to ${cur.rel}`, tail = `\n${body.message || ""}${wb ? "\n" + wb : ""}`;
+    const seen = lastMtime;
     if (!(await tryLoad(cur.rel))) {
       // The file is written, so the edits are no longer unsaved even though the page could not show it.
       for (const r of changedRows()) r.loaded = r.value;
-      unseenWrite = true;
+      unseenWrite = lastMtime === seen; // the load already took the write's mtime when it failed while drawing: no poll will see it again
       for (const e of document.querySelectorAll(".sr.edited")) e.classList.remove("edited");
       showBanner("warn", `${wrote}, but the page could not reload the values. Reload the page.${tail}`);
       return;

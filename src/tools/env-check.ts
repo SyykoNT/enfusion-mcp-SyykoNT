@@ -53,8 +53,9 @@ export function registerEnvCheck(server: McpServer, config: Config, client: Work
 
       const ver = (exe: string) => { const v = peFileVersion(exe); return v ? ` (v${v})` : ""; };
       const crash = crashLogsFolder(config);
+      const unreadable = crash.refused?.root === crash.refused?.setting;
       const crashLine = crash.refused
-        ? `${ok(false)} Crash logs folder: ENFUSION_CRASH_LOGS_DIR (crashLogsDir) "${crash.refused.setting}" is refused, it is inside ${crash.refused.root}; ${crash.dir ? `using ${crash.dir}` : "no crash logs folder is set"}`
+        ? `${ok(false)} Crash logs folder: ENFUSION_CRASH_LOGS_DIR (crashLogsDir) "${crash.refused.setting}" is refused, ${unreadable ? "it cannot be read (missing drive or no access)" : `it is inside ${crash.refused.root}`}; ${crash.dir ? `using ${unreadable ? "the default " : ""}${crash.dir}` : "no crash logs folder is set"}`
         : `${ok(!!crash.dir)} Crash logs folder: ${crash.dir ?? "none (its default location is not allowed): set ENFUSION_CRASH_LOGS_DIR"}`;
 
       lines.push(

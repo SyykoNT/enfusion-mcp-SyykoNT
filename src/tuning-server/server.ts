@@ -21,11 +21,11 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /** A change request is a few hundred bytes; anything near this size is not the page talking. */
-const MAX_BODY_BYTES = 1024 * 1024;
+export const MAX_BODY_BYTES = 1024 * 1024;
 
 class BodyTooLarge extends Error {}
 
-function readBody(req: IncomingMessage): Promise<string> {
+export function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
