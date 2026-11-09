@@ -601,9 +601,9 @@ export function readStates(dir = WATCH_DIR): { states: WatchState[]; errors: str
 }
 
 const SHOWN_FINISHED = 3;
-/** What wb_watch status and wb_diagnose print: every watcher that is not finished, and of the exited or crashed ones the newest few. `hidden` counts the rest. */
-export function recentStates(states: WatchState[]): { shown: WatchState[]; hidden: number } {
-  const old = new Set(states.filter((s) => s.state === "exited" || s.state === "crashed").sort((a, b) => b.updated - a.updated).slice(SHOWN_FINISHED));
+/** What wb_watch status and wb_diagnose print: every watcher that is not finished or is an alert (a recent crash, which the footer points at), and of the other exited or crashed ones the newest few. `hidden` counts the rest. */
+export function recentStates(states: WatchState[], now = Date.now()): { shown: WatchState[]; hidden: number } {
+  const old = new Set(states.filter((s) => (s.state === "exited" || s.state === "crashed") && !isAlert(s, now)).sort((a, b) => b.updated - a.updated).slice(SHOWN_FINISHED));
   return { shown: states.filter((s) => !old.has(s)), hidden: old.size };
 }
 

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { existsSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { WATCH_DIR, formatReport, olderLine, readStates, recentStates } from "../watchdog/wb-watch.js";
 import { workbenchCommandLines } from "../utils/process.js";
 
@@ -11,15 +11,21 @@ export interface DiagnoseDeps {
   watchDir: string;
 }
 
-/** The handler folder of each addon a running Workbench loaded, from the -gproj on its command line (the Default Mod is only where wb_launch injects). */
+/** The handler folder of each addon a local Workbench loaded, from the -gproj on its command line (the Default Mod is only where wb_launch injects). */
 function loadedAddonLines(deps: DiagnoseDeps): string[] {
   const list = deps.workbenches();
-  if (!list.length) return ["- **Loaded addon:** no running Workbench found, so no -gproj to read"];
+  if (!list.length) return ["- **Loaded addon:** no local Workbench found, so no -gproj to read"];
   return list.map(({ pid, gproj }) => {
-    if (!gproj) return `- **Loaded addon:** PID ${pid} has no -gproj on its command line`;
+    if (!gproj) return `- **Loaded addon:** local PID ${pid} has no -gproj on its command line`;
+    // shortcut: the process list gives no working folder, so a relative -gproj stays unresolved.
+    if (!isAbsolute(gproj)) return `- **Loaded addon:** local PID ${pid} has a relative -gproj (\`${gproj}\`), unresolved because its working folder is not known`;
     const dir = join(dirname(gproj), "Scripts", "WorkbenchGame", "EnfusionMCP");
-    const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.startsWith("EMCP_") && f.endsWith(".c")).length : 0;
-    return `- **Loaded addon (PID ${pid}, from its -gproj):** ${files ? `${files} .c files` : "no handler files"} → \`${dir}\``;
+    try {
+      const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.startsWith("EMCP_") && f.endsWith(".c")).length : 0;
+      return `- **Loaded addon (local PID ${pid}, from its -gproj):** ${files ? `${files} .c files` : "no handler files"} → \`${dir}\``;
+    } catch (e) {
+      return `- **Loaded addon:** cannot read \`${dir}\` for local PID ${pid} (${(e as NodeJS.ErrnoException).code ?? "error"})`;
+    }
   });
 }
 

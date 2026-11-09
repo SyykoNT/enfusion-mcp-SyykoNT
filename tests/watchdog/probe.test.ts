@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { PROBE_SCRIPT, DISMISS_SCRIPT, DIALOG_SCRIPT, dismissLeakAssert, probeDialogs, startProbe, withArgs, type PsRunner } from "../../src/watchdog/probe.js";
+import { ANSWER_SCRIPT, PROBE_SCRIPT, DISMISS_SCRIPT, DIALOG_SCRIPT, dismissLeakAssert, probeDialogs, startProbe, withArgs, type PsRunner } from "../../src/watchdog/probe.js";
 
 describe("probe scripts", () => {
   it.each([["probe", PROBE_SCRIPT], ["dismiss", DISMISS_SCRIPT], ["dialogs", DIALOG_SCRIPT]])("%s never focuses, shows, closes or ends anything", (_n, script) => {
@@ -25,10 +25,10 @@ describe("probe scripts", () => {
   });
 
   // PowerShell variable names ignore case: `$port = ...` once overwrote `$Port`, so every sample after the first read "NET API port owner: none".
-  it.each([["probe", PROBE_SCRIPT, ["WbPid", "Port"]], ["dismiss", DISMISS_SCRIPT, ["WbPid", "Hwnd", "Button"]], ["dialogs", DIALOG_SCRIPT, ["WbPid"]]] as const)(
+  it.each([["probe", PROBE_SCRIPT, ["WbPid", "Port"]], ["dismiss", DISMISS_SCRIPT, ["WbPid", "Hwnd", "Button"]], ["dialogs", DIALOG_SCRIPT, ["WbPid"]], ["answer", ANSWER_SCRIPT, ["WbPid", "Hwnd", "Choice", "TextHash"]]] as const)(
     "%s never assigns to a variable named like one of its parameters, whatever the case",
     (_n, script, params) => {
-      const assigned = [...script.matchAll(/^\s*\$(\w+)\s*=/gm)].map((m) => m[1].toLowerCase());
+      const assigned = [...script.matchAll(/\$(\w+)\s*=(?!=)/g)].map((m) => m[1].toLowerCase());
       for (const p of params) expect(assigned).not.toContain(p.toLowerCase());
     }
   );

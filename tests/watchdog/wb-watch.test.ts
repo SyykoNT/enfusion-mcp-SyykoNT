@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eventLines, watchAlerts } from "../../src/workbench/status.js";
-import { alerts, claimWatch, createWatcher, findLogDir, runWatcher, type WatchOpts, type WatchState } from "../../src/watchdog/wb-watch.js";
+import { alerts, claimWatch, createWatcher, findLogDir, recentStates, runWatcher, type WatchOpts, type WatchState } from "../../src/watchdog/wb-watch.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
 
 // Temp folders only: a fake log root, fake projects and a fake state dir. No probe, PowerShell or Workbench runs.
@@ -364,5 +364,24 @@ describe("watcher keeps its own lock honest (B-097) and the state after Ignore (
     await w.tick();
     t.clock.now = at("02:14:14.000");
     expect((await w.tick()).state).toBe("blocked_dialog");
+  });
+});
+
+describe("recentStates", () => {
+  const NOW = at("12:00:00.000");
+  const st = (pid: number, state: string, ago: number) => ({ pid, watcherPid: 1, owned: false, state, since: NOW - ago, lastLines: [], actions: [], dismiss: "watched", autoRecover: false, updated: NOW - ago }) as WatchState;
+
+  it("keeps a crash inside the alert window in the list even when three newer watchers have finished", () => {
+    const states = [st(1, "crashed", 20 * 60_000), st(2, "exited", 3 * 60_000), st(3, "exited", 2 * 60_000), st(4, "exited", 60_000), st(5, "ok", 1000)];
+    const { shown, hidden } = recentStates(states, NOW);
+    expect(shown.map((s) => s.pid).sort()).toEqual([1, 2, 3, 4, 5]);
+    expect(hidden).toBe(0);
+  });
+
+  it("hides a crash older than the alert window like any other old finished watcher", () => {
+    const states = [st(1, "crashed", 40 * 60_000), st(2, "exited", 3 * 60_000), st(3, "exited", 2 * 60_000), st(4, "exited", 60_000)];
+    const { shown, hidden } = recentStates(states, NOW);
+    expect(shown.map((s) => s.pid).sort()).toEqual([2, 3, 4]);
+    expect(hidden).toBe(1);
   });
 });
