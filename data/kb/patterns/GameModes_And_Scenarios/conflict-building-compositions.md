@@ -128,7 +128,7 @@ Compositions are categorized by slot type. Costs are in supplies (CAMPAIGN budge
 
 ## Relay Radio (`ConflictRelayRadio.et`)
 
-The relay radio is the most strategically important buildable. It extends radio coverage and grants +4 supplies/tick to connected bases.
+The relay radio is the most strategically important buildable. It extends radio coverage. It adds no supplies itself: the radio extra (+4 supplies/tick, `m_iRegularSuppliesIncomeExtra`) counts friendly `BASE`-type bases in a base's radio range (up to 5; relays are skipped), and only non-HQ bases get it, only while `m_bSuppliesAutoRegenerationEnabled` is on (default off).
 
 **Prefab GUID:** `{522DCD528AE27052}Prefabs/Systems/MilitaryBase/ConflictRelayRadio.et`
 
@@ -216,7 +216,7 @@ provider.ClearAccumulatedBudgetChanges();
 
 ## Scenario Design Notes
 
-- **Relay radios are win conditions** — a faction that builds relay chains extends spawn coverage and gains supply income. Design maps with radio range gaps to incentivize building.
+- **Relay radios are win conditions**: a faction that builds relay chains extends spawn coverage. Supply income does not grow with relays: the radio extra counts friendly `BASE`-type bases in range, only for non-HQ bases with auto regeneration on. Design maps with radio range gaps to incentivize building.
 - **Fortification slots** define what can be built at a base. Production mods place `SlotFlat*` and `SlotRoad*` entities inside `BaseLogic.layer` compositions.
 - **Master provider at MOB** — always set the MOB as `m_bIsMasterProvider`. All other service providers at the same base should use `m_bUseMasterProvider`.
 - **Building radius** — default 50m. Increase for large airfield/harbour bases.

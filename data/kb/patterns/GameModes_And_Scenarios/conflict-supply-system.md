@@ -16,9 +16,15 @@ The modern supply system uses `SCR_ResourceComponent` internally. The older `SCR
 Harbor / Airfield (source base)
     → every 300s: +2500 supplies distributed to connected friendly bases
 
-HQ / MOB / supply hub
-    → every 5s: +40 supplies (m_iRegularSuppliesIncome)
-    → no radio extra (the extra is for non-HQ bases only)
+HQ / MOB
+    → +40 supplies per tick (m_iRegularSuppliesIncome; a base's own m_iRegularSuppliesIncomeBase, if not -1, replaces it only while auto regeneration is off)
+    → tick: the base's own m_iSuppliesArrivalInterval if set (not -1), else m_iSuppliesArrivalIntervalSource (300s); the game mode's m_iSuppliesArrivalInterval (5s) applies only while auto regeneration is on
+    → no radio extra (the game skips it for HQs)
+
+Supply hub (m_bIsSupplyHub, not an HQ)
+    → same income rule as an HQ (+40, m_iRegularSuppliesIncome)
+    → tick: the base's own m_iSuppliesArrivalInterval if set, else 300s; never the game mode's 5s
+    → radio extra like any non-HQ base, only while m_bSuppliesAutoRegenerationEnabled is on
 
 Regular contested base (only while m_bSuppliesAutoRegenerationEnabled is on)
     → every 5s: +4 supplies (m_iRegularSuppliesIncomeBase)
@@ -41,9 +47,9 @@ Auto-replenish ceiling: 1000 supplies (m_iSuppliesReplenishThreshold)
 |---|---|---|
 | `m_iRegularSuppliesIncome` | `40` | Supplies replenished periodically in HQs and supply hubs |
 | `m_iRegularSuppliesIncomeBase` | `4` | Supplies replenished periodically in non-HQ bases; applied only while `m_bSuppliesAutoRegenerationEnabled` is on (default off), otherwise a regular base gets 0 (supply hubs take the HQ income, source bases set their own) |
-| `m_iRegularSuppliesIncomeExtra` | `4` | Bonus per tick for each friendly base in radio range (up to 5); non-HQ bases only, and only while `m_bSuppliesAutoRegenerationEnabled` is on |
+| `m_iRegularSuppliesIncomeExtra` | `4` | Bonus per tick for each friendly `BASE`-type base in radio range (up to 5; relays and source bases are skipped); non-HQ bases only (supply hubs that are not HQs included), and only while `m_bSuppliesAutoRegenerationEnabled` is on |
 | `m_iRegularSuppliesIncomeSource` | `2500` | Source base (harbor/airfield) income per distribution |
-| `m_iSuppliesArrivalInterval` | `5` | Seconds between base income ticks |
+| `m_iSuppliesArrivalInterval` | `5` | Seconds between income ticks for a base that is not a supply hub, only while `m_bSuppliesAutoRegenerationEnabled` is on; otherwise a base uses its own interval, else `m_iSuppliesArrivalIntervalSource` |
 | `m_iSuppliesArrivalIntervalSource` | `300` | Seconds between source base distributions |
 
 ### Thresholds
@@ -77,8 +83,8 @@ These override the gamemode defaults for individual bases:
 
 | Property | Default | Description |
 |---|---|---|
-| `m_iRegularSuppliesIncomeBase` | `-1` | Per-base income override (-1 = use gamemode value) |
-| `m_iSuppliesArrivalInterval` | `-1` | Per-base tick interval override (-1 = use gamemode) |
+| `m_iRegularSuppliesIncomeBase` | `-1` | Per-base income override, read only for an HQ or supply hub and only while auto regeneration is off (-1 = use `m_iRegularSuppliesIncome`) |
+| `m_iSuppliesArrivalInterval` | `-1` | Per-base tick interval override, read for a supply hub, or for any base while auto regeneration is off (-1 = use `m_iSuppliesArrivalIntervalSource`, 300s) |
 | `m_fSupplyLimit` | `0.2` | Resupply threshold as fraction of max capacity (0–0.9) |
 | `m_fReservedSupplyAmount` | `0.5` | Fraction kept in reserve for storage (0.1–0.9) |
 | `m_eSupplyRequestExecutionPriority` | `MEDIUM` | Priority when multiple resupply tasks compete |
@@ -213,13 +219,13 @@ modded class SCR_GameModeCampaign
 | Base type | Starting supplies | Max cap | Income/tick | Notes |
 |---|---|---|---|---|
 | MOB / HQ | 600 (gamemode default) | 3000 | 40 | Set `m_iSupplies 500` in layer for balance |
-| Regular base | 100–500 (randomized) | ~1000 | 4 | |
-| Major base | 100–500 | ~1000 | 4 | Often also a supply hub |
+| Regular base | 100–500 (randomized) | ~1000 | 0 (4 only while auto regeneration is on) | |
+| Major base | 100–500 | ~1000 | 40 as a supply hub, else as a regular base | Often also a supply hub |
 | Harbor (T3) | — | — | 2500/300s | Source only, no income decay |
-| Control point | 100–500 | ~1000 | 4 | Lightweight, no supply hub |
+| Control point | 100–500 | ~1000 | 0 (4 only while auto regeneration is on) | Lightweight, no supply hub |
 
 **Balance tips from production mods:**
 - MOBs at 500 starting (not 3000) — forces players to manage supply chains from day 1
 - Quick replenish threshold (200) prevents bases from going completely dry during heavy combat
-- Radio coverage over friendly bases adds +4/tick per base in range (up to 5) to regular bases, only with auto regeneration on
+- Radio coverage over friendly bases adds +4/tick per friendly BASE-type base in range (up to 5; relays and source bases are not counted) to non-HQ bases, only with auto regeneration on
 - Source bases make harbors strategically important — place them at map extremes
