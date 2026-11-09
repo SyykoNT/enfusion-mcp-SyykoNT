@@ -1,10 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // The watcher spawn is a stub: no watcher process starts. netstat and process queries are injected.
-const spawnDetached = vi.hoisted(() => vi.fn((_exe: string, _args: string[], _cwd: string, _log?: string) => 700));
+// Like a real watcher it claims `<pid>.lock` in the state dir it was given.
+const spawnDetached = vi.hoisted(() =>
+  vi.fn((_exe: string, args: string[], _cwd: string, _log?: string) => {
+    writeFileSync(join(args[args.indexOf("--state-dir") + 1], `${args[args.indexOf("--pid") + 1]}.lock`), "700");
+    return 700;
+  })
+);
 vi.mock("../../src/utils/process.js", async (orig) => ({ ...(await orig<typeof import("../../src/utils/process.js")>()), spawnDetached }));
 
 import { ensureWatched, type AttachDeps } from "../../src/watchdog/auto-attach.js";
@@ -15,7 +21,7 @@ const WB = "\"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Arma Reforger T
 const listening = (pid: number) => `  TCP    0.0.0.0:5775           0.0.0.0:0              LISTENING       ${pid}\r\n`;
 
 function deps(over: Partial<AttachDeps> = {}, procs: Record<number, string> = {}) {
-  const all: Record<number, string> = { 19524: WB, 600: "node.exe C:\\x\\dist\\watchdog\\wb-watch.js --pid 19524 --state-dir y", 4242: "notepad.exe", ...procs };
+  const all: Record<number, string> = { 19524: WB, 600: "node.exe C:\\x\\dist\\watchdog\\wb-watch.js --pid 19524 --state-dir y", 4242: "notepad.exe", 700: "node.exe wb-watch.js --pid 19524", 800: "node.exe wb-watch.js --pid 19524", ...procs };
   const d: AttachDeps = {
     stateDir: mkdtempSync(join(tmpdir(), "emcp-aa-")),
     platform: "win32",
@@ -23,8 +29,9 @@ function deps(over: Partial<AttachDeps> = {}, procs: Record<number, string> = {}
     proc: async (pid) => (all[pid] !== undefined ? { pid, ppid: 1, cmd: all[pid], created: T0 } : undefined),
     owned: () => false,
     alive: (pid) => pid in all,
-    start: vi.fn(() => 700),
+    start: vi.fn((w) => spawnDetached("node", ["--pid", String(w.pid), "--state-dir", w.stateDir], "")),
     base: { scriptAuth: "rules", logsRoot: "L:\\logs", crashDir: "C:\\crash" },
+    settleMs: 50,
     ...over,
   };
   return d;
@@ -76,17 +83,47 @@ describe("ensureWatched", () => {
       const r = await check(d);
       expect(r.ok, String(holder)).toBe(true);
       expect(r.text).toMatch(/^Attached watcher PID 700 to Workbench PID 19524/);
-      expect(existsSync(join(d.stateDir, "19524.lock"))).toBe(false);
+      // The stale lock is gone: the lock now names the new watcher
+      expect(readFileSync(join(d.stateDir, "19524.lock"), "utf8")).toBe("700");
       expect(d.start).toHaveBeenCalledOnce();
     }
   });
 
-  it("step 3: a live lock holder whose command line cannot be read is left alone", async () => {
-    const d = deps({ alive: () => true });
-    writeFileSync(join(d.stateDir, "19524.lock"), "555");
-    expect((await check(d)).text).toBe("Workbench not watched: the watch lock of Workbench PID 19524 names PID 555, whose command line could not be read.");
-    expect(existsSync(join(d.stateDir, "19524.lock"))).toBe(true);
+  it("step 3: a live lock holder whose command line is empty or cannot be read is left alone", async () => {
+    // "" is what CIM shows for a process it may not read (another user, an elevated MCP's watcher); undefined is a failed query.
+    for (const cmd of ["", undefined]) {
+      const d = deps({ alive: () => true }, cmd === undefined ? {} : { 555: cmd });
+      writeFileSync(join(d.stateDir, "19524.lock"), "555");
+      expect((await check(d)).text, String(cmd)).toBe("Workbench not watched: the watch lock of Workbench PID 19524 names PID 555, whose command line could not be read.");
+      expect(existsSync(join(d.stateDir, "19524.lock"))).toBe(true);
+      expect(d.start).not.toHaveBeenCalled();
+    }
+  });
+
+  it("step 3: the lock changes between the holder read and the delete: it is not deleted and no watcher starts", async () => {
+    const d = deps();
+    const lock = join(d.stateDir, "19524.lock");
+    writeFileSync(lock, "4242");
+    const proc = d.proc;
+    // Another MCP attached while the command line of the stale holder was read
+    d.proc = async (pid) => (pid === 4242 && writeFileSync(lock, "800"), proc(pid));
+    const r = await check(d);
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain("changed while it was checked");
+    expect(readFileSync(lock, "utf8")).toBe("800");
     expect(d.start).not.toHaveBeenCalled();
+  });
+
+  it("step 5: another MCP's watcher took the PID first: no 'Attached', the lock holder is named", async () => {
+    const d = deps();
+    d.start = vi.fn(() => (writeFileSync(join(d.stateDir, "19524.lock"), "800"), 700));
+    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: another watcher (PID 800) holds Workbench PID 19524; wb_watch status shows it." });
+  });
+
+  it("step 5: the new watcher never appears in the lock: no 'Attached'", async () => {
+    const d = deps();
+    d.start = vi.fn(() => 700);
+    expect(await check(d)).toEqual({ ok: false, text: "Workbench not watched: watcher PID 700 did not take Workbench PID 19524; wb_watch status shows what runs." });
   });
 
   it("step 4: the user stopped the watch of this Workbench run", async () => {

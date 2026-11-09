@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { Config } from "../config.js";
 import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { WORKBENCH_INSTANCES, isOwned } from "../utils/instances.js";
-import { isAlive, processInfoAsync, type ProcInfo } from "../utils/process.js";
+import { isAlive, processInfoAsync, sleep, type ProcInfo } from "../utils/process.js";
 import { WB_EXE, isWatcherCmd, watchAction } from "../tools/wb-watch-tool.js";
 import { WATCH_DIR, autoBlocked, readStates, startWatcher, watcherOf, type StartWatcher } from "./wb-watch.js";
 import { portOwner } from "./signals.js";
@@ -24,6 +24,8 @@ export interface AttachDeps {
   alive(pid: number): boolean;
   start(w: StartWatcher): number;
   base: Omit<StartWatcher, "pid" | "owned" | "host" | "port">;
+  /** How long to wait for the new watcher to appear in the lock (default 2000 ms). */
+  settleMs?: number;
 }
 
 /** ok: attached or already watched (the client then skips checks for 60 s). text: one line for a timeout reply. */
@@ -73,9 +75,12 @@ export async function ensureWatched(port: number, host: string, d: AttachDeps): 
   const holder = watcherOf(d.stateDir, pid, d.alive);
   if (holder) {
     const h = await d.proc(holder);
-    if (!h) return no(`the watch lock of Workbench PID ${pid} names PID ${holder}, whose command line could not be read`);
+    // An empty command line is what a process of another user or an elevated MCP shows: it may be a live watcher, so leave its lock alone.
+    if (!h?.cmd) return no(`the watch lock of Workbench PID ${pid} names PID ${holder}, whose command line could not be read`);
     if (isWatcherCmd(h.cmd, pid)) return { ok: true, text: watchedText(d.stateDir, pid, holder) };
     // A lock left by a watcher that died without cleanup, its PID now reused by another process: no watch.
+    // Compare-and-delete: another MCP may have replaced the lock while the command line was read.
+    if (watcherOf(d.stateDir, pid, d.alive) !== holder) return no(`the watch lock of Workbench PID ${pid} changed while it was checked; the next call checks again`);
     await rm(join(d.stateDir, `${pid}.lock`), { force: true });
   }
   if (autoBlocked(d.stateDir, pid, proc.created)) return no(`watch stopped by the user for Workbench PID ${pid} (wb_watch start pid=${pid} attaches one)`);
@@ -101,6 +106,16 @@ export async function ensureWatched(port: number, host: string, d: AttachDeps): 
     { auto: true, proc }
   );
   if (r.isError || !started) return { ok: false, text: `Workbench not watched: ${r.text}` };
+  // Another MCP may attach in the same moment; the lock says which watcher got the PID (a loser exits with code 3).
+  const until = Date.now() + (d.settleMs ?? 2000);
+  let held = watcherOf(d.stateDir, pid, d.alive);
+  while (held !== watcher && Date.now() < until) {
+    await sleep(100);
+    held = watcherOf(d.stateDir, pid, d.alive);
+  }
+  if (held !== watcher) {
+    return no(held ? `another watcher (PID ${held}) holds Workbench PID ${pid}; wb_watch status shows it` : `watcher PID ${watcher} did not take Workbench PID ${pid}; wb_watch status shows what runs`);
+  }
   return {
     ok: true,
     text:
