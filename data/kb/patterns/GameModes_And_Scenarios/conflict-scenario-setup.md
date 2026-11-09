@@ -30,7 +30,6 @@ SCR_MissionHeaderCampaign {
  m_iPlayerCount 40
  m_eEditableGameFlags 6
  m_eDefaultGameFlags 6
- m_bIsSavingEnabled 1
  m_bCustomBaseWhitelist 1
  m_aCampaignCustomBaseList {
   SCR_CampaignCustomBase "{ENTITY_GUID}" {
@@ -50,6 +49,7 @@ Key properties:
 - `m_bCustomBaseWhitelist 1` + `m_aCampaignCustomBaseList` — restricts which world bases are active; `m_sBaseName` must match `SCR_CampaignMilitaryBaseComponent.m_sBaseName` exactly (case-sensitive)
 - `m_bIsControlPoint 1` — marks a base as a numbered capture point on the map
 - `m_fXpMultiplier 0.5` — use for PvE scenarios; omit for standard (1.0)
+- Saving: the header has no on/off flag for it in 1.9.0.37. `SCR_MissionHeader.c` declares `m_eSaveTypes` (`ESaveGameType` flags: MANUAL, AUTO, SCRIPTED, SHUTDOWN; default `15` = all on; "If all save types are disabled, the entire persistence system is disabled")
 
 ### Known world GUIDs:
 | Map | Resource ref |
@@ -91,13 +91,13 @@ SubScene {
 
 ### `Worlds/MyScenario_Layers/default.layer` (game mode + managers):
 ```
-SCR_GameModeCampaign GameMode1 : "{CE6DD1D3C1BC7366}Prefabs/GameLogic/GameMode_Seize.et" {
+SCR_GameModeCampaign GameMode1 : "{3B230AAC5252108F}Prefabs/MP/Modes/Conflict/GameMode_Campaign.et" {
  m_fAutoReloadTime 30
  m_iControlPointsThreshold 5
  m_fVictoryTimer 300
  m_bEstablishingBasesEnabled 0
 }
-SCR_CampaignFactionManager CampaignFactionManager1 : "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager_Seize.et" {
+SCR_CampaignFactionManager CampaignFactionManager1 : "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et" {
 }
 ```
 
@@ -109,15 +109,13 @@ $grp GenericEntity : "{1391CE8C0E255636}Prefabs/Systems/MilitaryBase/ConflictMil
    SCR_CampaignSeizingComponent "{5C66967235FBEEA3}" {
     m_fMaximumSeizingTime 120
     m_fMinimumSeizingTime 30
-    m_RequiredGroupTypes { ASSAULT SF_ASSAULT }
    }
    SCR_CoverageRadioComponent "{5C669673C2A82A2B}" {
-    Transceivers { RelayTransceiver "{5C669673E8C94083}" { } }
+    Transceivers { RelayTransceiver "{5C669673E8C94083}" { "Transmitting Range" 1470 } }
    }
    SCR_CampaignMilitaryBaseComponent "{5AFC974A70234D1C}" {
     m_sBaseName "BaseAlpha"
     m_sBaseNameUpper "BASEALPHA"
-    m_fRadioAntennaServiceRange 1470
    }
   }
   coords 1000 0 2000
@@ -133,8 +131,8 @@ In Workbench: File → New World → **Sub-scene (of current world)** → save t
 
 | Entity | Prefab GUID | Layer | Notes |
 |---|---|---|---|
-| Game mode | `{CE6DD1D3C1BC7366}Prefabs/GameLogic/GameMode_Seize.et` | default.layer | One per world |
-| Faction manager | `{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager_Seize.et` | default.layer | Manages US/USSR/FIA |
+| Game mode | `{3B230AAC5252108F}Prefabs/MP/Modes/Conflict/GameMode_Campaign.et` | default.layer | One per world |
+| Faction manager | `{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et` | default.layer | Manages US/USSR/FIA |
 | Military bases | `{1391CE8C0E255636}Prefabs/Systems/MilitaryBase/ConflictMilitaryBase.et` | Bases.layer | All in one `$grp` block |
 | Relay radios | `{522DCD528AE27052}Prefabs/Systems/MilitaryBase/ConflictRelayRadio.et` | Bases.layer | Optional — extend coverage |
 | Battle prep zone | `{D71F66A96E03FE7C}Prefabs/GameLogic/SCR_BattlePrepZone.et` | default.layer | Optional safe zone at match start |
@@ -149,12 +147,12 @@ All bases use **`ConflictMilitaryBase.et`** (`{1391CE8C0E255636}`) in a `$grp Ge
 | Role | How to configure |
 |---|---|
 | Standard town/small base | `SCR_CampaignSeizingComponent` enabled, no CAH, no `m_bCanBeHQ` |
-| Major base (harbour, port) | `SCR_CampaignSeizingComponent` with `m_bRequiresCaptureAndHoldAreas 1` + CAH names, `m_bIsControlPoint 1`, `m_bIsSupplyHub 1` |
+| Major base (harbour, port) | `SCR_CampaignSeizingComponent` with a larger `m_iRadius`, `m_bIsControlPoint 1`, `m_bIsSupplyHub 1`. 1.9.0.37 has no property that ties a base to CAH areas (the three the old text used are declared by no script) |
 | MOB / HQ | `SCR_CampaignSeizingComponent Enabled 0`, `m_bCanBeHQ 1`, `m_bIsSupplyHub 1`, radio `m_bIsSource 1`, `SCR_CampaignSuppliesComponent m_iSupplies 500` (starting), radio range 1000m |
 | Relay radio tower | Use `ConflictRelayRadio.et` — different prefab, just radio + base name component |
 
-**Radio range by role (from production mods):**
-- MOBs: `m_fRadioAntennaServiceRange 1000` — widest coverage as strategic HQ
+**Radio range by role (from production mods).** The range is the `"Transmitting Range"` of the base's `RelayTransceiver` (1.9.0.37: `SCR_CampaignMilitaryBaseComponent.c` `GetRelayRadioRange`; `ConflictMilitaryBase.et` sets `"Transmitting Range" 1000`):
+- MOBs: `1000` (widest coverage, as strategic HQ)
 - Supply sources (harbors, airfields): `680`–`700` — local coverage
 - Standard bases: `1470` — standard balanced default
 - Control points: `1470` or omit (no radio source)
@@ -165,15 +163,14 @@ Key `SCR_CampaignMilitaryBaseComponent` properties:
 - `m_bCanBeHQ 1` — MOB/HQ flag
 - `m_bIsControlPoint 1` — marks as numbered capture objective on map
 - `m_bIsSupplyHub 1` — allows supply delivery
-- `m_fRadioAntennaServiceRange 1470` — default for all bases (1470m from mod analysis)
-- `m_bExcludeFromRandomization 1` — fixed bases not randomized (MOBs, airfields, harbors)
+- Radio range: the `RelayTransceiver` `"Transmitting Range"` (see above); 1470 is the common default from mod analysis
+- Randomization: no per-base property in 1.9.0.37. The game mode flag `m_bRandomizeSupplies` (`SCR_GameModeCampaign.c`, default 1, "Randomized starting supplies in small bases") applies only to bases of type `BASE` (`SCR_CampaignMilitaryBaseManager.c`), so MOBs, relays and source bases are not randomized
 
 `SCR_CampaignSeizingComponent` key properties:
 - `m_fMaximumSeizingTime 120` / `m_fMinimumSeizingTime 30` — standard values from mods
 - `m_iRadius 150-300` — major bases set this; small bases omit (uses prefab default)
-- `m_bRequiresCaptureAndHoldAreas 1` + `m_aCaptureAndHoldAreaNames` — requires specific CAH zones to be controlled
-- `m_RequiredGroupTypes { ASSAULT SF_ASSAULT }` — always present
 - `Enabled 0` — on MOBs
+- 1.9.0.37 (`SCR_SeizingComponent.c`, `SCR_CampaignSeizingComponent.c`) declares no CAH zone list, area threshold or required group types
 
 `SCR_CoverageRadioComponent` (required on all bases):
 - `Transceivers { RelayTransceiver "{5C669673E8C94083}" { } }` — always present
@@ -191,10 +188,10 @@ Every Conflict world uses a SubScene `.ent` stub + a `_Layers/` folder. Standard
 ### Core (always required)
 | Layer file | Content | Notes |
 |---|---|---|
-| `default.layer` | Game mode entity, AI world (navmesh), radio manager, faction manager, preload manager, loadout manager, music manager | Game mode prefab varies: `GameMode_Seize.et` (standard), `GameMode_Escalation_Base.et` (ConflictEscalation custom) |
+| `default.layer` | Game mode entity, AI world (navmesh), radio manager, faction manager, preload manager, loadout manager, music manager | Game mode prefab varies: `GameMode_Campaign.et` (vanilla 1.9.0.37), `GameMode_Escalation_Base.et` (ConflictEscalation custom) |
 | `Bases.layer` | All `ConflictMilitaryBase.et` in one `$grp` block | Named entity blocks per base |
 | `StartingPos.layer` / `StartingPositions.layer` | MOB bases — often split from regular bases | Includes `IRON_SeedingRestrictionZoneEntity`, `SCR_CampaignSuppliesComponent` |
-| `CAH.layer` | `SCR_CaptureAndHoldArea` trigger volumes | One per capture zone; referenced by `m_aCaptureAndHoldAreaNames` on major bases |
+| `CAH.layer` | `SCR_CaptureAndHoldArea` trigger volumes | One per capture zone. 1.9.0.37 has no base property that names them; they register with `SCR_CaptureAndHoldManager` (Capture and Hold game mode) |
 
 ### AI Spawning
 | Layer file | Content | Key properties |
@@ -282,23 +279,22 @@ SCR_AIWorld : "{E0A05C76552E7F58}Prefabs/AI/SCR_AIWorld.et" { ... navmesh config
 PerceptionManager : "{028DAEAD63E056BE}Prefabs/World/Game/PerceptionManager.et" { coords ... }
 RadioManagerEntity : "{B8E09FAB91C4ECCD}Prefabs/Systems/Radio/RadioManager.et" { coords ... }
 ScriptedChatEntity : "{536D80EB494DDC43}Prefabs/MP/Campaign/CampaignMPChatEntity.et" { coords ... }
-SCR_GameModeCampaign GameMode1 : "{CE6DD1D3C1BC7366}Prefabs/GameLogic/GameMode_Seize.et" { ... }
-SCR_CampaignFactionManager CampaignFactionManager1 : "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager_Seize.et" { coords ... }
+SCR_GameModeCampaign GameMode1 : "{3B230AAC5252108F}Prefabs/MP/Modes/Conflict/GameMode_Campaign.et" { ... }
+SCR_CampaignFactionManager CampaignFactionManager1 : "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et" { coords ... }
 BasePreloadManager PreloadManager1 : "{0E26864C62DBCA39}Prefabs/MP/CaptureAndHoldPreloadManager.et" { coords ... }
 SCR_BaseTaskManager TaskManager1 : "{17E3EF2CF455460F}Prefabs/MP/Campaign/CampaignTaskManager.et" { coords ... }
 ItemPreviewManagerEntity : "{9F18C476AB860F3B}Prefabs/World/Game/ItemPreviewManager.et" { coords ... }
 MusicManager : "{359452CCDBDD03F5}Prefabs/Sounds/Music/MusicManager_Campaign.et" { coords ... }
-SCR_LoadoutManager : "{B6057D90BDD5BEE9}Prefabs/MP/Campaign/CampaignLoadoutManager_Seize.et" { coords ... }
+SCR_LoadoutManager : "{58FBD035E53D95C1}Prefabs/MP/Campaign/CampaignLoadoutManager.et" { coords ... }
 ```
 
-`GameMode_Seize.et` key properties:
+`SCR_GameModeCampaign` key properties (the first five are declared by 1.9.0.37 in `SCR_GameModeCampaign.c` and `SCR_BaseGameMode.c`; the rest are declared by no 1.9.0.37 script, so they only act with a mod that adds them):
 - `m_iControlPointsThreshold` — bases enemy must hold to start victory timer (default 2-5)
 - `m_fVictoryTimer` — seconds after threshold reached before win (default 300)
 - `m_fAutoReloadTime` — mission restart delay after end (default 30)
-- `m_iRegularSuppliesIncome` — passive supply income per interval (default 50)
+- `m_iRegularSuppliesIncome`: passive supply income per interval (default 40)
 - `m_bEstablishingBasesEnabled 0` — disable for simple scenarios
 - `m_bRandomizeBases 1` + `m_iRandomizeTreshold` — randomize which bases are active
-- `m_bHideBasesOutsideRadioRange 1` — standard for most scenarios
 - `m_bShowBattlePrepTimer 1` — show prep timer at start
 - `m_bScaleRespawnTimer 1` — scale respawn time by player count
 - `m_bServerSeedingEnabled 1` + `m_iServerSeedingThreshold` — seeding mode (ConflictEscalation)
@@ -308,7 +304,7 @@ SCR_LoadoutManager : "{B6057D90BDD5BEE9}Prefabs/MP/Campaign/CampaignLoadoutManag
 
 ## CAH Layer (Capture and Hold Areas)
 
-`SCR_CaptureAndHoldArea` entities define the physical zones for major base capture. Referenced by `m_aCaptureAndHoldAreaNames` on `SCR_CampaignSeizingComponent`.
+`SCR_CaptureAndHoldArea` entities define capture zones. In 1.9.0.37 no property on `SCR_CampaignSeizingComponent` or the base names them; an area registers with `SCR_CaptureAndHoldManager` and logs "CaptureAndHoldArea cannot find SCR_CaptureAndHoldManager! Functionality might be limited!" when the world has none (`SCR_CaptureAndHoldArea.c`), which a Conflict world does not.
 
 ```
 $grp SCR_CaptureAndHoldArea : "{F4649500E51DF810}Prefabs/MP/Modes/CaptureAndHold/Areas/CaptureAndHoldArea_Major.et" {
@@ -329,7 +325,6 @@ $grp SCR_CaptureAndHoldArea : "{F4649500E51DF810}Prefabs/MP/Modes/CaptureAndHold
 }
 ```
 
-- Names must match strings in `m_aCaptureAndHoldAreaNames` array on the base exactly
 - Symbol keys: `#AR-CAH-Area_Symbol_A` through `_U` (lettered for map display)
 - `DrawShape 0` — hide debug shape in game
 - `m_bEnableScoring 0` — set when CAH is for territory control only, not scoring
@@ -348,7 +343,6 @@ $grp GenericEntity : "{0226331FB6A8249A}Prefabs/Systems/MilitaryBase/ConflictSou
     m_fSupplyMultiplier 0
    }
    SCR_CampaignSourceBaseComponent "{621EB97024DABD3C}" {
-    m_bExcludeFromRandomization 1
     m_iScorePerTick 0
     m_bExcludeFromBaseCaptureScore 1
    }

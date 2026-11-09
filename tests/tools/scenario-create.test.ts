@@ -67,7 +67,22 @@ describe("scenario_create_conflict world files", () => {
     writeFileSync(join(dir, "Missions", "ScnT.conf.meta"), "keep");
     const r = await create(args(dir));
     expect(r.content[0].text).toMatch(/^Files already exist: Missions\/ScnT\.conf\.meta/);
+    expect(readFileSync(join(dir, "Missions", "ScnT.conf.meta"), "utf-8")).toBe("keep");
     expect(existsSync(join(dir, "Missions", "ScnT.conf"))).toBe(false);
+  });
+
+  it("prints both metas, carrying the header's World GUID, when it writes nothing (B-105)", async () => {
+    const dir = addon("A0c");
+    mkdirSync(join(dir, "Worlds"));
+    writeFileSync(join(dir, "Worlds", "ScnT.ent.meta"), "keep");
+    const refused = (await create(args(dir))).content[0].text;
+    const noTarget = (await create({ ...args(dir), projectPath: undefined })).content[0].text;
+    expect(noTarget).toContain("No target addon");
+    for (const text of [refused, noTarget]) {
+      const worldGuid = /World "\{([0-9A-F]{16})\}Worlds\/ScnT\.ent"/.exec(text)![1];
+      expect(text).toContain(`**Worlds/ScnT.ent.meta**\n\`\`\`\nMetaFileClass {\n Name "{${worldGuid}}Worlds/ScnT.ent"`);
+      expect(text).toMatch(/\*\*Missions\/ScnT\.conf\.meta\*\*\n```\nMetaFileClass \{\n Name "\{[0-9A-F]{16}\}Missions\/ScnT\.conf"/);
+    }
   });
 
   it("refuses when the .ent.meta already exists and writes nothing else", async () => {

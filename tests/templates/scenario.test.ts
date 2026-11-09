@@ -144,6 +144,12 @@ describe("generateConflictScenario", () => {
       expect(defaultLayer).toContain("{3B230AAC5252108F}Prefabs/MP/Modes/Conflict/GameMode_Campaign.et");
     });
 
+    it("does not write m_bHideBasesOutsideRadioRange (no 1.9 script declares it) and keeps the declared game mode properties (B-104)", () => {
+      const { defaultLayer } = generateConflictScenario(MINIMAL_OPTS);
+      expect(defaultLayer).not.toContain("m_bHideBasesOutsideRadioRange");
+      expect(defaultLayer).toContain("m_bEstablishingBasesEnabled 0");
+    });
+
     it("skips the game mode and the faction manager each when the parent world has one; both gives an empty layer", () => {
       const gm = generateConflictScenario({ ...MINIMAL_OPTS, parentHasGameMode: true }).defaultLayer;
       expect(gm).not.toContain("SCR_GameModeCampaign");
@@ -286,14 +292,17 @@ describe("generateConflictScenario", () => {
       expect(basesLayer).toContain('"Transmitting Range" 2500');
     });
 
-    it("major type sets m_bRequiresCaptureAndHoldAreas", () => {
+    it("major type keeps its radius and writes none of the CAH seizing properties 1.9 does not declare (B-104)", () => {
       const opts = {
         scenarioName: "Test",
         worldName: "Everon",
         bases: [{ name: "Port", position: "0 0 0", faction: "US", type: "major" as const }],
       };
       const { basesLayer } = generateConflictScenario(opts);
-      expect(basesLayer).toContain("m_bRequiresCaptureAndHoldAreas 1");
+      expect(basesLayer).toContain("m_iRadius 200");
+      for (const old of ["m_bRequiresCaptureAndHoldAreas", "m_aCaptureAndHoldAreaNames", "m_iAreaThreshold"]) {
+        expect(basesLayer).not.toContain(old);
+      }
     });
 
     it("excludes harbor type from $grp block", () => {

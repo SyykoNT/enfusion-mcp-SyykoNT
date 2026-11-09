@@ -12,7 +12,7 @@ Quick-reference for layer file names, entity types, and prefab GUIDs used in pro
 |---|---|---|
 | `default.layer` | Game mode, faction manager, AI world, radio manager, managers | See `conflict-scenario-setup.md` for full entity list |
 | `Bases.layer` | All `ConflictMilitaryBase.et` in one `$grp` block | Named entity blocks per base |
-| `CAH.layer` | `SCR_CaptureAndHoldArea` trigger volumes for major bases | Referenced by `m_aCaptureAndHoldAreaNames` |
+| `CAH.layer` | `SCR_CaptureAndHoldArea` trigger volumes for major bases | 1.9.0.37 has no base property that names them. The areas register with `SCR_CaptureAndHoldManager` (Capture and Hold game mode) and log a warning without one (`SCR_CaptureAndHoldArea.c`) |
 | `Defenders.layer` / `FIA_Defenders.layer` | Faction patrol spawnpoints with `SCR_DefendWaypoint` child | One `$grp` per faction |
 
 ### AI Spawning
@@ -99,8 +99,8 @@ Quick-reference for layer file names, entity types, and prefab GUIDs used in pro
 | `{8BEE4B0606893CDF}` | `ConflictSourceBase_T1Harbor.et` | Small harbor — low supply income |
 | `{0226331FB6A8249A}` | `ConflictSourceBase_T3Harbor.et` | Large harbor — high supply income |
 | `{1739B43A3702BB84}` | `ConflictSourceBase_Airfield.et` | Airfield supply source |
-| `{CE6DD1D3C1BC7366}` | `GameMode_Seize.et` | Conflict game mode |
-| `{F1AC26310BAE3788}` | `CampaignFactionManager_Seize.et` | Faction manager |
+| `{3B230AAC5252108F}` | `Prefabs/MP/Modes/Conflict/GameMode_Campaign.et` | Conflict game mode (1.9.0.37 vanilla) |
+| `{F1AC26310BAE3788}` | `Prefabs/MP/Campaign/CampaignFactionManager.et` | Faction manager (1.9.0.37 vanilla) |
 | `{35C70C8528D145B1}` | `MOBSpawnProtectionArea.et` | MOB player spawn safety zone |
 | `{D71F66A96E03FE7C}` | `SCR_BattlePrepZone.et` | Battle prep safe zone at match start |
 | `{27941CDF3E7E1A5F}` | `CampaignRemnantsSupplyDepot.et` | Supply drop point for player-built bases |
@@ -203,8 +203,6 @@ m_aExcludedEditableEntityLabels {
 | `m_bCanBeHQ` | `1` | — | — | — |
 | `m_bIsControlPoint` | `1` | `1` | — | `1` |
 | `m_bIsSupplyHub` | `1` | `1` | — | — |
-| `m_bExcludeFromRandomization` | `1` | `1` | — | — |
-| `m_fRadioAntennaServiceRange` | `1000` | `1470` | `1470` | `1470` |
 
 ### `SCR_CampaignSuppliesComponent` (by role)
 
@@ -219,7 +217,9 @@ m_aExcludedEditableEntityLabels {
 
 ### `SCR_CoverageRadioComponent` (radio range by role)
 
-| Role | `m_fRadioAntennaServiceRange` |
+The base's range is the `"Transmitting Range"` of its `RelayTransceiver` (inside `SCR_CoverageRadioComponent`, `Transceivers`): `SCR_CampaignMilitaryBaseComponent.c` `GetRelayRadioRange` reads `RelayTransceiver.GetRange()`, and `Prefabs/Systems/MilitaryBase/ConflictMilitaryBase.et` sets `"Transmitting Range" 1000`. No 1.9.0.37 script declares an antenna service range, a per-base randomization exclusion or required group types on a base.
+
+| Role | `"Transmitting Range"` |
 |---|---|
 | MOB / HQ | `1000` |
 | Harbor / Airfield source | `680`–`700` |

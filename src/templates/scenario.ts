@@ -37,14 +37,9 @@ const PREFAB_PATROL_SEEDING = "{0E66F798F84EEB58}Prefabs/Systems/AmbientPatrol/I
 
 // NOTE (D-044): this file targets vanilla 1.8.0.13 (game mode GameMode_Campaign.et, faction
 // manager CampaignFactionManager.et) and diverges from BK's copy on purpose.
-// The keywords below are not in vanilla: Workbench logs "Unknown keyword" and ignores them.
-// They are kept for the Conflict mod family (ConflictEscalation / IRON / SeizeAMPSecure):
-//   m_bHideBasesOutsideRadioRange
-//   m_aCaptureAndHoldAreaNames    m_bRequiresCaptureAndHoldAreas
-//   m_iAreaThreshold              m_bServerSeedingEnabled
-//   m_iServerSeedingThreshold     m_bAutoSizeToHQ
-//   m_bRespawnOnlyDuringSeeding   m_iDistanceToHQ
-// Seeding (seedingEnabled) still needs that mod.
+// The only keywords written that no 1.9.0.37 script declares are the two seeding ones
+// (m_bServerSeedingEnabled, m_iServerSeedingThreshold): Workbench logs "Unknown keyword" for them
+// without a mod that adds them. Seeding (seedingEnabled) still needs that mod.
 
 // Component GUIDs inside ConflictMilitaryBase (from mod analysis)
 const CID_SEIZING   = "{5C66967235FBEEA3}";
@@ -235,7 +230,6 @@ function buildDefaultLayer(opts: ConflictScenarioOptions): string {
     lines.push(` m_fVictoryTimer 300`);
     lines.push(` m_iRegularSuppliesIncome ${opts.suppliesIncome ?? 50}`);
     lines.push(` m_bEstablishingBasesEnabled 0`);
-    lines.push(` m_bHideBasesOutsideRadioRange 1`);
     if (opts.seedingEnabled) {
       lines.push(` m_bServerSeedingEnabled 1`);
       lines.push(` m_iServerSeedingThreshold ${opts.seedingThreshold ?? 12}`);
@@ -340,12 +334,6 @@ function buildBasesLayer(opts: ConflictScenarioOptions): string {
       lines.push(`    m_fMinimumSeizingTime 30`);
       if (isMajor) {
         lines.push(`    m_iRadius 200`);
-        lines.push(`    m_bRequiresCaptureAndHoldAreas 1`);
-        lines.push(`    m_iAreaThreshold 50`);
-        const zones = cahZoneNames(base);
-        lines.push(`    m_aCaptureAndHoldAreaNames {`);
-        for (const z of zones) lines.push(`     "${z}"`);
-        lines.push(`    }`);
       }
     }
     lines.push(`   }`);

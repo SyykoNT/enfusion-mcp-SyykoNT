@@ -146,11 +146,6 @@ Source bases use `SCR_CampaignSourceBaseComponent` (not `SCR_CampaignMilitaryBas
 ```
 $grp GenericEntity : "{0226331FB6A8249A}Prefabs/Systems/MilitaryBase/ConflictSourceBase_T3Harbor.et" {
  HarborNorth {
-  components {
-   SCR_CampaignSourceBaseComponent "{621EB97024DABD3C}" {
-    m_bExcludeFromRandomization 1
-   }
-  }
   coords 5803 2 3533
  }
 }

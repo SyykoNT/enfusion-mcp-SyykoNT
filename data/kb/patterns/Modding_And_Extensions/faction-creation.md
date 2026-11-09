@@ -80,16 +80,16 @@ In Conflict scenarios, factions must be wired into several systems beyond the ba
 ### Faction keys
 Vanilla Conflict uses exactly these case-sensitive keys: `"US"`, `"USSR"`, `"FIA"`. Custom factions must match wherever the key is referenced.
 
-### CampaignFactionManager_Seize.et
+### CampaignFactionManager.et
 The faction manager prefab controls which factions participate and their loadout managers.
 
 ```
-SCR_CampaignFactionManager CampaignFactionManager1 : "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager_Seize.et" {
+SCR_CampaignFactionManager CampaignFactionManager1 : "{F1AC26310BAE3788}Prefabs/MP/Campaign/CampaignFactionManager.et" {
  coords 0 0 0
 }
 ```
 
-To add a custom faction: override `CampaignFactionManager_Seize.et`, add your faction to the `m_aFactions` array, and point it to your faction config.
+To add a custom faction: override `CampaignFactionManager.et`, add an `SCR_CampaignFaction` entry to its `Factions` array, and point it to your faction config (the 1.9.0.37 prefab does this for USSR with `Configs/Factions/USSR_Campaign.conf`).
 
 ### SCR_FactionAffiliationComponent on base entities
 Every `ConflictMilitaryBase` gets a starting owner via `SCR_FactionAffiliationComponent`:
@@ -121,7 +121,7 @@ bool covered = base.IsHQRadioTrafficPossible(SCR_CampaignFaction.Cast(faction));
 ```
 
 ### Loadout manager per faction
-Each faction in Conflict has a loadout manager configured in `CampaignFactionManager_Seize.et`. For custom factions, create a `CampaignLoadoutManager_Seize.et` override per faction and register it.
+In 1.9.0.37 the player loadouts are not in the faction manager: `Prefabs/MP/Campaign/CampaignLoadoutManager.et` (`{58FBD035E53D95C1}`) lists them in `m_aPlayerLoadouts`, one `SCR_FactionPlayerLoadout` per loadout with its `m_sAffiliatedFaction`. For a custom faction, override that prefab and add its loadouts.
 
 ### AAD / AAS faction roles
 In asymmetric mods (ConflictEscalation, SeizeAMPSecure), factions are assigned attacker/defender roles:

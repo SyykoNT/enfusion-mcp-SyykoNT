@@ -228,6 +228,8 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
 
         const worldGuid = generateGuid();
         const headerGuid = generateGuid();
+        const confMetaText = overrideMeta(headerGuid, `Missions/${scenarioName}.conf`);
+        const worldMetaText = worldMeta(worldGuid, `Worlds/${scenarioName}.ent`);
         const output = generateConflictScenario({
           scenarioName: scenarioDisplayName ?? scenarioName,
           worldName,
@@ -286,7 +288,9 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
                   `Files already exist: ${existing.join(", ")}\n\n` +
                   `Generated content (not written):\n\n` +
                   `**Missions/${scenarioName}.conf**\n\`\`\`\n${output.missionConf}\n\`\`\`\n\n` +
+                  `**Missions/${scenarioName}.conf.meta**\n\`\`\`\n${confMetaText}\n\`\`\`\n\n` +
                   `**Worlds/${scenarioName}.ent**\n\`\`\`\n${output.worldEnt}\n\`\`\`\n\n` +
+                  `**Worlds/${scenarioName}.ent.meta**\n\`\`\`\n${worldMetaText}\n\`\`\`\n\n` +
                   `**Worlds/${scenarioName}_Layers/default.layer**\n\`\`\`\n${output.defaultLayer}\n\`\`\`\n\n` +
                   `**Worlds/${scenarioName}_Layers/Bases.layer**\n\`\`\`\n${output.basesLayer}\n\`\`\``,
               }],
@@ -297,9 +301,9 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           const writtenPaths: string[] = [];
           try {
             writeFileSync(confPath,        output.missionConf,  "utf-8"); writtenPaths.push(confPath);
-            writeFileSync(confMetaPath,    overrideMeta(headerGuid, `Missions/${scenarioName}.conf`), "utf-8"); writtenPaths.push(confMetaPath);
+            writeFileSync(confMetaPath,    confMetaText, "utf-8"); writtenPaths.push(confMetaPath);
             writeFileSync(entPath,         output.worldEnt,     "utf-8"); writtenPaths.push(entPath);
-            writeFileSync(metaPath,        worldMeta(worldGuid, `Worlds/${scenarioName}.ent`), "utf-8"); writtenPaths.push(metaPath);
+            writeFileSync(metaPath,        worldMetaText, "utf-8"); writtenPaths.push(metaPath);
             writeFileSync(defaultLayPath,  output.defaultLayer, "utf-8"); writtenPaths.push(defaultLayPath);
             writeFileSync(basesLayPath,    output.basesLayer,   "utf-8"); writtenPaths.push(basesLayPath);
             writeFileSync(defendersLayPath, output.defendersLayer, "utf-8"); writtenPaths.push(defendersLayPath);
@@ -384,9 +388,19 @@ export function registerScenarioCreate(server: McpServer, config: Config): void 
           output.missionConf,
           `\`\`\``,
           ``,
+          `**Missions/${scenarioName}.conf.meta**`,
+          `\`\`\``,
+          confMetaText,
+          `\`\`\``,
+          ``,
           `**Worlds/${scenarioName}.ent**`,
           `\`\`\``,
           output.worldEnt,
+          `\`\`\``,
+          ``,
+          `**Worlds/${scenarioName}.ent.meta**`,
+          `\`\`\``,
+          worldMetaText,
           `\`\`\``,
           ``,
           `**Worlds/${scenarioName}_Layers/default.layer**`,
