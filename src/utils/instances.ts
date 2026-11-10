@@ -68,6 +68,7 @@ export function readInstance(file: string): Instance | undefined {
  */
 export function classify(inst: Instance | undefined, proc: ProcInfo, ownerCreated?: number, owner = OWNER): InstanceClass {
   if (!inst) return "foreign";
+  if (!Number.isFinite(inst.startedAt)) return "stale"; // a NaN compare below would read as not stale
   if (inst.pid !== proc.pid || Math.abs(proc.created - inst.startedAt) > 10_000) return "stale";
   if (inst.ownerPid === owner.pid && inst.ownerStartedAt === owner.startedAt) return "own";
   if (ownerCreated === undefined || ownerCreated > inst.ownerStartedAt + 5_000) return "orphan";

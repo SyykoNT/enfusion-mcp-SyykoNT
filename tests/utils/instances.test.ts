@@ -30,6 +30,12 @@ describe("classify", () => {
     expect(classify(inst(10), proc(10, "", T + 60_000))).toBe("stale");
   });
 
+  it("stale: a missing, string or NaN startedAt never reads as own", () => {
+    for (const startedAt of [undefined, String(T), NaN]) {
+      expect(classify(inst(10, { startedAt: startedAt as unknown as number }), proc(10))).toBe("stale");
+    }
+  });
+
   it("orphan: the owner MCP is gone, or its PID now belongs to a newer process", () => {
     const other = { ownerPid: 999_999, ownerStartedAt: T - 1000 };
     expect(classify(inst(10, other), proc(10), undefined)).toBe("orphan");
