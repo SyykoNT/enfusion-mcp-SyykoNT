@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -91,7 +91,9 @@ describe.skipIf(!hasGit)("COALITION tools with a worktree CRF", { timeout: 30_00
     resolveCoalitionRoots(cfg, wt);
     const dirs = gitCalls.mock.calls.map((c) => (c[1] as string[])[1]);
     expect(dirs.length).toBeGreaterThan(0);
-    expect(new Set(dirs)).toEqual(new Set([fx.crf]));
+    // on windows-latest the temp folder is an 8.3 name (RUNNER~1) while git reports the long one
+    const real = (p: string) => realpathSync.native(p);
+    expect(new Set(dirs.map(real))).toEqual(new Set([real(fx.crf)]));
   });
 
   describe("refusals say where a worktree is also accepted", () => {

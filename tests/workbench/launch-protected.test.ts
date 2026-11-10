@@ -72,6 +72,7 @@ describe("wb_launch worldPath", () => {
     vi.spyOn(client, "ping").mockResolvedValue(true);
     const netstat = vi.fn(async () => ""); // no real netstat: the owner stays unknown
     client.worldProbe.netstat = netstat;
+    client.ownerProbe.platform = "win32"; // the owner lookup runs only on Windows; this test stubs what it reads
     const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
     const r = await wbTools(config, client).wb_launch({ worldPath: "worlds/Test.ent" });
     expect(launch).not.toHaveBeenCalled();
