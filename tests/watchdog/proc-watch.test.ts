@@ -6,7 +6,7 @@ import type { Instance } from "../../src/utils/instances.js";
 import type { ProcInfo } from "../../src/utils/process.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
 import type { WinInfo } from "../../src/watchdog/signals.js";
-import { procWatchLines, runProcWatcher, startProcWatcher, type ProcWatchState } from "../../src/watchdog/proc-watch.js";
+import { PROC_WATCH_DIR, procWatchLines, runProcWatcher, startProcWatcher, type ProcWatchState } from "../../src/watchdog/proc-watch.js";
 
 // A fake home before any module loads, so the watch dir is a temp folder (MCP-0095). Nothing here runs a real PowerShell,
 // taskkill, probe or watcher process: the probe, the kill, the process list and the clock are stubs, the folders are temp.
@@ -169,10 +169,9 @@ describe("proc-watch ends a process only for a VM exception window", () => {
     expect(blocked.length).toBeGreaterThan(0);
     expect(blocked[0].why).toBe("the process waits for OK, it is not ended");
     // The state file the status replies read: one line for this PID, with the title and the wait.
-    const dir = mkdtempSync(join(tmpdir(), "emcp-pw-lines-"));
-    temps.push(dir);
-    writeFileSync(join(dir, `${PID}_${START}.json`), JSON.stringify(blocked.at(-1)));
-    const lines = procWatchLines({ dir, root: t.root, now: blocked.at(-1)!.updated + 1000, alive: () => true });
+    mkdirSync(PROC_WATCH_DIR, { recursive: true });
+    writeFileSync(join(PROC_WATCH_DIR, `${PID}_${START}.json`), JSON.stringify(blocked.at(-1)));
+    const lines = procWatchLines({ root: t.root, alive: () => true });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('"Missing Addon"');
     expect(lines[0]).toContain("waits for OK");

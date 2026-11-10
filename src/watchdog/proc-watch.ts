@@ -282,8 +282,6 @@ export interface ProcWatchQuery {
   since?: number;
   /** Only ended_vme and end_failed. */
   final?: boolean;
-  dir?: string;
-  now?: number;
   alive?: (pid: number) => boolean;
 }
 
@@ -295,12 +293,10 @@ const oneLine = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").
  * watcher leaves its last word on disk), ended_vme and end_failed stay. The files are not ours to trust: a field of the wrong type drops the state.
  */
 export function procWatchLines(q: ProcWatchQuery): string[] {
-  const dir = q.dir ?? PROC_WATCH_DIR;
-  const now = q.now ?? Date.now();
   const alive = q.alive ?? isAlive;
   let names: string[] = [];
   try {
-    names = readdirSync(dir).filter((n) => /^\d+_-?\d+\.json$/.test(n));
+    names = readdirSync(PROC_WATCH_DIR).filter((n) => /^\d+_-?\d+\.json$/.test(n));
   } catch {
     // no watcher has run yet
   }
@@ -308,14 +304,14 @@ export function procWatchLines(q: ProcWatchQuery): string[] {
   for (const n of names) {
     let s: ProcWatchState;
     try {
-      s = JSON.parse(readFileSync(join(dir, n), "utf-8"));
+      s = JSON.parse(readFileSync(join(PROC_WATCH_DIR, n), "utf-8"));
     } catch {
       continue;
     }
     const ok = !!s && typeof s === "object" && SHOWN.has(s.state) && Number.isSafeInteger(s.pid) && s.pid > 0 && Number.isSafeInteger(s.watcherPid) && s.watcherPid > 0
       && (s.kind === "server" || s.kind === "client") && typeof s.instance === "string" && isAbsolute(s.instance) && Number.isFinite(s.updated);
     // Written as "not within" so a missing or NaN time drops the state too.
-    if (!ok || !(now - s.updated <= DAY_MS) || !isUnder(s.instance, q.root)) continue;
+    if (!ok || !(Date.now() - s.updated <= DAY_MS) || !isUnder(s.instance, q.root)) continue;
     if (q.pids && !q.pids.includes(s.pid)) continue;
     if (q.since !== undefined && !(s.updated >= q.since)) continue;
     if (!FINAL.has(s.state) && (q.final || !alive(s.watcherPid))) continue;
