@@ -6,7 +6,7 @@ import type { Instance } from "../../src/utils/instances.js";
 import type { ProcInfo } from "../../src/utils/process.js";
 import type { ProbeSample } from "../../src/watchdog/probe.js";
 import type { WinInfo } from "../../src/watchdog/signals.js";
-import { runProcWatcher, startProcWatcher, type ProcWatchState } from "../../src/watchdog/proc-watch.js";
+import { procWatchLines, runProcWatcher, startProcWatcher, type ProcWatchState } from "../../src/watchdog/proc-watch.js";
 
 // A fake home before any module loads, so the watch dir is a temp folder (MCP-0095). Nothing here runs a real PowerShell,
 // taskkill, probe or watcher process: the probe, the kill, the process list and the clock are stubs, the folders are temp.
@@ -159,6 +159,30 @@ describe("proc-watch ends a process only for a VM exception window", () => {
     const moving = rig({ script });
     await moving.run();
     expect(moving.kill).not.toHaveBeenCalled();
+  });
+
+  it("reports a Missing Addon box as one line that says the process waits for OK, and never ends, clicks or closes it", async () => {
+    const t = rig({ script: run5s(6, [otherWin("Missing Addon")]) });
+    await t.run();
+    expect(t.kill).not.toHaveBeenCalled();
+    const blocked = t.states.filter((s) => s.state === "blocked_dialog");
+    expect(blocked.length).toBeGreaterThan(0);
+    expect(blocked[0].why).toBe("the process waits for OK, it is not ended");
+    // The state file the status replies read: one line for this PID, with the title and the wait.
+    const dir = mkdtempSync(join(tmpdir(), "emcp-pw-lines-"));
+    temps.push(dir);
+    writeFileSync(join(dir, `${PID}_${START}.json`), JSON.stringify(blocked.at(-1)));
+    const lines = procWatchLines({ dir, root: t.root, now: blocked.at(-1)!.updated + 1000, alive: () => true });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('"Missing Addon"');
+    expect(lines[0]).toContain("waits for OK");
+  });
+
+  it("a VM exception box still ends the process when a Missing Addon box is open beside it", async () => {
+    const t = rig({ script: run5s(3, [otherWin("Missing Addon"), vmeWin()]) });
+    expect(await t.run()).toBe(0);
+    expect(t.kill).toHaveBeenCalledTimes(1);
+    expect(t.state().state).toBe("ended_vme");
   });
 
   it("reports another dialog open 10 s as blocked_dialog and never ends it", async () => {

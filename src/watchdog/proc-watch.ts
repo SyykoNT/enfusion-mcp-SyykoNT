@@ -77,6 +77,8 @@ export interface ProcWatchDeps {
 }
 
 const isVme = (w: WinInfo) => w.cls === VME_CLASS && w.text === VME_TITLE;
+/** A server or client whose -addons names a mod it cannot find stops on this box until OK is pressed; it is reported, never answered or ended (D-067). */
+const isMissingAddon = (w: WinInfo) => w.cls === VME_CLASS && w.text === "Missing Addon";
 const norm = (p: string) => p.replace(/\//g, "\\").toLowerCase();
 /** The command line starts with the instance's exe path, quoted or not, and the path ends there (end, space or quote). */
 const sameImage = (cmd: string, exe: string) => {
@@ -229,7 +231,7 @@ export async function runProcWatcher(o: ProcWatchOpts, over: Partial<ProcWatchDe
           const done = await end(s, vmeWin);
           if (done) return 0;
         } else if (otherWin && other && s.t - other.since >= HOLD_MS) {
-          save("blocked_dialog", { dialog: { title: otherWin.text, text: dialogText(otherWin) } });
+          save("blocked_dialog", { dialog: { title: otherWin.text, text: dialogText(otherWin) }, ...(isMissingAddon(otherWin) ? { why: "the process waits for OK, it is not ended" } : {}) });
         } else save("watching");
       }
       await d.wait(TICK_MS);
