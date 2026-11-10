@@ -255,7 +255,8 @@ describe("mission_server start and stop", () => {
     expect(r.content[0].text).toContain("**Peer 2 joined** (PID 99999): players connected 2.");
     expect(sys.spawned[0]).toEqual(expect.arrayContaining(["-client", `127.0.0.1:${port}`, "-profile", join(MISSION_ROOT, String(port), "peer2")]));
     const s = await tool(config(home))({ action: "status" });
-    expect(s.content[0].text).toContain(`- port ${port}: 1 process(es) running, online (no GAME state: a lobby game mode waits for players), players connected 2`);
+    expect(s.content[0].text).toContain(`- port ${port}: 1 process(es) running, online, no GAME state yet, players connected 2`);
+    expect(s.content[0].text).not.toContain("lobby");
   });
 
   it("status reads online from the log and says when nothing of a run is still running", async () => {
@@ -263,7 +264,8 @@ describe("mission_server start and stop", () => {
     mkdirSync(log, { recursive: true });
     writeFileSync(join(log, "console.log"), "00:19:53.459 DEFAULT      : Entered online game state.\r\n");
     const r = await tool(config(home))({ action: "status" });
-    expect(r.content[0].text).toContain("- port 2523: nothing running; last run was online (no GAME state: a lobby game mode waits for players)");
+    expect(r.content[0].text).toContain("- port 2523: nothing running; last run was online, no GAME state yet, players connected 0");
+    expect(r.content[0].text).not.toContain("lobby");
   });
 
   it("stops only its own processes, clients before the server", async () => {

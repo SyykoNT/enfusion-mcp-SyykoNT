@@ -15,7 +15,7 @@ import { findMissionHeader } from "./server-params.js";
 
 /** Everything this tool starts lives here, one folder per port: server/, peer<n>/, run.json. */
 export const MISSION_ROOT = join(MCP_HOME, "mission-server");
-// The server accepts clients from here on; GAME comes later and only from some game modes (COALITION's lobby waits for players).
+// The server accepts clients from here on; GAME comes later and only from some game modes.
 const ONLINE = /Entered online game state/;
 const GAME_STATE = /OnGameStateChanged = GAME\b/;
 // The engine logs this on every join and leave (seen 2026-11-02: "NETWORK : Players connected: 2 / 2").
@@ -466,7 +466,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             const log = resolveLogFile({ dir: join(MISSION_ROOT, port, "server"), file: "console" });
             const t = log ? readFileSync(log, "utf-8") : "";
             const players = `, players connected ${playersConnected(t)}`;
-            const game = GAME_STATE.test(t) ? `online, GAME reached${players}` : ONLINE.test(t) ? `online (no GAME state: a lobby game mode waits for players)${players}` : "not online";
+            const game = GAME_STATE.test(t) ? `online, GAME reached${players}` : ONLINE.test(t) ? `online, no GAME state yet${players}` : "not online";
             const live = entries.filter((e) => e.file && isUnder(e.file, join(MISSION_ROOT, port)));
             return (live.length
               ? `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`
