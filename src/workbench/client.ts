@@ -200,6 +200,12 @@ export const isWorldPath = (path: string) => /\.ent$/i.test(path);
 /** A project file path. Opening one while the open world has unsaved changes raises the same "Loading world" prompt (live check, 1.9.0.37). */
 export const isProjectPath = (path: string) => /\.gproj$/i.test(path);
 
+/** wb_projects open and wb_open_resource send a path to the World Editor, and a .gproj there loads no project in Workbench 1.9 (B-181, B-188). */
+export const gprojOpenRefusal = (path: string, tool: string) =>
+  `Refused: ${path} is a project file. Opening a .gproj with ${tool} does not load a project in Workbench 1.9: Workbench refuses it and leaves the world unstable, ` +
+  "or opens the modal Project Settings window, which blocks every MCP call. Nothing was sent to Workbench. " +
+  "To work on that project, start Workbench on it with wb_launch (gprojPath).";
+
 /** A call that opens a world or project file: EditorControl openResource or Resources open on a .ent or .gproj. */
 const opensWorld = (params: Record<string, unknown>) =>
   (params.action === "openResource" || params.action === "open") && typeof params.path === "string" && (isWorldPath(params.path) || isProjectPath(params.path));

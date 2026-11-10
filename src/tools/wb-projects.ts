@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isProjectPath, isWorldPath, type WorkbenchClient } from "../workbench/client.js";
+import { gprojOpenRefusal, isProjectPath, isWorldPath, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 
 export function registerWbProjects(server: McpServer, client: WorkbenchClient): void {
@@ -8,17 +8,18 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
     "wb_projects",
     {
       description:
-        "Query project information from the Workbench. List all loaded addon projects, locate a specific project by name, or open a .gproj to load it into Workbench. " +
-        "Opening a .gproj or a .ent while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel), and that dialog blocks every MCP call until a person answers it, so open refuses then " +
+        "Query project information from the Workbench. List all loaded addon projects, locate a specific project by name, or open a world (.ent) in the World Editor. " +
+        "A .gproj is refused before anything is sent: opening a project file this way does not load a project in Workbench 1.9 (it is refused and leaves the world unstable, or opens the modal Project Settings window); start Workbench on that project with wb_launch instead. " +
+        "Opening a .ent while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel), and that dialog blocks every MCP call until a person answers it, so open refuses then " +
         "(local Workbench on Windows only; it opens with a warning when it cannot check). A layer this MCP created with wb_layers counts as unsaved until wb_save runs. Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
         action: z
           .enum(["list", "locate", "open"])
-          .describe("Action: list (all loaded projects), locate (find specific project path), or open (load a .gproj into Workbench)"),
+          .describe("Action: list (all loaded projects), locate (find specific project path), or open (open a .ent world; a .gproj is refused, use wb_launch)"),
         name: z
           .string()
           .optional()
-          .describe("Project/addon name to locate (required for locate action), or .gproj file path (required for open action)"),
+          .describe("Project/addon name to locate (required for locate action), or .ent world path (required for open action)"),
       },
     },
     async ({ action, name }) => {
@@ -37,8 +38,9 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
             };
           }
 
-          // A .gproj open raises the same "Loading world" prompt as a .ent open (live check, 1.9.0.37).
-          const guard = isWorldPath(name) || isProjectPath(name) ? await client.checkWorldOpen(name) : undefined;
+          if (isProjectPath(name)) return { content: [{ type: "text" as const, text: gprojOpenRefusal(name, "wb_projects open") }], isError: true };
+
+          const guard = isWorldPath(name) ? await client.checkWorldOpen(name) : undefined;
           if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
           if (guard) warn = `\n\n${guard.warn}`;
 

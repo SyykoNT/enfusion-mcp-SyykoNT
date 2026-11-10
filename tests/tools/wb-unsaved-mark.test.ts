@@ -77,7 +77,7 @@ function setup(host = "127.0.0.1") {
     env, client, netstat, titles, sent, descriptions,
     layer: () => tools.wb_layers({ action: "create", name: "L1" }),
     open: (path = OPEN_PATH) => tools.wb_open_resource({ path }),
-    resOpen: () => tools.wb_resources({ action: "open", path: OPEN_PATH }),
+    resOpen: (path = OPEN_PATH) => tools.wb_resources({ action: "open", path }),
     save: () => tools.wb_save({}),
     play: () => tools.wb_play({}),
     opens: () => sent.filter((s) => s.endsWith(":openResource")).length,
@@ -166,7 +166,7 @@ describe("a layer created by the MCP counts as unsaved for a world open", () => 
     const s = setup();
     await s.layer();
     s.env.netstat = async () => ""; // cannot tell: the open is sent
-    expect((await s.open("C:/mods/Other/addon.gproj")).isError).toBeUndefined();
+    expect((await s.resOpen("C:/mods/Other/addon.gproj")).isError).toBeUndefined(); // wb_open_resource refuses a .gproj; wb_resources still sends it
     s.env.netstat = async () => listening(4242);
     expect((await s.open()).isError).toBeUndefined();
   });
@@ -265,7 +265,7 @@ describe("the footer after a world open", () => {
   it("a .gproj open loads no world, so it does not say edit mode", async () => {
     const s = setup();
     s.client.setMode("no_world");
-    const r = await s.open("C:/mods/Other/addon.gproj");
+    const r = await s.resOpen("C:/mods/Other/addon.gproj");
     expect(r.content[0].text.endsWith("`Workbench: no world open`")).toBe(true);
   });
 });
