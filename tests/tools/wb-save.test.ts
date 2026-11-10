@@ -64,6 +64,7 @@ function setup(info: Record<string, unknown>, onSave: (folder: string) => unknow
   const client = new WorkbenchClient("127.0.0.1", mock.port);
   // Stubbed so that no test runs netstat or reads windows (wb_play reads netstat only when a layer of ours is marked).
   client.worldProbe = { netstat: async () => "Active Connections\r\n", titles: async () => ({ unavailable: "not reached" }) };
+  client.crashProbe = { reporters: async () => [], logs: () => undefined }; // the timeout test would otherwise start PowerShell
   const tools: Record<string, Handler> = {};
   const descriptions: Record<string, string> = {};
   registerWbEditorTools(
