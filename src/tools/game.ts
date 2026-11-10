@@ -36,6 +36,8 @@ export function registerGame(server: McpServer, config: Config): void {
       description:
         "Start / stop the Arma Reforger game client for testing: load local packed addons (built with `mod` build), " +
         "join a server directly (connect=IP[:port], e.g. the local `server start`), or open a world straight away. " +
+        "A {GUID}Missions/Name.conf mission header is accepted as `world` and passed as `-server {GUID}path`, as `mission_server` does for a dedicated server; " +
+        "what a game client does with it is unconfirmed: Bohemia documents `-server <world>` for the game executable only with a .ent world, and nothing about a header. " +
         "'logs' tails the client console log (script errors at runtime). " +
         "The client runs with -noThrow (no error dialogs), and the status reply reports the script exceptions (VM exceptions) and crash.log of each client this MCP started. " +
         "On Windows a watcher is started for every client it launches: if a VM exception window stays open on it, that process (and only that one) is ended and its logs are saved; the status reply shows what the watcher did.",
@@ -43,7 +45,7 @@ export function registerGame(server: McpServer, config: Config): void {
         action: z.enum(["launch", "stop", "status", "logs"]),
         addons: z.array(z.string()).optional().describe("(launch) Local addon folder names to load from their packed build"),
         connect: z.string().optional().describe("(launch) Join this server, e.g. '127.0.0.1' or '127.0.0.1:2001' (uses the Diag exe)"),
-        world: z.string().optional().describe("(launch) World to load on start, e.g. 'worlds/MP/MPTest.ent' (uses the Diag exe)"),
+        world: z.string().optional().describe("(launch) World to load on start, e.g. 'worlds/MP/MPTest.ent', or a mission header '{GUID}Missions/Name.conf' (uses the Diag exe; a header needs its {GUID})"),
         windowed: z.boolean().optional().describe("(launch) Windowed mode"),
         extraArgs: z.array(z.string()).optional().describe("(launch) Extra CLI args"),
         force: z.boolean().optional().describe("(stop) Kill instead of asking to close. Still only clients this MCP started"),
@@ -63,8 +65,13 @@ export function registerGame(server: McpServer, config: Config): void {
           if (a.connect && (!port || (port[1] !== undefined && (Number(port[1]) < 1 || Number(port[1]) > 65535)))) {
             return text(`connect must be host or host:port (port 1-65535), e.g. 127.0.0.1:2001: ${a.connect}`, true);
           }
-          if (a.world && (!/^(\{[0-9A-Fa-f]{16}\})?[A-Za-z0-9][\w./-]*\.ent$/i.test(a.world) || a.world.split("/").includes(".."))) {
-            return text(`world must be a .ent resource path, e.g. worlds/MP/MPTest.ent: ${a.world}`, true);
+          // A mission header goes as `-server {GUID}path`, the form mission_server uses; its {GUID} is required (a path-only name crashes or is ignored).
+          const header = a.world && /\.conf$/i.test(a.world) ? a.world : undefined;
+          if (header && (!/^\{[0-9A-Fa-f]{16}\}[\w ./-]+\.conf$/i.test(header) || header.split("/").includes(".."))) {
+            return text(`A mission header must be {GUID}path .conf, for example {0123456789ABCDEF}Missions/Name.conf: a path-only resource name crashes or is ignored. Got: ${a.world}`, true);
+          }
+          if (a.world && !header && (!/^(\{[0-9A-Fa-f]{16}\})?[A-Za-z0-9][\w./-]*\.ent$/i.test(a.world) || a.world.split("/").includes(".."))) {
+            return text(`world must be a .ent resource path, e.g. worlds/MP/MPTest.ent, or a {GUID}path .conf mission header: ${a.world}`, true);
           }
           const badArg = refusedArg(a.extraArgs ?? []);
           if (badArg) return text(`extraArgs may not contain ${badArg}: write-path flags (-profile, -logsDir, -addonDownloadDir, -addonTempDir, -saveDir, -cfg) and quotes are refused.`, true);
@@ -84,7 +91,8 @@ export function registerGame(server: McpServer, config: Config): void {
           }
           if (guids.length) args.push("-addonsDir", config.packedPath, "-addons", guids.join(","));
           if (a.connect) args.push("-client", a.connect);
-          if (a.world) args.push("-world", a.world);
+          if (header) args.push("-server", header);
+          else if (a.world) args.push("-world", a.world);
           if (a.windowed) args.push("-window");
           args.push(...(a.extraArgs ?? []));
           const started = Date.now();

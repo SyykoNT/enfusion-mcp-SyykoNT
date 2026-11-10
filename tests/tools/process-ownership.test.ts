@@ -264,6 +264,31 @@ describe("game launch: the process watcher", () => {
     }
   });
 
+  it("a {GUID}path .conf mission header goes as -server with -noThrow; a .ent world still goes as -world", async () => {
+    const { launch } = rig("hdr");
+    const argv = () => vi.mocked(spawnDetached).mock.calls.at(-1)![1] as string[];
+    const header = "{0123456789ABCDEF}Missions/Test.conf";
+    expect((await launch({ action: "launch", lines: 80, world: header })).isError).toBeUndefined();
+    expect(flag(argv(), "-server")).toBe(header);
+    expect(argv()).toContain("-noThrow");
+    expect(argv()).not.toContain("-world");
+    expect((await launch({ action: "launch", lines: 80, world: "worlds/MP/MPTest.ent" })).isError).toBeUndefined();
+    expect(flag(argv(), "-world")).toBe("worlds/MP/MPTest.ent");
+    expect(argv()).toContain("-noThrow");
+    expect(argv()).not.toContain("-server");
+  });
+
+  it("refuses a path-only mission header, or one with .., before anything is spawned, and says why", async () => {
+    const { launch } = rig("hdr2");
+    for (const world of ["Missions/Test.conf", "{0123456789ABCDEF}Missions/../Test.conf"]) {
+      const r = await launch({ action: "launch", lines: 80, world });
+      expect(r.isError, world).toBe(true);
+      expect(r.content[0].text).toContain("path-only resource name crashes or is ignored");
+    }
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(watch.spawns).toEqual([]);
+  });
+
   it("starts none for a launch that is refused or fails before the instance file is written", async () => {
     const { config, launch } = rig("b");
     const noExe = tool(registerGame, { ...config, gamePath: join(config.gamePath, "nowhere") });
