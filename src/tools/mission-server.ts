@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { availableParallelism, freemem, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../config.js";
@@ -86,8 +86,11 @@ export interface Run {
   header?: string;
   addonsDirs: string[];
   addons: string[];
-  /** Hex-parsed CPU masks, set when the caller gave them: BelowNormal priority and these cores for the server and for every client. */
-  cpu?: { server: number; client: number };
+  /**
+   * Hex-parsed CPU masks, set when the caller gave them: BelowNormal priority and these cores for the server and the clients.
+   * `client` is one mask shared by every client, or one mask per peer in start order. `peers` holds each started peer's mask by peer number.
+   */
+  cpu?: { server: number; client: number | number[]; peers?: Record<number, number> };
 }
 
 /** A hex CPU mask ("0x3000") as a number, 0 when the text is not one. shortcut: 32-bit masks only, so no cores above 31. */
@@ -104,20 +107,46 @@ export function coreError(name: string, m: number, cores = availableParallelism(
 
 /**
  * serverCpuMask and clientCpuMask as hex ("0x3000"): both or neither, and no shared core. Game clients on the server's cores
- * starved each other in the 2026-11-02 Boat Patrol run.
+ * starved each other in the 2026-11-02 Boat Patrol run. clientCpuMask is one mask for every client, or a comma-separated list
+ * with one mask per peer (peer n on mask n); then no two masks may share a core either.
  */
-export function cpuMasks(server?: string, client?: string, cores = availableParallelism()): Run["cpu"] | string {
+export function cpuMasks(server?: string, client?: string, cores = availableParallelism(), peers = 1): Run["cpu"] | string {
   if (server === undefined && client === undefined) return undefined;
   const elsewhere = windowsOnly("cpuMask (serverCpuMask, clientCpuMask)");
   if (elsewhere) return elsewhere;
   const s = parseHexMask(server);
-  const c = parseHexMask(client);
-  if (!s || !c) return "serverCpuMask and clientCpuMask must both be given as hex masks, for example 0x3000 and 0x0C00";
+  const parts = (client ?? "").split(",");
+  if (parts.length !== 1 && parts.length !== peers) return `clientCpuMask has ${parts.length} masks but peers is ${peers}: give one mask for every client or exactly one per peer`;
+  const cs = parts.map((p) => parseHexMask(p.trim()));
+  if (!s || cs.includes(0)) return "serverCpuMask and clientCpuMask must both be given as hex masks, for example 0x3000 and 0x0C00";
+  const list = cs.length > 1;
+  const all: [string, number][] = [["serverCpuMask", s], ...cs.map((m, i): [string, number] => [list ? `clientCpuMask peer ${i + 1}` : "clientCpuMask", m])];
   // A pin that fails would leave the clients on the server's cores.
-  const bad = coreError("serverCpuMask", s, cores) ?? coreError("clientCpuMask", c, cores);
+  const bad = all.map(([name, m]) => coreError(name, m, cores)).find(Boolean);
   if (bad) return bad;
-  if (s & c) return `clientCpuMask 0x${c.toString(16)} shares cores with serverCpuMask 0x${s.toString(16)}: game clients must run on other cores`;
-  return { server: s, client: c };
+  for (let j = 1; j < all.length; j++) {
+    const i = all.findIndex(([, m], k) => k < j && m & all[j][1]);
+    if (i >= 0) return `${all[j][0]} 0x${all[j][1].toString(16)} shares cores with ${all[i][0]} 0x${all[i][1].toString(16)}: game clients must run on other cores`;
+  }
+  return { server: s, client: list ? cs : cs[0] };
+}
+
+/** The mask for a joining client, or why not: its own mask must not share a core with the server or a running peer; without one the run's shared mask is used. */
+export function joinMask(cpu: Run["cpu"], mask: string | undefined, running: PeerState[], cores = availableParallelism()): number | undefined | string {
+  if (!cpu) return mask === undefined ? undefined : "clientCpuMask needs a run started with serverCpuMask and clientCpuMask: this run has no CPU masks";
+  if (mask === undefined) {
+    return Array.isArray(cpu.client) ? "This run was started with one clientCpuMask per peer: join needs its own clientCpuMask, or the new client would share cores" : cpu.client;
+  }
+  const m = parseHexMask(mask);
+  if (!m) return "clientCpuMask must be a hex mask, for example 0x0C00";
+  const bad = coreError("clientCpuMask", m, cores);
+  if (bad) return bad;
+  if (m & cpu.server) return `clientCpuMask 0x${m.toString(16)} shares cores with serverCpuMask 0x${cpu.server.toString(16)}: game clients must run on other cores`;
+  for (const p of running) {
+    const theirs = cpu.peers?.[p.n] ?? (typeof cpu.client === "number" ? cpu.client : 0);
+    if (m & theirs) return `clientCpuMask 0x${m.toString(16)} shares cores with running peer ${p.n} (0x${theirs.toString(16)}): game clients must run on other cores`;
+  }
+  return m;
 }
 
 /**
@@ -291,7 +320,7 @@ async function stopOwn(port: number, started: { pid: number }[], peersOnly = tru
   );
 }
 
-function startPeer(r: Run, config: Config): { n: number; pid: number; args: string[]; pinned?: boolean; noWatch?: string } | string {
+function startPeer(r: Run, config: Config, mask?: number): { n: number; pid: number; args: string[]; pinned?: boolean; noWatch?: string } | string {
   const free = freemem() / 2 ** 30;
   if (free < MIN_FREE_GB_CLIENT) {
     return `Not enough free RAM for another game client: ${free.toFixed(1)} GB free, ${MIN_FREE_GB_CLIENT} GB needed (about 2 GB per Arma process).`;
@@ -310,8 +339,19 @@ function startPeer(r: Run, config: Config): { n: number; pid: number; args: stri
     kind: "client", name: `mission-${r.port}-peer${n}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe, port: r.port, profileDir: profile,
   });
   const noWatch = watchStarted({ pid, kind: "client", instance, logsRoot: join(profile, "logs") }, config);
-  return { n, pid, args, pinned: r.cpu ? limitProcess(pid, r.cpu.client) : undefined, noWatch };
+  return { n, pid, args, pinned: mask ? limitProcess(pid, mask) : undefined, noWatch };
 }
+
+/** Keep a pinned peer's mask in run.json for later joins. The file's mtime stays: runReport reads it as the run's start. */
+function recordPeer(port: number, run: Run, n: number, mask: number): void {
+  const f = join(portDir(port), "run.json");
+  const t = statSync(f);
+  run.cpu!.peers = { ...run.cpu!.peers, [n]: mask };
+  writeFileSync(f, JSON.stringify(run, null, 2));
+  utimesSync(f, t.atime, t.mtime);
+}
+
+const hex = (m: number) => `0x${m.toString(16)}`;
 
 export function registerMissionServer(server: McpServer, config: Config): void {
   server.registerTool(
@@ -324,7 +364,9 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         "Starts processes on this PC, so ask the user before start or join; port picks the loopback port, and serverCpuMask and clientCpuMask choose the cores. " +
         "A start is refused, before anything is spawned, when the world's addon, an addon in addons or one of their dependencies exists as two copies with the same GUID in the listed folders. " +
         "Every client needs at least 4 GB free RAM; join refuses while an earlier peer is hung or not counted by the server; start stops its own peers " +
-        "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority. " +
+        "that do not join in time. serverCpuMask and clientCpuMask (hex, both or neither, no shared core) pin the server and the clients at BelowNormal priority; " +
+        "clientCpuMask is one mask for every client, or a comma-separated list with exactly peers masks (peer n on mask n, no two sharing a core, the server's included); " +
+        "join takes its own clientCpuMask, which must not share a core with the server or a running peer, and a run started with one mask per peer needs it. " +
         "The Crash Reporter is switched off for everything it starts (-disableCrashReporter), and every server and client it starts runs with -noThrow (no error dialogs). " +
         "The start, join and status replies report the run's script exceptions (VM exceptions) and crash.log, for the server and each peer. " +
         "On Windows a watcher is started for every server and client it starts: if a VM exception window stays open on one of them, that process (and only that one) is ended and its logs are saved; the status reply shows what the watcher did.",
@@ -340,7 +382,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         timeoutSec: z.number().int().min(10).max(600).default(180).describe("(start) How long to wait for the server to come online"),
         joinTimeoutSec: z.number().int().min(1).max(600).default(DEFAULT_JOIN_SEC).describe("(start, join) How long to wait for clients to be counted by the server; start stops the peers it started when they are not"),
         serverCpuMask: z.string().optional().describe("(start) Hex CPU mask for the server, e.g. 0x3000; needs clientCpuMask"),
-        clientCpuMask: z.string().optional().describe("(start) Hex CPU mask for every game client, e.g. 0x0C00; must not share a core with serverCpuMask"),
+        clientCpuMask: z.string().optional().describe("(start) Hex CPU mask for every game client, e.g. 0x0C00, or a comma-separated list with exactly peers masks, e.g. 0x0030,0x00C0 (one per peer); no mask may share a core with serverCpuMask or another. (join) The new client's own mask, required when start gave a list"),
         adoptOrphans: z.boolean().optional().describe("(stop) Also stop processes this tool started from an MCP session that has ended"),
       },
     },
@@ -353,7 +395,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           if (typeof planned === "string") return text(planned, true);
           const dup = duplicateAddonError([planned.gproj], planned.addonsDirs, { ids: planned.addons, via: "addonsDirs" });
           if (dup) return text(dup, true);
-          const cpu = cpuMasks(a.serverCpuMask, a.clientCpuMask);
+          const cpu = cpuMasks(a.serverCpuMask, a.clientCpuMask, undefined, a.peers);
           if (typeof cpu === "string") return text(cpu, true);
           const run: Run = { ...planned, cpu };
           const extraErr = checkExtra(a.extraArgs ?? []);
@@ -391,7 +433,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             timeoutMs: a.timeoutSec * 1000,
           });
           const cpuNote = run.cpu
-            ? `\nCPU: server 0x${run.cpu.server.toString(16)} ${serverPinned ? "applied" : "NOT applied"}, clients 0x${run.cpu.client.toString(16)}, BelowNormal`
+            ? `\nCPU: server ${hex(run.cpu.server)} ${serverPinned ? "applied" : "NOT applied"}, clients ${Array.isArray(run.cpu.client) ? `${run.cpu.client.map(hex).join(", ")} (one per peer)` : hex(run.cpu.client)}, BelowNormal`
             : "";
           const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}${cpuNote}${noWatch ? `\n${noWatch}` : ""}`;
           if (w.status !== "matched") {
@@ -404,7 +446,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const startedPeers: { n: number; pid: number }[] = [];
           const offset = statSync(w.file!).size;
           for (let i = 0; i < a.peers; i++) {
-            const p = startPeer(run, config);
+            const mask = run.cpu && (Array.isArray(run.cpu.client) ? run.cpu.client[i] : run.cpu.client);
+            const p = startPeer(run, config, mask);
             if (typeof p === "string") {
               const stopped = await stopOwn(port, startedPeers);
               return text(`**Server online**, but a peer could not start: ${p}${stopped}\n\n${head}\n${peers.join("\n")}${runReport(port)}`, true);
@@ -412,9 +455,10 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             startedPeers.push(p);
             if (p.pinned === false) {
               const stopped = await stopOwn(port, startedPeers);
-              return text(`**Server online**, but clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to peer ${p.n} (PID ${p.pid}).${stopped}\n\n${head}\n${peers.join("\n")}${runReport(port)}`, true);
+              return text(`**Server online**, but clientCpuMask ${hex(mask!)} could not be applied to peer ${p.n} (PID ${p.pid}).${stopped}\n\n${head}\n${peers.join("\n")}${runReport(port)}`, true);
             }
-            peers.push(`Peer ${p.n}: PID ${p.pid}${p.pinned === undefined ? "" : " (pinned)"}`);
+            if (mask) recordPeer(port, run, p.n, mask);
+            peers.push(`Peer ${p.n}: PID ${p.pid}${mask ? ` (pinned ${hex(mask)})` : ""}`);
             if (p.noWatch) peers.push(p.noWatch);
             await sleep(2000);
           }
@@ -443,6 +487,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const run = readRun(port);
           const srv = mine(portDir(port)).find((e) => e.inst?.kind === "server" && e.cls === "own");
           if (!run || !srv) return text(`No mission_server run of this MCP session on port ${port}.`, true);
+          const mask = joinMask(run.cpu, a.clientCpuMask, peerStates(port));
+          if (typeof mask === "string") return text(`join refused: ${mask}. No client was started.`, true);
           const log = resolveLogFile({ dir: join(portDir(port), "server"), file: "console" });
           if (!log) return text(`No server log for port ${port} yet.`, true);
           const serverText = readFileSync(log, "utf-8");
@@ -452,12 +498,13 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           if (problems.length) return text(`join refused: ${problems.join("; ")}. No client was started; mission_server stop ends this run.`, true);
           const offset = statSync(log).size;
           const since = Date.now();
-          const p = startPeer(run, config);
+          const p = startPeer(run, config, mask);
           if (typeof p === "string") return text(`${p}${runReport(port)}`, true);
           if (p.pinned === false) {
             const stopped = await stopOwn(port, [p]);
-            return text(`clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to the new peer ${p.n} (PID ${p.pid}).${stopped}${runReport(port)}`, true);
+            return text(`clientCpuMask ${hex(mask!)} could not be applied to the new peer ${p.n} (PID ${p.pid}).${stopped}${runReport(port)}`, true);
           }
+          if (mask) recordPeer(port, run, p.n, mask);
           const joined = await waitPlayers(log, offset, before + 1, srv.proc.pid, a.joinTimeoutSec);
           const ended = joined ? "" : await exitedStates(portDir(port), [p.pid, srv.proc.pid], since);
           const stopped = joined ? "" : await stopOwn(port, [p]);
@@ -465,7 +512,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             (joined
               ? `**Peer ${p.n} joined** (PID ${p.pid}): players connected ${before + 1}.`
               : `**Peer ${p.n} did not join** within ${a.joinTimeoutSec} s (PID ${p.pid}): players connected ${playersConnected(readFileSync(log, "utf-8"))}.${stopped}`) +
-              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}${p.noWatch ? `\n${p.noWatch}` : ""}` + ended + runReport(port),
+              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}${mask ? `\nCPU: peer ${p.n} ${hex(mask)} applied, BelowNormal` : ""}${p.noWatch ? `\n${p.noWatch}` : ""}` + ended + runReport(port),
             !joined
           );
         }

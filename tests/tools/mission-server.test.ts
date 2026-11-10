@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -82,7 +82,7 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
   },
 }));
 
-const { planRun, serverArgs, peerArgs, checkExtra, cpuMasks, peerProblems, playersConnected, registerMissionServer, MISSION_ROOT, SETTLE_MS } = await import("../../src/tools/mission-server.js");
+const { planRun, serverArgs, peerArgs, checkExtra, cpuMasks, joinMask, peerProblems, playersConnected, registerMissionServer, MISSION_ROOT, SETTLE_MS } = await import("../../src/tools/mission-server.js");
 const { SERVER_DOWNLOAD_DIR } = await import("../../src/config.js");
 const { PROC_WATCH_DIR } = await import("../../src/watchdog/proc-watch.js");
 const { INSTANCE_FILE, OWNER } = await import("../../src/utils/instances.js");
@@ -536,6 +536,93 @@ describe("client gates after the 2026-11-02 freeze (join health, RAM, cores, sto
     expect(ok.isError).toBeUndefined();
     expect(sys.limited).toEqual([[801, 0x3000], [802, 0xc00]]);
     expect(ok.content[0].text).toContain("CPU: server 0x3000 applied, clients 0xc00, BelowNormal");
+  });
+
+  /** Spawn stub: the server logs online, and every other process is a peer that the server counts as the next player. */
+  function countingSpawns(logOf: () => string, firstPeer = 1) {
+    let serverLog = "";
+    let n = firstPeer - 1;
+    sys.onSpawn = (args) => {
+      if (args.includes("-server")) {
+        serverLog = join(args[args.indexOf("-profile") + 1], "logs", "logs_x", "console.log");
+        mkdirSync(dirname(serverLog), { recursive: true });
+        writeFileSync(serverLog, "00:00:01.000 DEFAULT      : Entered online game state.\r\n");
+      } else appendFileSync(serverLog || logOf(), `00:00:09.000   NETWORK      : Players connected: ${++n} / ${n}\r\n`);
+    };
+  }
+
+  it("a clientCpuMask list pins peer n on mask n, and a single mask still serves every client (DST-1)", async () => {
+    expect(cpuMasks("0x3000", "0x30", 16, 2)).toEqual({ server: 0x3000, client: 0x30 });
+    expect(cpuMasks("0x3000", "0x30,0xC0", 16, 2)).toEqual({ server: 0x3000, client: [0x30, 0xc0] });
+    const t = addon();
+    sys.pids = [801, 802, 803];
+    countingSpawns(() => "");
+    const r = await startWithMasks(t, 2550, { peers: 2, clientCpuMask: "0x0030,0x00C0" });
+    expect(r.isError).toBeUndefined();
+    expect(sys.limited).toEqual([[801, 0x3000], [802, 0x30], [803, 0xc0]]);
+    expect(r.content[0].text).toContain("CPU: server 0x3000 applied, clients 0x30, 0xc0 (one per peer), BelowNormal");
+    expect(r.content[0].text).toContain("Peer 1: PID 802 (pinned 0x30)");
+    expect(r.content[0].text).toContain("Peer 2: PID 803 (pinned 0xc0)");
+    const saved = JSON.parse(readFileSync(join(MISSION_ROOT, "2550", "run.json"), "utf-8"));
+    expect(saved.cpu).toEqual({ server: 0x3000, client: [0x30, 0xc0], peers: { 1: 0x30, 2: 0xc0 } });
+  });
+
+  it("a clientCpuMask list is refused before anything is spawned when its count, a mask or a shared core is wrong (DST-1)", async () => {
+    const t = addon();
+    const bad: [number, string, RegExp][] = [
+      [2, "0x30,0xC0,0x300", /clientCpuMask has 3 masks but peers is 2/],
+      [1, "0x30,0xC0", /clientCpuMask has 2 masks but peers is 1/],
+      [2, "0x30,0x30", /^clientCpuMask peer 2 0x30 shares cores with clientCpuMask peer 1 0x30/],
+      [2, "0x30,0x3000", /^clientCpuMask peer 2 0x3000 shares cores with serverCpuMask 0x3000/],
+      [2, "0x30,0x30000", /^clientCpuMask peer 2 0x30000 names core 17/],
+      [2, "0x30,nonsense", /must both be given/],
+    ];
+    for (const [peers, list, expected] of bad) {
+      const r = await startWithMasks(t, 2551, { peers, clientCpuMask: list });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toMatch(expected);
+    }
+    expect(sys.spawned).toEqual([]);
+    expect(existsSync(join(MISSION_ROOT, "2551"))).toBe(false);
+  });
+
+  it("join takes its own mask and refuses one that shares a core, or none on a per-peer run (DST-1)", async () => {
+    const perPeer = { server: 0x3000, client: [0x30, 0xc0], peers: { 1: 0x30, 2: 0xc0 } };
+    const { log } = run(2552, 2, [{ ageSec: 5 }, { ageSec: 5 }], { cpu: perPeer });
+    const joinCall = (extra: Record<string, unknown> = {}) => handler(config(home))({ action: "join", port: 2552, joinTimeoutSec: 1, ...extra });
+    const noMask = await joinCall();
+    expect(noMask.isError).toBe(true);
+    expect(noMask.content[0].text).toMatch(/^join refused: This run was started with one clientCpuMask per peer: join needs its own clientCpuMask/);
+    expect((await joinCall({ clientCpuMask: "0xC0" })).content[0].text).toMatch(/^join refused: clientCpuMask 0xc0 shares cores with running peer 2 \(0xc0\)/);
+    expect((await joinCall({ clientCpuMask: "0x3000" })).content[0].text).toMatch(/^join refused: clientCpuMask 0x3000 shares cores with serverCpuMask 0x3000/);
+    expect(sys.spawned).toEqual([]);
+
+    sys.pids = [730];
+    countingSpawns(() => log, 3);
+    const runFile = join(MISSION_ROOT, "2552", "run.json");
+    const old = new Date(Date.now() - 60000);
+    utimesSync(runFile, old, old);
+    const ok = await joinCall({ clientCpuMask: "0x300" });
+    expect(ok.isError).toBeUndefined();
+    expect(sys.limited).toEqual([[730, 0x300]]);
+    expect(ok.content[0].text).toContain("**Peer 3 joined**");
+    expect(ok.content[0].text).toContain("CPU: peer 3 0x300 applied, BelowNormal");
+    expect(JSON.parse(readFileSync(runFile, "utf-8")).cpu.peers).toEqual({ 1: 0x30, 2: 0xc0, 3: 0x300 });
+    // runReport reads run.json's mtime as the run's start, so recording a peer must not move it.
+    expect(Math.round(statSync(runFile).mtimeMs / 1000)).toBe(Math.round(old.getTime() / 1000));
+  });
+
+  it("joinMask: a joiner is checked against the peers of the run, the earlier joiners included (DST-1)", () => {
+    const shared = { server: 0x3000, client: 0xc00 };
+    expect(joinMask(shared, undefined, [], 16)).toBe(0xc00);
+    expect(joinMask(shared, "0x300", [{ n: 1, pid: 5 }], 16)).toBe(0x300);
+    expect(joinMask(shared, "0x400", [{ n: 1, pid: 5 }], 16)).toMatch(/shares cores with running peer 1 \(0xc00\)/);
+    expect(joinMask({ ...shared, peers: { 2: 0x300 } }, "0x100", [{ n: 2, pid: 6 }], 16)).toMatch(/shares cores with running peer 2 \(0x300\)/);
+    expect(joinMask({ ...shared, peers: { 2: 0x300 } }, "0x100", [], 16)).toBe(0x100);
+    expect(joinMask(undefined, "0x300", [], 16)).toMatch(/this run has no CPU masks/);
+    expect(joinMask(undefined, undefined, [], 16)).toBeUndefined();
+    expect(joinMask(shared, "nonsense", [], 16)).toMatch(/must be a hex mask/);
+    expect(joinMask(shared, "0x30000", [], 16)).toMatch(/names core 17/);
   });
 
   /** Spawn stub: a server writes its log (online) and shows up as a process; a peer shows up as a process and, if `counted`, joins. */
