@@ -457,7 +457,8 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
         const result = await client.call<Record<string, unknown>>("EMCP_WB_SelectEntity", params);
 
         if (action === "getSelected") {
-          const selected = Array.isArray(result.selected) ? result.selected : [];
+          // The handler packs the list as selectedEntities (EMCP_WB_SelectEntity.c); 1.9 adds an empty object before each real row
+          const selected = (Array.isArray(result.selectedEntities) ? result.selectedEntities : []).filter((e) => e?.name || e?.className);
           if (selected.length === 0) {
             return {
               content: [{ type: "text" as const, text: `**No entities selected.**${formatConnectionStatus(client)}` }],

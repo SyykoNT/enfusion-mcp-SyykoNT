@@ -94,6 +94,26 @@ describe("wb_entity_inspect components and list rows", () => {
   });
 });
 
+describe("wb_entity_select getSelected (B-173)", () => {
+  // Reply shape of EMCP_WB_SelectEntity.c: selectedCount (line 31), then selectedEntities rows {name, className} (OnPack, lines 52-58), the array omitted when empty (line 50).
+  const rows = [{ name: "Tree_01", className: "GenericEntity" }, { name: "", className: "Tree" }];
+
+  it("lists the entities the handler returns, with and without the empty row 1.9 packs before each", async () => {
+    const v18 = (await tool("wb_entity_select", { status: "ok", action: "getSelected", selectedCount: 2, selectedEntities: rows }).run({ action: "getSelected" })).content[0].text;
+    const v19 = (await tool("wb_entity_select", { status: "ok", action: "getSelected", selectedCount: 2, selectedEntities: rows.flatMap((r) => [{}, r]) }).run({ action: "getSelected" })).content[0].text;
+    expect(v18).toContain("**Selected Entities**\n\n- Tree_01\n- (unnamed)");
+    expect(v19).toBe(v18);
+    expect(v18).not.toContain("No entities selected");
+  });
+
+  it("still says none are selected when the handler sends no list, or an empty one", async () => {
+    for (const reply of [{ status: "ok", action: "getSelected", selectedCount: 0 }, { status: "ok", action: "getSelected", selectedCount: 0, selectedEntities: [] }]) {
+      const r = await tool("wb_entity_select", reply).run({ action: "getSelected" });
+      expect(r.content[0].text).toContain("**No entities selected.**");
+    }
+  });
+});
+
 describe("wb_entity_inspect values", () => {
   it("lists rows with a value first and folds the empty-value rows into one line", async () => {
     const names = ["EOnTouch", "_WB_CanDelete", "OnA", "OnB", "OnC", "OnD"];
