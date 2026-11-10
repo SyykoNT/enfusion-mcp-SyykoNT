@@ -8,7 +8,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/build-info.mjs",
     "dev": "tsx src/index.ts",
     "tuning-server": "tsx src/tuning-server/index.ts",
     "scrape": "tsx scripts/scrape.ts",
