@@ -210,6 +210,19 @@ export const gprojOpenRefusal = (path: string, tool: string) =>
 const opensWorld = (params: Record<string, unknown>) =>
   (params.action === "openResource" || params.action === "open") && typeof params.path === "string" && (isWorldPath(params.path) || isProjectPath(params.path));
 
+/**
+ * Handlers that read World Editor state through WorldEditorAPI. After a refused open, EMCP_WB_GetState crashed Workbench natively in 6 of 6 live runs (B-181).
+ * Ping (the connection check) and Exit (the way to restart) are left out: neither crashed in those runs.
+ */
+const WORLD_STATE_HANDLERS = new Set(
+  ["Clipboard", "Components", "CreateEntity", "DeleteEntity", "EditorControl", "GetCameraPos", "GetEntity", "GetState", "Layers", "ListEntities", "ModifyEntity", "Prefabs", "SelectEntity", "Terrain"].map((n) => `EMCP_WB_${n}`)
+);
+
+/** The reply while a refused open has left the world stale. */
+const WORLD_STALE =
+  "Refused: a refused open left the world in this Workbench in a state where this call can crash Workbench. " +
+  "Open a world with wb_open_resource (a .ent) or restart Workbench first. Nothing was sent.";
+
 /** What play and close say about a layer this MCP created: a warning, since only a .ent or .gproj open raises a prompt for it (live check, 1.9.0.37). */
 const LAYER_NOTE = "A layer this MCP created is not saved yet and is dropped unless wb_save runs first.";
 
@@ -261,6 +274,8 @@ export class WorkbenchClient {
   private watchLast = "";
   /** PID of the Workbench where this MCP created a layer since the last wb_save whose save call succeeded. A new layer does not put * in the World Editor title. */
   private layerMark?: number;
+  /** PID of the Workbench whose last open EMCP_WB_EditorControl refused ("Workbench could not open"); the world there is stale until a .ent opens. */
+  private worldStale?: number;
 
   /** Current cached connection state. Updated after every successful call. */
   get state(): Readonly<WorkbenchState> {
@@ -284,16 +299,22 @@ export class WorkbenchClient {
     options: WorkbenchCallOptions = {}
   ): Promise<T> {
     try {
+      const stale = await this.worldStaleLine(apiFunc, params);
+      if (stale) throw new WorkbenchError(stale, "API_ERROR");
       const result = this.finishCall(await this.rawCall<T>(apiFunc, params, options), options);
       // A Resources open can answer ok with "SetOpenedResource returned false": nothing opened, the marked world is still there.
       if (opensWorld(params) && !/^SetOpenedResource returned false/.test(String((result as Record<string, unknown>)?.message ?? ""))) {
         this.layerMark = undefined; // the newly opened world has no layer of ours
         // The footer reads this cache and nothing else sets it after an open; a project open loads no world.
-        if (isWorldPath(String(params.path))) this._state.mode = "edit";
+        if (isWorldPath(String(params.path))) {
+          this._state.mode = "edit";
+          this.worldStale = undefined;
+        }
       }
       return result;
     } catch (err) {
       if (err instanceof WorkbenchError) {
+        if (apiFunc === "EMCP_WB_EditorControl" && params.action === "openResource" && err.message.includes("Workbench could not open")) await this.markWorldStale();
         if (err.code === "CONNECTION_REFUSED" || err.code === "TIMEOUT" || err.code === "PROTOCOL_ERROR") {
           this._state = { connected: false, mode: "unknown", lastUpdated: Date.now() };
         }
@@ -374,6 +395,35 @@ export class WorkbenchClient {
     } catch {
       // shortcut: a failed netstat leaves the mark unset, so the title check alone guards; upgrade if a layer-only save prompt shows up there.
     }
+  }
+
+  /** Called when an open was refused: remember the Workbench it happened in. Never throws; with no PID to read, nothing is marked. */
+  private async markWorldStale(): Promise<void> {
+    try {
+      if (!LOCAL_HOSTS.includes(this.host.toLowerCase())) return;
+      this.worldStale = portOwner(await this.worldProbe.netstat(), this.port) ?? this.worldStale;
+    } catch {
+      // shortcut: a failed netstat leaves the mark unset, so a stale world is not guarded; upgrade if netstat fails in practice.
+    }
+  }
+
+  /**
+   * The refusal line when apiFunc reads World Editor state and the Workbench that answers the port has a stale world, else undefined.
+   * An open is never refused here (a .ent open is the way out). A new PID on the port, or none, clears the mark. When netstat fails the
+   * mark cannot be shown stale, so the call is refused. Never throws.
+   */
+  private async worldStaleLine(apiFunc: string, params: Record<string, unknown>): Promise<string | undefined> {
+    if (this.worldStale === undefined || !WORLD_STATE_HANDLERS.has(apiFunc) || params.action === "openResource") return undefined;
+    try {
+      const out = await this.worldProbe.netstat();
+      if (out && portOwner(out, this.port) !== this.worldStale) {
+        this.worldStale = undefined;
+        return undefined;
+      }
+    } catch {
+      // the mark stays: refusing is safe, a call into a stale world can crash Workbench
+    }
+    return WORLD_STALE;
   }
 
   /** Called by wb_save after its save call returned without error, whether or not files changed (Save()'s boolean is never read: it is false even when it writes). */
@@ -563,6 +613,8 @@ export class WorkbenchClient {
    */
   async probeMode(): Promise<WorkbenchMode | "not_running" | "no_handlers" | "timeout"> {
     try {
+      const stale = await this.worldStaleLine("EMCP_WB_GetState", {});
+      if (stale) throw new WorkbenchError(stale, "API_ERROR");
       const result = await this.rawCall<Record<string, unknown>>("EMCP_WB_GetState", {}, { timeout: 3000 });
       // Reset first: extractMode keeps the old value on a reply it does not recognise.
       this._state = { connected: true, mode: "unknown", lastUpdated: Date.now() };
