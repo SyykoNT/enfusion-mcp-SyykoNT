@@ -83,6 +83,7 @@ describe.skipIf(!hasGit)("coalition_doctor", () => {
     // The Workbench Launcher's project list is never read, so that row is always by hand
     expect(rows.filter((r) => r.state !== "ok").map((r) => [r.item, r.state])).toEqual([["Open the framework project", "manual"]]);
     expect(rows).toHaveLength(20);
+    expect(row(rows, "GitHub Desktop installed")).toMatchObject({ state: "ok", found: expect.stringContaining("sign-in not checked") });
     expect(row(rows, "Check the link").found).toContain("the game's addons");
     expect(row(rows, "Create your mission branch").found).toBe("mission/the-patrol");
     expect(snapshot(pc.root)).toEqual(before);
@@ -113,7 +114,7 @@ describe.skipIf(!hasGit)("coalition_doctor", () => {
     expect(row(rows, "Workbench handler files git-ignored")).toMatchObject({ state: "warn", found: `not ignored in ${pc.crf}` });
     expect(row(rows, "ENFUSION_PROTECTED_ADDONS").state).toBe("warn");
     expect(row(rows, "Python 3.11+ (mission_validate)").state).toBe("missing");
-    expect(row(rows, "GitHub Desktop, signed in").state).toBe("missing");
+    expect(row(rows, "GitHub Desktop installed").state).toBe("missing");
     expect(doctorText(rows)).toMatch(/^## Coalition Tools Setup check\n\n\d+ OK, 2 missing, 4 to check/);
   });
 });

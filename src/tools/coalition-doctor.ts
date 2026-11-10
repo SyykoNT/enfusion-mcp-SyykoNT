@@ -84,7 +84,7 @@ export function doctorRows(config: Config, probe: Probe): Row[] {
   const email = git(homedir(), ["config", "--global", "--get", "user.email"]);
   add(tools, "Git username and commit email", name && email ? "ok" : "missing", `${name ?? "(no user.name)"} <${email ?? "no user.email"}>`,
     "Set your Git username and commit email (the email on your GitHub account): https://docs.github.com/en/get-started/getting-started-with-git/setting-your-username-in-git and https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address");
-  add(tools, "GitHub Desktop, signed in", probe.gitHubDesktop ? "ok" : "missing", probe.gitHubDesktop ? `${probe.gitHubDesktop} (sign-in not checked)` : "not found", "Install GitHub Desktop from https://desktop.github.com/ and sign in.");
+  add(tools, "GitHub Desktop installed", probe.gitHubDesktop ? "ok" : "missing", probe.gitHubDesktop ? `${probe.gitHubDesktop} (sign-in not checked)` : "not found", "Install GitHub Desktop from https://desktop.github.com/ and sign in.");
 
   // Give the Workbench Your Mods [p4, p5]
   const mods = "Give the Workbench Your Mods";
