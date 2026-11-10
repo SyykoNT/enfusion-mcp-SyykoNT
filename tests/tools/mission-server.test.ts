@@ -1248,4 +1248,17 @@ describe("mission_server: log text is data, and join reports the run (MS-1)", ()
     expect(r.content[0].text).toContain("clientCpuMask 0xc00 could not be applied to the new peer 1 (PID 730).");
     expectReport(r.content[0].text);
   });
+
+  it("start with addonsDirs [] lists only the folder that holds the world's addon, sibling addons included (B-165)", async () => {
+    exes();
+    const t = addon();
+    mkdirSync(join(t.root, "Sibling Addon"));
+    serverLogs("12:00:00.000 DEFAULT      : Entered online game state.\r\n");
+    const r = await tool()({ action: "start", world: t.world, port: 2705, peers: 0, addonsDirs: [], timeoutSec: 10 });
+    expect(r.isError).toBeUndefined();
+    expect(sys.spawned).toHaveLength(1);
+    const argv = sys.spawned[0];
+    expect(argv.filter((x) => x === "-addonsDir")).toHaveLength(1);
+    expect(argv[argv.indexOf("-addonsDir") + 1]).toBe(t.root);
+  });
 });

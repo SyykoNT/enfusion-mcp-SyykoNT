@@ -297,6 +297,19 @@ describe("server start and status: -noThrow once, and the script error report", 
     }
   });
 
+  it("a closing fence inside the install log tail cannot close the status reply's code block (B-165)", async () => {
+    const log = join(cfg.steamcmdPath, "install-server.log");
+    mkdirSync(cfg.steamcmdPath, { recursive: true });
+    writeFileSync(log, "Update state\r\n``` **not bold** [link](x)\r\nSuccess\r\n");
+    try {
+      const t = (await h({ action: "status" })).content[0].text;
+      expect(t).toContain("Install log (last lines):\n```\nUpdate state\n''' **not bold** [link](x)\nSuccess\n");
+      expect(t.match(/```/g)).toHaveLength(2);
+    } finally {
+      rmSync(log, { force: true });
+    }
+  });
+
   it("the description says every server runs with -noThrow and the replies report script exceptions", () => {
     let def!: { description: string };
     registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, cfg);

@@ -339,7 +339,7 @@ export function registerServer(server: McpServer, config: Config): void {
             logDir ? `- Latest log: ${logDir}` : "",
             errors && `\n${errors}`,
             ...procWatchLines({ root: config.serverProfilePath }),
-            existsSync(installLog) ? `\nInstall log (last lines):\n\`\`\`\n${tail(installLog, 8)}\n\`\`\`` : "",
+            existsSync(installLog) ? `\nInstall log (last lines):\n${fenced(tail(installLog, 8))}` : "",
             entries.length ? `\n${instanceTable(entries)}` : "",
           ].filter(Boolean).join("\n"));
         }
