@@ -37,20 +37,25 @@ Re-run the build line after every pull. It writes `dist/build-info.json`, so the
 
 Ask the agent to run `env_check`. It needs no Workbench and writes nothing:
 
-<!-- TODO(fact): replace both outputs below with a run of the 0.16.0 build before publishing -->
-
 ```
 ## Environment
-- MCP build: 0.15.0+c070e21, built 2026-11-10T14:44:24.899Z
+
+- MCP build: 0.16.0+3ca5e71, built 2026-11-10T22:46:33.441Z
 ✅ Game: ...\steamapps\common\Arma Reforger (v1.9.0.37)
 ✅ Game Diag exe (needed for game launch connect/world)
 ✅ Workbench: ...\Arma Reforger Tools\Workbench\ArmaReforgerWorkbenchSteamDiag.exe
 ✅ Dedicated server: ...\steamapps\common\Arma Reforger Server (v1.9.0.37)
 ❌ SteamCMD: not downloaded (server install does it)
+✅ Crash logs folder: ...\My Games\Workbench Crash Logs
 ✅ Base-game resource database: 102069 resources with GUIDs
+
+- Packed builds: ...\My Games\ArmaReforgerWorkbench\packed (created on first build)
+- Server profile: ...\.enfusion-mcp\server-profile
 
 ## Running
 - Workbench: no · NET API: not reachable (127.0.0.1:5775)
+- Game: no
+- Dedicated server: yes
 ```
 
 Then ask for something 1.9 changed, such as `api_search VehicleWheelEffectComponent`:
@@ -63,11 +68,23 @@ Inherits from: GameComponent
 Direct subclasses: SCR_VehicleDustPerWheel
 
 ### Public Methods (16)
+- proto external IEntity GetOwner ()
 - proto external float GetWheelTemperature (int wheelIdx) -- Returns the wheel surface temperature in degrees Celcius. The burnout effect starts at 150 degrees
-...
+- proto external float GetWheelDust (int wheelIdx) -- Returns the dust factor on the wheel, in range [0, 1].
+- proto external float GetWheelMud (int wheelIdx) -- Returns the mud factor on the wheel, in range [0, 1].
+- proto external float GetBodyDust () -- Returns the mud factor on the body, in range [0, 1].
+- proto external float GetBodyMud () -- Returns the mud factor on the body, in range [0, 1].
+- proto external void SetWheelTemperature (int wheelIdx, float value) -- Set the wheel surface temperature in degrees Celcius The burnout effect starts at 150 degrees.
+- proto external void SetWheelDust (int wheelIdx, float value) -- Set the dust factor on the wheel, in range [0, 1].
+- proto external void SetWheelMud (int wheelIdx, float value) -- Set the mud factor on the wheel, in range [0, 1].
+- proto external void SetBodyDust (float value) -- Set the dust factor on the body, in range [0, 1].
+  ... and 6 more
+
+Source file: Game/generated/Vehicles/VehicleWheelEffectComponent.c
+Docs: https://community.bistudio.com/wikidata/external-data/arma-reforger/ArmaReforgerScriptAPIPublic/interfaceVehicleWheelEffectComponent.html
 ```
 
-That class is new in 1.9 and is missing from BK's index. The first reply tells you what the server can reach; the second shows the agent reading the 1.9 API. (Paths shortened.)
+That class is new in 1.9 and is missing from BK's index. The first reply tells you what the server can reach; the second shows the agent reading the 1.9 API. (Paths shortened; only the first of the three matches is shown.)
 
 **Why not just use enfusion-mcp-BK?** BK is the base of this fork and its tools are still here. Its bundled script API was scraped in February 2026, while Reforger 1.6 was live, and its last commit (2026-08-05) predates the 1.8 release by eight days. BK starts Workbench on any live call, and on a setup like the COALITION guide's it can copy its scripts into a downloaded Workshop mod. This fork re-tested BK's tools on 1.8.0.13 and 1.9.0.37, fixed what failed, and added the build, server, watchdog and release tools that agents running a long modding session need.
 
