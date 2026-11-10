@@ -282,7 +282,7 @@ Script errors and dialogs in the servers and game clients the MCP starts (`serve
 | `wb_entity_create` / `wb_entity_delete` | Create an entity from a prefab; delete one by name |
 | `wb_entity_list` / `wb_entity_inspect` | List entities; show one entity's components and properties |
 | `wb_entity_modify` | Move, rotate, rename, reparent; get, set and clear properties and array items |
-| `wb_entity_select` | Deselect, clear or read the selection; `select` only locates the entity (see [Known issues](#known-issues)) |
+| `wb_entity_select` | Deselect or clear the selection; `select` only locates the entity, and `getSelected` may report no selection (see [Known issues](#known-issues)) |
 | `wb_entity_duplicate` | Save a scene entity as a new prefab in an addon |
 | `wb_component` | Add, remove or list an entity's components |
 | `wb_layers` | List layers, create top-level layers, set and read the active layer, show layer info and toggle a layer's lock; a new layer counts as unsaved until `wb_save` runs |
@@ -489,35 +489,38 @@ only read (apart from those git refs), so they are not affected. To write, name 
 
 ## Known issues
 
-Open bugs you can hit today, each with what to do about it.
+Open bugs you can hit today, with what to do where a way is known.
 
 - A dedicated server started with `-addons` naming a mod that is in no addon folder and no cache still stops at a
   "Missing Addon" dialog, even with `-noThrow`, and the process watcher does not end it. Close that dialog (the server
-  then starts without the mod) or end the server with `server stop`, and make sure the mod is in the addon folders you
-  pass.
+  then starts without the mod), or end the server with `server stop` or `mission_server stop`, whichever started it.
 - `game launch` takes only a `.ent` world, not a mission header (`{GUID}Missions/...conf`). To run a mission from
-  its header, use `mission_server`.
-- Whether `-noThrow` removes the script exception window on a game client is not proven; it is proven on the
-  dedicated server. If the window shows up on a client the MCP started, its process watcher ends that client.
+  its header, use `mission_server`, which takes a world inside an unpacked addon and its `missionHeader`.
+- Whether `-noThrow` removes the script exception window on a game client is not proven. If the window shows up on a
+  client this MCP session started, its process watcher ends that client.
 - `wb_launch` never refreshes handler scripts in a protected addon such as a framework clone, so stale ones there are
   only reported (by `wb_connect` and `wb_launch`), and a Workbench you start yourself gets no check at launch. Refresh
   them with `wb_handlers install` (with the owner's OK) and restart Workbench.
 - If `wb_layers create` works in a world that `wb_save` refuses to save (a packed world, or one in the game or Tools
   folders), the world stays marked unsaved: `.ent` opens and `wb_close` with `save=false` keep being refused. Restart
-  Workbench. If this MCP started it, `wb_close` (by default or with `force=true`) works too.
+  Workbench. If this MCP started it, `wb_close` with `force=true` works too, and so does the default `wb_close` when
+  no other Workbench is running.
 - `wb_close` with the default `save=true`, on a world that `wb_save` would refuse (play mode, unnamed world, prefab
   edit mode), closes Workbench without saving and the unsaved-world check does not run; the reply says nothing was
-  saved. Stop play mode or save by hand first.
+  saved. In play mode run `wb_stop` first; otherwise save in Workbench by hand before closing.
 - `server start` waits a fixed 8 seconds after the spawn before it reads the log for its start reply, so a script
-  error logged later shows only in `server status`.
-- `wb_entity_modify` `setProperty` stores any name for an enum property on 1.9.0.37; use a value from the
-  property's own list.
+  exception or `crash.log` written later shows only in `server status`.
+- `wb_entity_modify` `setProperty` stores any name for an enum property on 1.9.0.37, also one that is not in the
+  property's list.
 - `wb_script_editor` `getCurrentFile` and `getLine` return empty text on 1.9 after `openFile`, while
   `getLinesCount`, `insertLine` and `removeLine` work. Read the file with `project read`.
 - `wb_entity_select` with `select` clears the current selection and only locates the entity; it does not select it.
-  Use `getSelected` to read the selection and select the entity in Workbench by hand.
+  Select the entity in Workbench by hand. Reading the selection with `getSelected` may report none even when
+  entities are selected (found by reading the code, not checked live).
 - A dedicated server started on a scenario made by `scenario_create_conflict` has not been re-checked since the
-  template was updated for 1.9.0.37. If it fails to start, read the log with `server status` and report what it says.
+  template was updated for 1.9.0.37. If it fails to start, run `mission_server status` for a run that `mission_server`
+  started, or `server status` for one that `server start` started: the reply gives the run's log location and any
+  script exception or `crash.log` from that run.
 
 ## Known limitations
 
