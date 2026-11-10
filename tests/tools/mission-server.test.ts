@@ -712,7 +712,7 @@ describe("-noThrow on every process the tools start, and the script error report
     const cases: [string, string, boolean, string][] = [
       ["failure line", "01:23:09.071 ENGINE    (F): Application hangs (force crash) 305 s\r\n", false, "**Server not ready** (stopped on:"],
       ["exited before online", "00:00:01.000 ENGINE       : loading\r\n", true, "**Server not ready** (the server exited)"],
-      ["exited after online", online, true, "**Server online**"],
+      ["exited after online", online, true, "**Server exited**"], // B-157: was "**Server online**"
     ];
     let port = 2567;
     for (const [why, log, exits, reply] of cases) {
@@ -1068,6 +1068,32 @@ describe("mission_server: the final state of a process that exited", () => {
       expect(r.content[0].text, why).not.toContain("Process watcher");
       expect(sys.polls, why).toBe(10);
     }
+  });
+
+  it("start with no peers reports a server that is gone after the settle as exited, with its final state and crash.log, as an error (B-157)", async () => {
+    sys.pids = [905];
+    let dir = "";
+    sys.onSpawn = (args) => {
+      dir = join(args[args.indexOf("-profile") + 1], "logs", "logs_x");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "console.log"), "00:00:01.000 DEFAULT      : Entered online game state.\r\n");
+    };
+    // The server dies during the settle, like the live runs (crash.log 0.13 s after the online line).
+    sys.onSleep = (ms) => {
+      if (ms !== SETTLE_MS) return;
+      writeFileSync(join(dir, "crash.log"), CRASH_LOG);
+      sys.killed.push(905);
+      serverState(2801, { pid: 905 });
+    };
+    const r = await start(2801);
+    const t = r.content[0].text;
+    expect(r.isError).toBe(true);
+    expect(t).toContain("**Server exited**");
+    expect(t).not.toContain("**Server online**");
+    expect(t).toContain("Server PID 905 on 127.0.0.1:2801");
+    expect(t).toContain("- Process watcher, server PID 905,");
+    expect(t).toContain("Reason: Access violation");
+    expect(sys.sleeps).toEqual([SETTLE_MS]);
   });
 
   it("start does not wait when the process is still running", async () => {

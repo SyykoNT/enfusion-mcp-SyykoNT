@@ -407,7 +407,13 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             if (p.noWatch) peers.push(p.noWatch);
             await sleep(2000);
           }
-          if (a.peers === 0 && isAlive(pid)) await sleep(SETTLE_MS);
+          if (a.peers === 0) {
+            if (isAlive(pid)) await sleep(SETTLE_MS);
+            if (!isAlive(pid)) {
+              const ended = await exitedStates(portDir(port), [pid], started);
+              return text(`**Server exited** after it went online, matched log line:\n${fenced(w.matched[0].line.trim())}\n\n${head}${ended}${runReport(port)}`, true);
+            }
+          }
           const joined = a.peers > 0 && (await waitPlayers(w.file!, offset, a.peers, pid, a.joinTimeoutSec));
           // Before stopOwn: the peers it ends itself are not "exited" waits.
           const ended = a.peers > 0 && !joined ? await exitedStates(portDir(port), [pid, ...startedPeers.map((p) => p.pid)], started) : "";
