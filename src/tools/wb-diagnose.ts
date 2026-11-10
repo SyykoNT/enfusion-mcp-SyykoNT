@@ -90,7 +90,7 @@ export function registerWbDiagnose(
       lines.push("\n### NET API Connection");
       switch (r.netApi) {
         case "up_with_handlers":
-          lines.push("- **Status:** CONNECTED. EMCP_WB_Ping responded. All wb_* tools are available.");
+          lines.push(`- **Status:** CONNECTED. EMCP_WB_Ping responded. ${(await client.worldStaleLine("EMCP_WB_GetState", {})) ? "Tools that read World Editor state are refused: a refused open left the world unstable. Open a world with wb_open_resource (a .ent) or restart Workbench." : "All wb_* tools are available."}`);
           break;
         case "up_no_handlers":
           lines.push("- **Status:** PORT OPEN, HANDLERS NOT LOADED");

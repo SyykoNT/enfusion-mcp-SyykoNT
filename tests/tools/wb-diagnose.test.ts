@@ -1,9 +1,9 @@
-import { afterEach, describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { DiagnosticReport, WorkbenchClient } from "../../src/workbench/client.js";
+import { WorkbenchClient, type DiagnosticReport } from "../../src/workbench/client.js";
 import { registerWbDiagnose } from "../../src/tools/wb-diagnose.js";
 
 // No real process query and no real watch folder: both come from the stubs below.
@@ -24,14 +24,31 @@ afterEach(() => {
   for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-async function run(workbenches: { pid: number; gproj: string }[], watchDir = temp("emcp-diag-watch-")) {
+async function run(
+  workbenches: { pid: number; gproj: string }[],
+  watchDir = temp("emcp-diag-watch-"),
+  client = { diagnose: async () => report, worldStaleLine: async () => undefined } as unknown as WorkbenchClient
+) {
   let h!: () => Promise<{ content: { text: string }[] }>;
   const server = { registerTool: (_n: string, _d: unknown, f: typeof h) => { h = f; } } as unknown as McpServer;
-  registerWbDiagnose(server, { diagnose: async () => report } as unknown as WorkbenchClient, { workbenches: () => workbenches, watchDir });
+  registerWbDiagnose(server, client, { workbenches: () => workbenches, watchDir });
   return (await h()).content[0].text;
 }
 
 describe("wb_diagnose", () => {
+  it("says World Editor tools are refused while a refused open has left the answering Workbench stale (B-181)", async () => {
+    // Real client: the mark comes from a refused open; rawCall and netstat are stubbed, so nothing is sent or queried.
+    const client = new WorkbenchClient("127.0.0.1", 5775);
+    client.worldProbe = { netstat: async () => "  TCP    0.0.0.0:5775    0.0.0.0:0    LISTENING    4242\r\n", titles: async () => ({ wins: [] }) };
+    vi.spyOn(client as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockResolvedValue({ status: "error", message: "Workbench could not open: Prefabs/NoSuch.et" });
+    vi.spyOn(client, "diagnose").mockResolvedValue(report);
+    expect(await run([], undefined, client)).toContain("All wb_* tools are available.");
+    await expect(client.call("EMCP_WB_EditorControl", { action: "openResource", path: "Prefabs/NoSuch.et" })).rejects.toThrow("Workbench could not open");
+    const text = await run([], undefined, client);
+    expect(text).toContain("CONNECTED. EMCP_WB_Ping responded. Tools that read World Editor state are refused: a refused open left the world unstable.");
+    expect(text).not.toContain("All wb_* tools are available.");
+  });
+
   it("names the handler folder of the addon the local Workbench loaded, from its -gproj, not only the default mod's", async () => {
     const addon = temp("emcp-diag-addon-");
     const dir = join(addon, "Scripts", "WorkbenchGame", "EnfusionMCP");

@@ -143,7 +143,7 @@ export function registerWbLaunch(
         "By default saves the open world first and exits cleanly through the NET API (skipped while another Workbench runs, " +
         "because that one may own the NET API port); force=true kills the owned process if it does not exit. " +
         "save=false closes without saving and without a check: Workbench asks nothing, and the unsaved edits are lost. " +
-        "When the default save cannot happen (an unnamed world, play mode, prefab edit mode, a packed world, or a world file in the game or Tools folders or the Workshop cache), it closes without saving instead, " +
+        "When the default save cannot happen (an unnamed world, play mode, prefab edit mode, a packed world, a world file in the game or Tools folders or the Workshop cache, or a world left unstable by a refused open), it closes without saving instead, " +
         "and unless force=true it first refuses, without closing, a world with unsaved changes (local Workbench on Windows only), because the edits would be lost. " +
         "While another Workbench runs, the close is by window and Workbench asks \"World editor - closing\" for a world with unsaved changes, a dialog that blocks every MCP call, so unless force=true that is refused too. " +
         "When a layer made with wb_layers has not been saved, a close that does not save adds a line that the layer is dropped.",
@@ -171,13 +171,12 @@ export function registerWbLaunch(
       let sendSave = save;
       let cannotSave = "";
       let noWorld = false;
-      let staleNote = "";
       if (save && !others.length) {
         const world = await readWorld(client, "");
-        // A refused open left the world unstable (B-181): Save() there is untested and the save guard cannot read the world, so discard instead.
+        // A refused open left the world unstable (B-181): Save() there is untested and the save guard cannot read the world, so it cannot save.
         if ("error" in world && world.error.includes(WORLD_STALE)) {
           sendSave = false;
-          staleNote = "Closed without saving: a refused open left the world in this Workbench unstable, so saving it could crash Workbench. To keep changes, the user can reopen a world with wb_open_resource and save it first.";
+          cannotSave = "A refused open left the world in this Workbench unstable, so saving it could crash Workbench.";
         }
         const refusal = "info" in world ? saveRefusal(world.info, config) : null;
         if (refusal) {
@@ -214,7 +213,7 @@ export function registerWbLaunch(
         try {
           const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save: sendSave }, { timeout: 20_000 });
           const nothing = "Nothing saved (no world open or save refused).";
-          notes.push(sendSave ? (r.saved ? "World saved." : nothing) : staleNote ? staleNote : noWorld ? nothing : cannotSave ? `Nothing was saved: ${cannotSave}` : "Closed without saving.");
+          notes.push(sendSave ? (r.saved ? "World saved." : nothing) : noWorld ? nothing : cannotSave ? `Nothing was saved: ${cannotSave}` : "Closed without saving.");
         } catch (e) {
           // In edit mode the handler exits at once, so the connection drops before it answers.
           await sleep(1500);

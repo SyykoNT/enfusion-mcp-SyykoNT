@@ -29,7 +29,7 @@ vi.mock("../../src/utils/instances.js", async (orig) => ({
 
 const { registerWbLaunch } = await import("../../src/tools/wb-launch.js");
 const { killPids } = await import("../../src/utils/process.js");
-const { WorkbenchClient, WORLD_STALE } = await import("../../src/workbench/client.js");
+const { WorkbenchClient } = await import("../../src/workbench/client.js");
 const { loadConfig } = await import("../../src/config.js");
 
 type Result = { content: { text: string }[]; isError?: boolean };
@@ -188,14 +188,48 @@ describe.runIf(process.platform === "win32")("wb_close and unsaved changes", () 
       expect(r.content[0].text).not.toContain(LAYER_NOTE);
     });
 
-    it("while a refused open has left the world stale sends save:false, never save:true, and says why (B-181)", async () => {
-      // the pre-save world read is refused with the stale line, so the save guard cannot judge the world: Save() on it is not attempted
-      const s = setup(async () => LISTENING, [CLEAN], new Error(`Could not read the open world: ${WORLD_STALE}`));
-      const r = await s.close({ save: true, force: false });
-      expect(r.isError).toBeUndefined();
-      expect(s.exits()).toEqual([{ save: false }]);
-      expect(r.content[0].text).toContain("Closed without saving: a refused open left the world in this Workbench unstable");
-      expect(r.content[0].text).toContain("wb_open_resource");
+    describe("after a refused open has left the world stale (B-181), the default save cannot happen", () => {
+      const STALE = "A refused open left the world in this Workbench unstable, so saving it could crash Workbench.";
+      // The real client sets the mark from a refused open and refuses the pre-save world read itself; only rawCall is stubbed.
+      async function stale(wins: { cls: string; text: string }[]) {
+        const client = new WorkbenchClient("127.0.0.1", 1);
+        client.worldProbe = { netstat: async () => LISTENING, titles: async () => ({ wins }) };
+        const sent: [string, Record<string, unknown>][] = [];
+        vi.spyOn(client as unknown as { rawCall: (f: string, p: Record<string, unknown>) => Promise<unknown> }, "rawCall").mockImplementation(async (f, p) => {
+          sent.push([f, p]);
+          if (p.action === "openResource") return { status: "error", message: `Workbench could not open: ${p.path}` };
+          return { status: "ok" };
+        });
+        await expect(client.call("EMCP_WB_EditorControl", { action: "openResource", path: "Prefabs/NoSuch.et" })).rejects.toThrow("Workbench could not open");
+        sent.length = 0;
+        sys.alive = new Set([500]);
+        return { sent, close: wbClose(client) };
+      }
+
+      it("refuses a world with unsaved changes and sends nothing", async () => {
+        const s = await stale([DIRTY]);
+        const r = await s.close({ save: true, force: false });
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toBe(refused(STALE));
+        expect(s.sent).toEqual([]);
+        expect(sys.alive.has(500)).toBe(true);
+      });
+
+      it("force=true closes the unsaved world with save:false and says why", async () => {
+        const s = await stale([DIRTY]);
+        const r = await s.close({ save: true, force: true });
+        expect(r.isError).toBeUndefined();
+        expect(s.sent).toEqual([["EMCP_WB_Exit", { save: false }]]);
+        expect(r.content[0].text).toContain(`Nothing was saved: ${STALE}`);
+      });
+
+      it("a clean world closes with save:false and says why", async () => {
+        const s = await stale([CLEAN]);
+        const r = await s.close({ save: true, force: false });
+        expect(r.isError).toBeUndefined();
+        expect(s.sent).toEqual([["EMCP_WB_Exit", { save: false }]]);
+        expect(r.content[0].text).toBe(`**Workbench closed.** Nothing was saved: ${STALE}`);
+      });
     });
 
     it("on a world inside a forbidden root sends save:false, never save:true, and says why", async () => {

@@ -413,7 +413,7 @@ export class WorkbenchClient {
    * An open is never refused here (a .ent open is the way out). A new PID on the port, or none, clears the mark. When netstat fails the
    * mark cannot be shown stale, so the call is refused. Never throws.
    */
-  private async worldStaleLine(apiFunc: string, params: Record<string, unknown>): Promise<string | undefined> {
+  async worldStaleLine(apiFunc: string, params: Record<string, unknown>): Promise<string | undefined> {
     if (this.worldStale === undefined || !WORLD_STATE_HANDLERS.has(apiFunc) || params.action === "openResource") return undefined;
     try {
       const out = await this.worldProbe.netstat();
