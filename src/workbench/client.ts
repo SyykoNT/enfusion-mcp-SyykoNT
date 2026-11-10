@@ -17,7 +17,7 @@ import { encodeRequest, decodeResponse } from "./protocol.js";
 import { logger } from "../utils/logger.js";
 import { findGproj, findWorkbenchExe, isProtectedAddon } from "../utils/game-paths.js";
 import { forbiddenRoot, sameRealPath } from "../utils/safe-path.js";
-import { argValue, findPids, isAlive, netstat, processInfoAsync, type ProcInfo } from "../utils/process.js";
+import { argValue, crashReporters, findPids, isAlive, netstat, newestDir, processInfoAsync, type ProcInfo } from "../utils/process.js";
 import { OWNER, WORKBENCH_INSTANCES, isOwned, pidInstanceFile, writeInstance } from "../utils/instances.js";
 import { DIALOG_CHECK_AFTER_MS, DIALOG_CHECK_EVERY_MS, workbenchEnv, workbenchProfileDir } from "./cli.js";
 import { duplicateAddonError } from "../pak/stack.js";
@@ -234,6 +234,15 @@ export class WorkbenchClient {
   };
   /** Free memory in bytes before a GUI launch. Public so tests can set it. */
   freeMemory: () => number = () => freemem();
+  /** What crashNote reads besides worldProbe.netstat and findPids. Public so tests can stub it: the real ones run PowerShell and read the logs folder. */
+  crashProbe = {
+    reporters: async (): Promise<number[]> => crashReporters().map((p) => p.pid),
+    logs: (): string | undefined => {
+      if (!this.config) return undefined;
+      const root = join(workbenchProfileDir(this.config), "logs");
+      return existsSync(root) ? (newestDir(root) ?? root) : undefined;
+    },
+  };
   /** The automatic watch check (B-093). Public so tests can stub it: the real one runs netstat and PowerShell. */
   watchCheck: () => Promise<AttachResult> = () => ensureWatched(this.port, this.host, attachDeps(this.config!));
   /** How long a timeout reply waits for the watch check. Public so tests can shorten it. */
@@ -294,8 +303,14 @@ export class WorkbenchClient {
         }
         // A modal in any Workbench copy makes every call time out; name it so the caller does not blame the network.
         if (err.code === "TIMEOUT") {
-          const [r, w] = await Promise.all([this.dialogReport(findPids(WORKBENCH_EXE)), this.watchNote()]);
-          throw new WorkbenchError([err.message, r.text, w].filter(Boolean).join("\n"), "TIMEOUT", r.dialogs);
+          const running = findPids(WORKBENCH_EXE);
+          const [r, w, c] = await Promise.all([this.dialogReport(running), this.watchNote(), this.crashNote(running)]);
+          throw new WorkbenchError([err.message, c, r.text, w].filter(Boolean).join("\n"), "TIMEOUT", r.dialogs);
+        }
+        // A crashed Workbench can reset the connection instead of timing out.
+        if (err.code === "PROTOCOL_ERROR" && err.message.includes("ECONNRESET")) {
+          const c = await this.crashNote(findPids(WORKBENCH_EXE));
+          if (c) throw new WorkbenchError(`${err.message}\n${c}`, "PROTOCOL_ERROR");
         }
         // Only wb_launch starts Workbench (D-025): a shared PC may have someone else's session waiting on it.
         if (err.code === "CONNECTION_REFUSED") {
@@ -456,6 +471,29 @@ export class WorkbenchClient {
     const line = await Promise.race([this.runWatchCheck().then((r) => r.text), late]);
     clearTimeout(timer);
     return `Watchdog: ${line}`;
+  }
+
+  /**
+   * After a failed call with no live Workbench: the line saying it appears to have crashed, or "" when nothing points to a crash.
+   * A CrashReporter running, or the port still listed, counts: CrashReporter inherits the dead Workbench's socket, so the connect
+   * succeeds and the call times out instead of being refused. Only reads; never throws, so the original error stays.
+   */
+  private async crashNote(running: number[]): Promise<string> {
+    if (running.length || !LOCAL_HOSTS.includes(this.host.toLowerCase())) return "";
+    try {
+      const [reporters, owner] = await Promise.all([
+        this.crashProbe.reporters().catch((): number[] => []),
+        this.worldProbe.netstat().then((out) => portOwner(out, this.port), () => undefined),
+      ]);
+      if (!reporters.length && !owner) return "";
+      const who = reporters.length
+        ? `CrashReporter PID ${reporters.join(", ")}${owner ? ` holds port ${this.port}` : " is running"}`
+        : `PID ${owner} holds port ${this.port}`;
+      const logs = this.crashProbe.logs();
+      return `Workbench appears to have crashed: ${who}${logs ? `; crash logs are in ${logs}` : ""}. Tell the user before starting Workbench again.`;
+    } catch {
+      return "";
+    }
   }
 
   /** Dialog text for these Workbench PIDs, or the reason the check could not run. Never throws. */

@@ -156,6 +156,8 @@ describe("WorkbenchClient", () => {
       const addr = slowServer.address();
       slowClient = new WorkbenchClient("127.0.0.1", addr && typeof addr !== "string" ? addr.port : 0);
       slowClient.dialogProbe = async () => []; // the real one would start PowerShell on the test PC
+      slowClient.worldProbe.netstat = async () => ""; // so would the crash check
+      slowClient.crashProbe = { reporters: async () => [], logs: () => undefined };
     });
     afterEach(async () => {
       // Destroy all held sockets so server.close() doesn't hang
@@ -643,6 +645,8 @@ describe("automatic watch check (B-093)", () => {
       const addr = slow.address();
       c = new WorkbenchClient("127.0.0.1", addr && typeof addr !== "string" ? addr.port : 0, AUTO);
       c.dialogProbe = async () => []; // the real one would start PowerShell on the test PC
+      c.worldProbe.netstat = async () => ""; // so would the crash check
+      c.crashProbe = { reporters: async () => [], logs: () => undefined };
     });
     afterEach(async () => {
       for (const s of openSockets.splice(0)) s.destroy();
