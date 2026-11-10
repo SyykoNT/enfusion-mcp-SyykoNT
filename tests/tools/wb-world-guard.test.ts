@@ -142,7 +142,6 @@ describe("unsaved-world guard on a .ent open", () => {
   it.each([
     ["wb_open_resource", { path: "Prefabs/Weapons/AK47.et" }],
     ["wb_open_resource", { path: "Scripts/Game/MyScript.c" }],
-    ["wb_open_resource", { path: "addon.gproj" }],
     ["wb_projects", { action: "open", name: "MyMod" }],
     ["wb_resources", { action: "open", path: "Prefabs/A.et" }],
     ["wb_resources", { action: "register", path: NEW_WORLD }], // only action open can raise the prompt
@@ -160,12 +159,14 @@ describe("unsaved-world guard on a .ent open", () => {
   // Live check on 1.9.0.37: a .gproj open on a world with unsaved changes raised the same "Loading world" prompt.
   const GPROJ = "C:/mods/MyMod/addon.gproj";
 
-  it.each([GPROJ, "C:/mods/MyMod/ADDON.GPROJ"])("wb_projects open %s on an unsaved world is refused with the Loading world text and nothing is sent", async (name) => {
-    const s = setup({ titles: async () => ({ wins: [SAVEBITS, MAIN, DIRTY] }) });
-    const r = await s.handlers.wb_projects({ action: "open", name });
-    expect(r.isError).toBe(true);
-    expect(r.content[0].text).toBe(refusal("MCPParity/Worlds/MCPParity.ent", name));
-    expect(s.call).not.toHaveBeenCalled();
+  describe.each([GPROJ, "C:/mods/MyMod/ADDON.GPROJ"])("a .gproj open of %s", (name) => {
+    it.each(TOOLS)("$name on an unsaved world is refused with the Loading world text and nothing is sent", async (t) => {
+      const s = setup({ titles: async () => ({ wins: [SAVEBITS, MAIN, DIRTY] }) });
+      const r = await s.handlers[t.name](t.args(name));
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toBe(refusal("MCPParity/Worlds/MCPParity.ent", name));
+      expect(s.call).not.toHaveBeenCalled();
+    });
   });
 
   it("wb_projects open of a .gproj on a clean world sends the open with no extra line", async () => {
@@ -192,6 +193,13 @@ describe("unsaved-world guard on a .ent open", () => {
     expect(description).toContain("so open refuses then");
   });
 
+  it("the wb_resources description names the .ent and .gproj refusal", () => {
+    let description = "";
+    const server = { registerTool: (n: string, d: { description: string }) => n === "wb_resources" && (description = d.description) } as unknown as McpServer;
+    registerWbResources(server, new WorkbenchClient("127.0.0.1", PORT));
+    expect(description).toContain("open of a world (.ent) or a project (.gproj) is refused when the World Editor title shows unsaved changes or a layer made with wb_layers is not saved yet");
+  });
+
   it.each([TARGET, "{4F2A9B1C3D5E7F80}Worlds/Other.ent", "Worlds/Other.ENT"])("%s counts as a world, with or without a GUID prefix", async (path) => {
     const s = setup({ titles: async () => ({ wins: [DIRTY] }) });
     const r = await s.handlers.wb_open_resource({ path });
@@ -204,7 +212,7 @@ describe("unsaved-world guard on a .ent open", () => {
     let description = "";
     const server = { registerTool: (n: string, d: { description: string }) => n === "wb_open_resource" && (description = d.description) } as unknown as McpServer;
     registerWbEditorTools(server, new WorkbenchClient("127.0.0.1", PORT), {} as Config);
-    expect(description).toContain("refuses a world open when the World Editor title shows unsaved changes");
+    expect(description).toContain("refuses a .ent or .gproj open when the World Editor title shows unsaved changes");
     expect(description).toContain("A layer this MCP created with wb_layers counts as unsaved until wb_save runs");
     expect(description).not.toContain("is not detected");
     expect(description).not.toContain("cannot tell whether the world has unsaved changes");

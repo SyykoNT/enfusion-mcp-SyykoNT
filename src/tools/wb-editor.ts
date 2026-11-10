@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { dirname } from "node:path";
-import { WorkbenchError, isWorldPath, type WorkbenchClient } from "../workbench/client.js";
+import { WorkbenchError, isProjectPath, isWorldPath, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 import { diffSnapshots, snapshotDir } from "../workbench/files.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
@@ -274,8 +274,8 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
     {
       description:
         "Open a resource file in the appropriate Workbench editor (e.g., a .et prefab in the Prefab Editor, a .c script in the Script Editor). " +
-        "Opening a world (.ent) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it. " +
-        "The tool refuses a world open when the World Editor title shows unsaved changes (local Workbench on Windows only) and opens with a warning when it cannot check. " +
+        "Opening a world (.ent) or a project (.gproj) while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel); that dialog blocks every MCP call until a person answers it. " +
+        "The tool refuses a .ent or .gproj open when the World Editor title shows unsaved changes (local Workbench on Windows only) and opens with a warning when it cannot check. " +
         "A layer this MCP created with wb_layers counts as unsaved until wb_save runs: Workbench shows the same prompt for it, so the open is refused until then. " +
         "Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
@@ -287,7 +287,7 @@ export function registerWbEditorTools(server: McpServer, client: WorkbenchClient
     async ({ path }) => {
       let warn = "";
       try {
-        const guard = isWorldPath(path) ? await client.checkWorldOpen(path) : undefined;
+        const guard = isWorldPath(path) || isProjectPath(path) ? await client.checkWorldOpen(path) : undefined;
         if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
         if (guard) warn = `\n\n${guard.warn}`;
 

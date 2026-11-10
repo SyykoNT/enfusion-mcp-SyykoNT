@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isWorldPath, type WorkbenchClient } from "../workbench/client.js";
+import { isProjectPath, isWorldPath, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
 export function registerWbResources(server: McpServer, client: WorkbenchClient): void {
@@ -12,6 +12,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
       description:
         "Manage Workbench resources. Register new resources, rebuild resource databases, get resource info, or open a resource in its editor. " +
         "To SEARCH for resources by name, use asset_search (searches base game data and .pak archives offline); this tool cannot list or browse. " +
+        "open of a world (.ent) or a project (.gproj) is refused when the World Editor title shows unsaved changes or a layer made with wb_layers is not saved yet, because Workbench then asks \"Loading world\" and that dialog blocks every MCP call (local Workbench on Windows only; it opens with a warning when it cannot check). Run wb_save first, or let the user discard the changes in Workbench. " +
         "Register only new files: register needs the absolute path of a file that exists on disk and has no .meta yet, and is refused before Workbench is called otherwise (an already registered or missing file can open a dialog or hang Workbench).",
       inputSchema: {
         action: z
@@ -75,7 +76,7 @@ export function registerWbResources(server: McpServer, client: WorkbenchClient):
           return { content: [{ type: "text" as const, text: lines.join("\n") + formatConnectionStatus(client) }] };
         }
 
-        const guard = action === "open" && isWorldPath(path) ? await client.checkWorldOpen(path) : undefined;
+        const guard = action === "open" && (isWorldPath(path) || isProjectPath(path)) ? await client.checkWorldOpen(path) : undefined;
         if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
         if (guard) warn = `\n\n${guard.warn}`;
 
