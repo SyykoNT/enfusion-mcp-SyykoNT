@@ -82,10 +82,11 @@ function connectionLine(client: WorkbenchClient): string {
 /**
  * Gate for mutating tools: reads the live mode right before the action and never launches Workbench.
  * Returns null to go ahead, or the refusal text (callers return it with isError).
+ * allowNoWorld also accepts "no_world" for actions that need no open world.
  */
-export async function ensureMode(client: WorkbenchClient, want: "edit" | "play", action: string): Promise<string | null> {
+export async function ensureMode(client: WorkbenchClient, want: "edit" | "play", action: string, allowNoWorld = false): Promise<string | null> {
   const mode = await client.probeMode();
-  if (mode === want) return null;
+  if (mode === want || (allowNoWorld && mode === "no_world")) return null;
   switch (mode) {
     case "not_running":
       return `Cannot ${action}: Workbench is not running on ${client.endpoint}. Start it with wb_launch (gprojPath) after checking that nobody else is using Workbench.`;

@@ -12,7 +12,8 @@ export function registerWbExecuteAction(server: McpServer, client: WorkbenchClie
     {
       description:
         "Execute any Workbench menu action by its menu path. Use comma-separated path segments to identify the action (e.g., 'Game,Exit game' in WorldEditor). " +
-        "Some destructive actions (File,Close; File,New; File,Exit) are blocked for safety, and so is File,Save in the World Editor (use wb_save).",
+        "Some destructive actions (File,Close; File,New; File,Exit) are blocked for safety, and so is File,Save in the World Editor (use wb_save). " +
+        "Actions outside the World Editor, and World Editor Plugins menus, run with no world open; a plugin may open a dialog that waits for the user.",
       inputSchema: {
         menuPath: z
           .string()
@@ -40,8 +41,9 @@ export function registerWbExecuteAction(server: McpServer, client: WorkbenchClie
           };
         }
 
-        // Mutating actions require edit mode
-        const modeErr = await ensureMode(client, "edit", `execute menu action "${menuPath}"`);
+        // Other modules and World Editor Plugins menus need no world; every other World Editor path needs edit mode.
+        const needsNoWorld = (module || "WorldEditor") !== "WorldEditor" || normalizedPath.startsWith("plugins,");
+        const modeErr = await ensureMode(client, "edit", `execute menu action "${menuPath}"`, needsNoWorld);
         if (modeErr) {
           return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
