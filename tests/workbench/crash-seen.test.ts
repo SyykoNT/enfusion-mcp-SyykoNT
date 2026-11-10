@@ -81,6 +81,7 @@ describe("a failed call with no live Workbench says it appears to have crashed",
     expect(logs.message).toContain("timed out after 10000ms");
     // one failing probe leaves the other one's finding
     expect((await msg(setup(timeout(), { reporters: boom, netstat: async () => LISTEN(19664) }))).message).toContain("PID 19664 holds port 5775");
+    expect((await msg(setup(timeout(), { reporters: async () => [49736], netstat: boom }))).message).toContain("CrashReporter PID 49736 is running");
   });
 
   it("is not run for a Workbench on another machine", async () => {
