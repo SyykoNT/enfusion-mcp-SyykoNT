@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isWorldPath, type WorkbenchClient } from "../workbench/client.js";
+import { isProjectPath, isWorldPath, type WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 
 export function registerWbProjects(server: McpServer, client: WorkbenchClient): void {
@@ -8,7 +8,9 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
     "wb_projects",
     {
       description:
-        "Query project information from the Workbench. List all loaded addon projects, locate a specific project by name, or open a .gproj to load it into Workbench.",
+        "Query project information from the Workbench. List all loaded addon projects, locate a specific project by name, or open a .gproj to load it into Workbench. " +
+        "Opening a .gproj or a .ent while the current world has unsaved changes makes Workbench ask \"Loading world\" (Yes/No/Cancel), and that dialog blocks every MCP call until a person answers it, so open refuses then " +
+        "(local Workbench on Windows only; it opens with a warning when it cannot check). A layer this MCP created with wb_layers counts as unsaved until wb_save runs. Run wb_save first, or let the user discard the changes in Workbench.",
       inputSchema: {
         action: z
           .enum(["list", "locate", "open"])
@@ -35,7 +37,8 @@ export function registerWbProjects(server: McpServer, client: WorkbenchClient): 
             };
           }
 
-          const guard = isWorldPath(name) ? await client.checkWorldOpen(name) : undefined;
+          // A .gproj open raises the same "Loading world" prompt as a .ent open (live check, 1.9.0.37).
+          const guard = isWorldPath(name) || isProjectPath(name) ? await client.checkWorldOpen(name) : undefined;
           if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
           if (guard) warn = `\n\n${guard.warn}`;
 

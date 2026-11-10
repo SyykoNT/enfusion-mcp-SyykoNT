@@ -7,6 +7,7 @@ import { ADDONS_DIRS_NOT_APPLIED, handlerGitState, type WorkbenchClient } from "
 import { addonsDirsError } from "../workbench/cli.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 import { findPids, killPids, sleep } from "../utils/process.js";
+import { readWorld, saveRefusal } from "./wb-editor.js";
 import { isOwned } from "../utils/instances.js";
 
 export function registerWbLaunch(
@@ -141,7 +142,11 @@ export function registerWbLaunch(
         "Close a Workbench this MCP session started (recorded at launch); any other Workbench is refused and left running. " +
         "By default saves the open world first and exits cleanly through the NET API (skipped while another Workbench runs, " +
         "because that one may own the NET API port); force=true kills the owned process if it does not exit. " +
-        "Unless force=true, a close that does not save first (save=false, or another Workbench running) refuses, without closing, a world with unsaved changes (local Workbench on Windows only), because Workbench would ask to save and that dialog blocks every MCP call.",
+        "save=false closes without saving and without a check: Workbench asks nothing, and the unsaved edits are lost. " +
+        "When the default save cannot happen (an unnamed world, play mode, prefab edit mode, a packed world, or a world file in the game or Tools folders or the Workshop cache), it closes without saving instead, " +
+        "and unless force=true it first refuses, without closing, a world with unsaved changes (local Workbench on Windows only), because the edits would be lost. " +
+        "While another Workbench runs, the close is by window and Workbench asks \"World editor - closing\" for a world with unsaved changes, a dialog that blocks every MCP call, so unless force=true that is refused too. " +
+        "When a layer made with wb_layers has not been saved, a close that does not save adds a line that the layer is dropped.",
       inputSchema: {
         save: z.boolean().default(true).describe("Save the open world before exiting (default true)"),
         force: z.boolean().default(false).describe("Kill the process if it does not exit on its own (unsaved work is lost)"),
@@ -161,20 +166,45 @@ export function registerWbLaunch(
       if (!owned.length) {
         return { content: [{ type: "text" as const, text: `**Not closed.**${untouched}` }], isError: true };
       }
-      // Only a close that does not save first can raise Workbench's save prompt (save=false, or the NET API exit skipped for another Workbench); force documents that unsaved work is lost.
+      // The exit handler saves the world it is asked to, also into a packed or game folder: when wb_save would refuse, send save=false instead (live check on 1.9.0.37: Exit raises no prompt).
+      // A world read that fails (no world open, a dialog, an old handler) changes nothing: the close goes ahead as asked.
+      let sendSave = save;
+      let cannotSave = "";
+      if (save && !others.length) {
+        const world = await readWorld(client, "");
+        const refusal = "info" in world ? saveRefusal(world.info, config) : null;
+        if (refusal) {
+          sendSave = false;
+          cannotSave = refusal.text;
+        }
+      }
+      // save=false is the user's discard (no prompt on 1.9.0.37). A close the user wanted to save but cannot, and a window close for another Workbench (raises "World editor - closing" on 1.9.0.37), check first.
       // With another Workbench running, only a port owner that is ours can be judged.
-      const guard = !force && (save === false || others.length)
-        ? await client.checkUnsaved("Closing Workbench", "save-changes prompt", undefined, others.length ? owned : undefined)
-        : undefined;
+      let guard: Awaited<ReturnType<typeof client.checkUnsaved>>;
+      if (!force && others.length) {
+        guard = await client.checkUnsaved(
+          "Closing Workbench now would show Workbench's \"World editor - closing\" prompt, which blocks every MCP call until a person answers it. Run wb_save first, or save or discard the changes in Workbench, then try again.",
+          'if the current world has unsaved edits, Workbench will show a blocking "World editor - closing" prompt.',
+          owned
+        );
+      } else if (!force && cannotSave) {
+        guard = await client.checkUnsaved(
+          `${cannotSave} Closing now would lose the unsaved changes. Do what that says if it names a step, or save the world by hand in Workbench (File > Save World As, in your own addon), then close again; force=true closes and discards them.`,
+          "if the current world has unsaved edits, closing now loses them."
+        );
+      }
       if (guard && "refuse" in guard) return { content: [{ type: "text" as const, text: guard.refuse }], isError: true };
       const alive = () => findPids(image).filter((pid) => owned.includes(pid));
       const notes: string[] = guard ? [guard.warn] : [];
+      // A close that saves writes the layer; any other drops it.
+      const layer = sendSave && !others.length ? "" : await client.layerWarning();
+      if (layer) notes.push(layer);
       if (others.length) {
         notes.push("NET API exit skipped (another Workbench may be the one answering on the NET API port).");
       } else {
         try {
-          const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save }, { timeout: 20_000 });
-          notes.push(save ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : "Closed without saving.");
+          const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save: sendSave }, { timeout: 20_000 });
+          notes.push(sendSave ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : cannotSave ? `Nothing was saved: ${cannotSave}` : "Closed without saving.");
         } catch (e) {
           // In edit mode the handler exits at once, so the connection drops before it answers.
           await sleep(1500);

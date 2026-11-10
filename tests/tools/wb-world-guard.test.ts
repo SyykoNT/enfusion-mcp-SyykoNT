@@ -143,7 +143,6 @@ describe("unsaved-world guard on a .ent open", () => {
     ["wb_open_resource", { path: "Prefabs/Weapons/AK47.et" }],
     ["wb_open_resource", { path: "Scripts/Game/MyScript.c" }],
     ["wb_open_resource", { path: "addon.gproj" }],
-    ["wb_projects", { action: "open", name: "C:/mods/MyMod/addon.gproj" }],
     ["wb_projects", { action: "open", name: "MyMod" }],
     ["wb_resources", { action: "open", path: "Prefabs/A.et" }],
     ["wb_resources", { action: "register", path: NEW_WORLD }], // only action open can raise the prompt
@@ -156,6 +155,41 @@ describe("unsaved-world guard on a .ent open", () => {
     expect(s.call).toHaveBeenCalledTimes(1);
     expect(s.netstat).not.toHaveBeenCalled();
     expect(s.titles).not.toHaveBeenCalled();
+  });
+
+  // Live check on 1.9.0.37: a .gproj open on a world with unsaved changes raised the same "Loading world" prompt.
+  const GPROJ = "C:/mods/MyMod/addon.gproj";
+
+  it.each([GPROJ, "C:/mods/MyMod/ADDON.GPROJ"])("wb_projects open %s on an unsaved world is refused with the Loading world text and nothing is sent", async (name) => {
+    const s = setup({ titles: async () => ({ wins: [SAVEBITS, MAIN, DIRTY] }) });
+    const r = await s.handlers.wb_projects({ action: "open", name });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe(refusal("MCPParity/Worlds/MCPParity.ent", name));
+    expect(s.call).not.toHaveBeenCalled();
+  });
+
+  it("wb_projects open of a .gproj on a clean world sends the open with no extra line", async () => {
+    const s = setup({ titles: async () => ({ wins: [MAIN, CLEAN] }) });
+    const r = await s.handlers.wb_projects({ action: "open", name: GPROJ });
+    expect(r.isError).toBeUndefined();
+    expect(s.call).toHaveBeenCalledTimes(1);
+    expect(r.content[0].text).not.toContain("Could not check");
+  });
+
+  it("wb_projects open of a .gproj when the check cannot run is sent with one warning line", async () => {
+    const s = setup({ netstat: async () => "" });
+    const r = await s.handlers.wb_projects({ action: "open", name: GPROJ });
+    expect(r.isError).toBeUndefined();
+    expect(s.call).toHaveBeenCalledTimes(1);
+    expect(r.content[0].text).toContain(warning("the netstat query failed"));
+  });
+
+  it("the wb_projects description names the prompt and the refusal", () => {
+    let description = "";
+    const server = { registerTool: (n: string, d: { description: string }) => n === "wb_projects" && (description = d.description) } as unknown as McpServer;
+    registerWbProjects(server, new WorkbenchClient("127.0.0.1", PORT));
+    expect(description).toContain('Opening a .gproj or a .ent while the current world has unsaved changes makes Workbench ask "Loading world"');
+    expect(description).toContain("so open refuses then");
   });
 
   it.each([TARGET, "{4F2A9B1C3D5E7F80}Worlds/Other.ent", "Worlds/Other.ENT"])("%s counts as a world, with or without a GUID prefix", async (path) => {

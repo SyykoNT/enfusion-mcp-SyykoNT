@@ -2,6 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
+import { readWorld, saveRefusal } from "./wb-editor.js";
+import type { Config } from "../config.js";
 
 const MUTATING_LAYER_ACTIONS = new Set(["create", "toggleLock", "setActive"]);
 // Becomes <World>_Layers\<name>.layer on save; COALITION's layer names (_INIT, MARKERS, GameBorderS ...) fit
@@ -9,14 +11,15 @@ const LAYER_NAME = /^[A-Za-z0-9_]{1,64}$/;
 // Handlers older than WE-SAVEAS answer these with "Unknown action"
 const NEW_HANDLER_ACTIONS = new Set(["create", "setActive"]);
 
-export function registerWbLayers(server: McpServer, client: WorkbenchClient): void {
+export function registerWbLayers(server: McpServer, client: WorkbenchClient, config: Config): void {
   server.registerTool(
     "wb_layers",
     {
       description:
         "Manage layers in the World Editor. create makes a top-level layer in the sub-scene being edited (nested layers made " +
         "through the script API are not saved, so they are not offered); " +
-        "it is written to disk on the next wb_save, and until a wb_save runs, wb_play, a world open and a wb_close that does not save are refused as unsaved. setActive sets the layer new entities go to and confirms it by reading it back. " +
+        "it is written to disk on the next wb_save. create is refused, without creating, in a world wb_save would refuse (unnamed, packed, in the game or Tools folders or the Workshop cache), because the layer could never be saved. " +
+        "Until a wb_save runs, a world open (.ent or .gproj) is refused, and wb_play and a wb_close that does not save add a line that the layer is dropped unsaved. setActive sets the layer new entities go to and confirms it by reading it back. " +
         "getActive reports the current sub-scene and its active layer. Also list, isVisible, getInfo and toggleLock (layer IDs). " +
         "create, setActive and toggleLock only work in edit mode.",
       inputSchema: {
@@ -59,6 +62,13 @@ export function registerWbLayers(server: McpServer, client: WorkbenchClient): vo
         if (modeErr) {
           return { content: [{ type: "text" as const, text: modeErr + formatConnectionStatus(client) }], isError: true };
         }
+      }
+      if (action === "create") {
+        // A layer in a world wb_save refuses could never be saved, and the unsaved mark would then block every open.
+        const world = await readWorld(client, "Nothing was changed.");
+        if ("error" in world) return refuse(world.error);
+        const why = saveRefusal(world.info, config);
+        if (why) return refuse(`${why.text} A layer created here could not be saved, so none was created. Nothing was changed.`);
       }
       try {
         const params: Record<string, unknown> = { action };

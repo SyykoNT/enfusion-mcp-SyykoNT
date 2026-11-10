@@ -1,24 +1,83 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterAll, describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { WorkbenchClient } from "../../src/workbench/client.js";
+import type { Config } from "../../src/config.js";
 import { registerWbLayers } from "../../src/tools/wb-layers.js";
 
 type Result = { content: { text: string }[]; isError?: boolean };
 
-// Stub client in edit mode: EMCP_WB_Layers answers with `answer`, or throws it when it is an Error.
-function layers(answer: Record<string, unknown> | Error) {
-  const call = vi.fn(async () => {
+const dir = mkdtempSync(join(tmpdir(), "emcp-layers-"));
+const WORLD = join(dir, "W.ent");
+writeFileSync(WORLD, "x");
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// Stub client in edit mode: worldInfo answers `world`; EMCP_WB_Layers answers with `answer`, or throws it when it is an Error.
+function layers(answer: Record<string, unknown> | Error, world: Record<string, unknown> | Error = { worldPath: "Worlds/W.ent", absPath: WORLD }) {
+  const call = vi.fn(async (_f: string, p: Record<string, unknown>) => {
+    if (p.action === "worldInfo") {
+      if (world instanceof Error) throw world;
+      return { status: "ok", ...world };
+    }
     if (answer instanceof Error) throw answer;
     return answer;
   });
   const mark = vi.fn(async () => {});
   const client = { state: { connected: true, mode: "edit" }, probeMode: vi.fn(async () => "edit"), call, markLayerCreated: mark };
   let tool!: (a: Record<string, unknown>) => Promise<Result>;
-  registerWbLayers({ registerTool: (_n: string, _d: unknown, h: typeof tool) => (tool = h) } as unknown as McpServer, client as unknown as WorkbenchClient);
+  registerWbLayers({ registerTool: (_n: string, _d: unknown, h: typeof tool) => (tool = h) } as unknown as McpServer, client as unknown as WorkbenchClient, {} as Config);
   return { call, mark, run: async (a: Record<string, unknown>) => (await tool(a)) };
 }
 
 describe("wb_layers", () => {
+  // a layer in a world wb_save refuses could never be saved, and the unsaved mark would block every open for good.
+  it.each([
+    [{ worldPath: "" }, "No world file: the open world is unnamed"],
+    [{ worldPath: "Worlds/W.ent", absPath: "" }, "has no file on disk that Workbench could resolve (packed addon?). Save a copy in your own addon by hand (File > Save World As)"],
+    [{ worldPath: "Worlds/W.ent", absPath: WORLD, prefabEditMode: true }, "Prefab edit mode: wb_save saves worlds. Use wb_prefabs save"],
+    [{ worldPath: "Worlds/W.ent", absPath: WORLD, gameMode: true }, "Play mode: stop it with wb_stop before saving."],
+  ])("create refuses %j like wb_save does: nothing is created and nothing is marked", async (world, text) => {
+    const t = layers({ status: "ok", layerPath: "L1" }, world);
+    const r = await t.run({ action: "create", name: "L1" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain(text);
+    expect(r.content[0].text).toContain("A layer created here could not be saved, so none was created. Nothing was changed.");
+    expect(t.call.mock.calls.map((c) => c[1].action)).toEqual(["worldInfo"]);
+    expect(t.mark).not.toHaveBeenCalled();
+  });
+
+  it("create refuses a world inside a forbidden root", async () => {
+    vi.stubEnv("ENFUSION_FORBIDDEN_DIRS", dir);
+    try {
+      const t = layers({ status: "ok", layerPath: "L1" });
+      const r = await t.run({ action: "create", name: "L1" });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain(`is inside ${dir}`);
+      expect(t.call.mock.calls.map((c) => c[1].action)).toEqual(["worldInfo"]);
+      expect(t.mark).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("create refuses when the world cannot be read (old handler), and creates nothing", async () => {
+    const t = layers({ status: "ok", layerPath: "L1" }, new Error("Unknown action: worldInfo"));
+    const r = await t.run({ action: "create", name: "L1" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("EMCP_WB_EditorControl is out of date");
+    expect(r.content[0].text).toContain("Nothing was changed.");
+    expect(t.call.mock.calls.map((c) => c[1].action)).toEqual(["worldInfo"]);
+  });
+
+  it("the other actions read no world", async () => {
+    const t = layers({ status: "ok", layers: [], currentSubScene: 0 });
+    await t.run({ action: "list" });
+    await t.run({ action: "setActive", layerPath: "X" });
+    expect(t.call.mock.calls.map((c) => c[1].action)).toEqual(["list", "setActive"]);
+  });
+
   it("create refuses a nested request instead of making a top-level layer, without calling Workbench", async () => {
     const t = layers({ status: "ok", layerPath: "OBJECTIVES" });
     const r = await t.run({ action: "create", name: "OBJECTIVES", parentPath: "MISSION" });

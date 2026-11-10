@@ -77,7 +77,7 @@ describe("mode gate on wb_* tools", () => {
       return { status: "ok" };
     });
     const client = new WorkbenchClient("127.0.0.1", mock.port);
-    // wb_play checks for unsaved changes; a netstat listing without the port owner skips it (no netstat, no windows read).
+    // Stubbed so that no test runs netstat or reads windows (wb_play reads netstat only when a layer of ours is marked).
     client.worldProbe = { netstat: async () => "Active Connections\r\n", titles: async () => ({ unavailable: "not reached" }) };
     const tools = editorTools(client);
     expect((await tools.wb_play({})).isError).toBeUndefined();

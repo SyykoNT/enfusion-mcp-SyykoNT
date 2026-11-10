@@ -197,9 +197,15 @@ export class WorkbenchError extends Error {
 /** A world file path. Opening one while the open world has unsaved changes raises Workbench's blocking "Loading world" prompt. */
 export const isWorldPath = (path: string) => /\.ent$/i.test(path);
 
-/** A call that opens a world file: EditorControl openResource or Resources open on a .ent. */
+/** A project file path. Opening one while the open world has unsaved changes raises the same "Loading world" prompt (live check, 1.9.0.37). */
+export const isProjectPath = (path: string) => /\.gproj$/i.test(path);
+
+/** A call that opens a world or project file: EditorControl openResource or Resources open on a .ent or .gproj. */
 const opensWorld = (params: Record<string, unknown>) =>
-  (params.action === "openResource" || params.action === "open") && typeof params.path === "string" && isWorldPath(params.path);
+  (params.action === "openResource" || params.action === "open") && typeof params.path === "string" && (isWorldPath(params.path) || isProjectPath(params.path));
+
+/** What play and close say about a layer this MCP created: a warning, since only a .ent or .gproj open raises a prompt for it (live check, 1.9.0.37). */
+const LAYER_NOTE = "A layer this MCP created is not saved yet and is dropped unless wb_save runs first.";
 
 /** Workbench answered, but the requested NET API handler is not registered. */
 function isUndefinedHandler(err: unknown): boolean {
@@ -267,6 +273,8 @@ export class WorkbenchClient {
       // A Resources open can answer ok with "SetOpenedResource returned false": nothing opened, the marked world is still there.
       if (opensWorld(params) && !/^SetOpenedResource returned false/.test(String((result as Record<string, unknown>)?.message ?? ""))) {
         this.layerMark = undefined; // the newly opened world has no layer of ours
+        // The footer reads this cache and nothing else sets it after an open; a project open loads no world.
+        if (isWorldPath(String(params.path))) this._state.mode = "edit";
       }
       return result;
     } catch (err) {
@@ -353,19 +361,33 @@ export class WorkbenchClient {
   }
 
   /**
-   * Before an action that raises a save prompt: is the world open in the local Workbench that owns this client's port unsaved?
-   * Unsaved = its World Editor title ends in *, or this MCP created a layer there since the last successful wb_save.
+   * One line when this MCP created a layer in the Workbench that answers the port and no wb_save has run since, else "".
+   * A layer does not put * in the title and raises no prompt on play or exit, but it is dropped unsaved. Never throws.
+   */
+  async layerWarning(): Promise<string> {
+    if (this.layerMark === undefined) return "";
+    try {
+      const out = await this.worldProbe.netstat();
+      if (out && portOwner(out, this.port) !== this.layerMark) this.layerMark = undefined; // a new Workbench (or none): the mark is stale
+    } catch {
+      // shortcut: a failed netstat cannot show the mark is stale, so it is still said; upgrade if that ever misleads.
+    }
+    return this.layerMark === undefined ? "" : LAYER_NOTE;
+  }
+
+  /**
+   * Before an action that raises a save prompt or would lose edits: is the world open in the local Workbench that owns this client's port unsaved
+   * (its World Editor title ends in *)?
    * `only`: PIDs the caller may speak for; a port owner outside them (another Workbench) is "cannot tell".
-   * `doing` names the action in the refusal; `prompt` names the Workbench prompt it would raise, `warnPrompt` the same in the warning.
-   * refuse: unsaved, so the action would raise the blocking prompt; send nothing.
+   * `tail` ends the refusal and `warnTail` the warning: what the action would do, and the way out.
+   * `markRefusal`: refuse with this text when this MCP created a layer there since the last successful wb_save (a layer does not put * in the title).
+   * Without it the mark is not checked here (layerWarning says it).
+   * refuse: unsaved, so the action would lose the edits or raise the blocking prompt; send nothing.
    * warn: the check could not run, act and add the line. undefined: clean, or nothing listens (the action then reports the connection error).
    * Never throws.
    */
-  async checkUnsaved(doing: string, prompt: string, warnPrompt = prompt, only?: number[]): Promise<{ refuse: string } | { warn: string } | undefined> {
-    const cannot = (why: string) => ({
-      warn: `Could not check for unsaved changes (${why}); if the current world has unsaved edits, Workbench will show a blocking ${warnPrompt}.`,
-    });
-    const tail = `${doing} now would show Workbench's ${prompt}, which blocks every MCP call until a person answers it. Run wb_save first, or save or discard the changes in Workbench, then try again.`;
+  async checkUnsaved(tail: string, warnTail: string, only?: number[], markRefusal?: string): Promise<{ refuse: string } | { warn: string } | undefined> {
+    const cannot = (why: string) => ({ warn: `Could not check for unsaved changes (${why}); ${warnTail}` });
     if (!LOCAL_HOSTS.includes(this.host.toLowerCase())) return cannot(`the NET API host ${this.host} is not this PC`);
     try {
       const out = await this.worldProbe.netstat();
@@ -374,14 +396,7 @@ export class WorkbenchClient {
       if (this.layerMark !== pid) this.layerMark = undefined; // a new Workbench (or none) on the port: the old mark is stale
       if (only && !(pid && only.includes(pid))) return cannot("another Workbench runs and may own the NET API port");
       if (!pid) return undefined;
-      if (this.layerMark === pid) {
-        return {
-          refuse:
-            `Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world may have unsaved changes. ` +
-            `${doing} now would show Workbench's ${prompt}, which blocks every MCP call until a person answers it. ` +
-            "Run wb_save, even if you already saved the world in Workbench, then try again.",
-        };
-      }
+      if (markRefusal && this.layerMark === pid) return { refuse: markRefusal };
       const probe = await this.worldProbe.titles(pid);
       if ("unavailable" in probe) return cannot(probe.unavailable);
       const w = unsavedWorld(probe.wins);
@@ -393,9 +408,16 @@ export class WorkbenchClient {
     }
   }
 
-  /** checkUnsaved for a world (.ent) open, which raises Workbench's "Loading world" prompt. */
+  /** checkUnsaved for a world (.ent) or project (.gproj) open, which raises Workbench's "Loading world" prompt. */
   checkWorldOpen(path: string) {
-    return this.checkUnsaved(`Opening ${path}`, '"Loading world" save prompt', '"Loading world" prompt');
+    const now = `Opening ${path} now would show Workbench's "Loading world" save prompt, which blocks every MCP call until a person answers it.`;
+    return this.checkUnsaved(
+      `${now} Run wb_save first, or save or discard the changes in Workbench, then try again.`,
+      'if the current world has unsaved edits, Workbench will show a blocking "Loading world" prompt.',
+      undefined,
+      "Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world may have unsaved changes. " +
+        `${now} Run wb_save, even if you already saved the world in Workbench, then try again.`
+    );
   }
 
   /** The running watch check, or a new one. Never rejects: a failure is logged at debug level and becomes the result line. */

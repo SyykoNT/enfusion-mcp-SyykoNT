@@ -124,7 +124,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerWbComponent(server, wbClient);
   registerWbReadProps(server, wbClient);
   registerWbTerrain(server, wbClient);
-  registerWbLayers(server, wbClient);
+  registerWbLayers(server, wbClient, config);
   registerWbResources(server, wbClient);
   registerWbPrefabs(server, wbClient);
   registerWbClipboard(server, wbClient);

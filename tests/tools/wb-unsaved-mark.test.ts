@@ -11,6 +11,7 @@ import { registerWbResources } from "../../src/tools/wb-resources.js";
 import type { Config } from "../../src/config.js";
 
 // A layer the MCP creates does not put * in the World Editor title, so the client remembers it until a wb_save call succeeds.
+// Workbench 1.9.0.37 asks "Loading world" for it on a .ent open but not on play or exit, so an open refuses and play warns.
 // Nothing here runs netstat or PowerShell or reads a window: worldProbe and rawCall are stubbed on every client.
 
 type Result = { content: { text: string }[]; isError?: boolean };
@@ -26,21 +27,19 @@ writeFileSync(WORLD, "x");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const OPEN_PATH = "Worlds/Other.ent";
-const tail = (doing: string, prompt: string) =>
-  `${doing} now would show Workbench's ${prompt}, which blocks every MCP call until a person answers it. Run wb_save first, or save or discard the changes in Workbench, then try again.`;
-const markRefusal = (doing: string, prompt: string) =>
-  `Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world may have unsaved changes. ` +
-  `${doing} now would show Workbench's ${prompt}, which blocks every MCP call until a person answers it. Run wb_save, even if you already saved the world in Workbench, then try again.`;
-const OPEN_MARK = markRefusal(`Opening ${OPEN_PATH}`, '"Loading world" save prompt');
-const PLAY_MARK = markRefusal("Starting play", '"World needs to be saved" prompt');
-const PLAY_WARN = (why: string) =>
-  `Could not check for unsaved changes (${why}); if the current world has unsaved edits, Workbench will show a blocking "World needs to be saved" prompt.`;
+const OPEN_MARK =
+  "Refused: this MCP created a layer in the world open in Workbench since the last wb_save, so the world may have unsaved changes. " +
+  `Opening ${OPEN_PATH} now would show Workbench's "Loading world" save prompt, which blocks every MCP call until a person answers it. Run wb_save, even if you already saved the world in Workbench, then try again.`;
+const LAYER_NOTE = "A layer this MCP created is not saved yet and is dropped unless wb_save runs first.";
+const savableWorld = { worldPath: "$T:W.ent", absPath: WORLD };
 
 function setup(host = "127.0.0.1") {
   const env = {
     netstat: async (): Promise<string> => listening(4242),
     wins: [CLEAN] as { cls: string; text: string }[],
     titles: undefined as undefined | (() => Promise<TitleProbe>),
+    world: savableWorld as Record<string, unknown>,
+    mode: "edit",
     saveWrites: true,
     saveFails: false,
     openFails: false,
@@ -54,8 +53,8 @@ function setup(host = "127.0.0.1") {
   let n = 0;
   vi.spyOn(client as unknown as { rawCall: (f: string, p: Record<string, unknown>) => Promise<unknown> }, "rawCall").mockImplementation(async (f, p) => {
     sent.push(`${f}:${p.action}`);
-    if (f === "EMCP_WB_GetState") return { status: "ok", mode: "edit" };
-    if (p.action === "worldInfo") return { status: "ok", worldPath: "$T:W.ent", absPath: WORLD };
+    if (f === "EMCP_WB_GetState") return { status: "ok", mode: env.mode };
+    if (p.action === "worldInfo") return { status: "ok", ...env.world };
     if (p.action === "save") {
       if (env.saveFails) return { status: "error", message: "save refused by the handler" };
       if (env.saveWrites) writeFileSync(WORLD, `saved ${++n}`);
@@ -67,14 +66,17 @@ function setup(host = "127.0.0.1") {
     return { status: "ok", message: "done" };
   });
   const tools: Record<string, Handler> = {};
-  const server = { registerTool: (name: string, _d: unknown, h: Handler) => (tools[name] = h) } as unknown as McpServer;
+  const descriptions: Record<string, string> = {};
+  const server = {
+    registerTool: (name: string, d: { description: string }, h: Handler) => ((tools[name] = h), (descriptions[name] = d.description)),
+  } as unknown as McpServer;
   registerWbEditorTools(server, client, {} as Config);
-  registerWbLayers(server, client);
+  registerWbLayers(server, client, {} as Config);
   registerWbResources(server, client);
   return {
-    env, netstat, titles, sent,
+    env, client, netstat, titles, sent, descriptions,
     layer: () => tools.wb_layers({ action: "create", name: "L1" }),
-    open: () => tools.wb_open_resource({ path: OPEN_PATH }),
+    open: (path = OPEN_PATH) => tools.wb_open_resource({ path }),
     resOpen: () => tools.wb_resources({ action: "open", path: OPEN_PATH }),
     save: () => tools.wb_save({}),
     play: () => tools.wb_play({}),
@@ -83,7 +85,7 @@ function setup(host = "127.0.0.1") {
   };
 }
 
-describe("a layer created by the MCP counts as unsaved", () => {
+describe("a layer created by the MCP counts as unsaved for a world open", () => {
   it("a .ent open after a layer create is refused with the mark text and nothing is sent", async () => {
     const s = setup();
     expect((await s.layer()).isError).toBeUndefined();
@@ -134,12 +136,12 @@ describe("a layer created by the MCP counts as unsaved", () => {
     s.env.resourcesOpenMessage = "SetOpenedResource returned false for: Worlds/Other.ent";
     expect((await s.resOpen()).isError).toBe(true);
     s.env.netstat = async () => listening(4242);
-    expect((await s.play()).content[0].text).toContain(PLAY_MARK);
+    expect((await s.open()).content[0].text).toBe(OPEN_MARK);
     s.env.resourcesOpenMessage = "Opened";
     s.env.netstat = async () => "";
     expect((await s.resOpen()).isError).toBeUndefined();
     s.env.netstat = async () => listening(4242);
-    expect((await s.play()).isError).toBeUndefined();
+    expect((await s.open()).isError).toBeUndefined();
   });
 
   it("a successful .ent open clears the mark; a failed one does not", async () => {
@@ -160,6 +162,15 @@ describe("a layer created by the MCP counts as unsaved", () => {
     expect(s.opens()).toBe(3);
   });
 
+  it("a successful .gproj open clears the mark too: the project reload drops the world", async () => {
+    const s = setup();
+    await s.layer();
+    s.env.netstat = async () => ""; // cannot tell: the open is sent
+    expect((await s.open("C:/mods/Other/addon.gproj")).isError).toBeUndefined();
+    s.env.netstat = async () => listening(4242);
+    expect((await s.open()).isError).toBeUndefined();
+  });
+
   it("a new PID on the port clears the mark", async () => {
     const s = setup();
     await s.layer();
@@ -171,10 +182,9 @@ describe("a layer created by the MCP counts as unsaved", () => {
     s.env.netstat = async () => listening(4242);
     await s.layer();
     s.env.netstat = async () => listening(5151);
-    expect((await s.play()).isError).toBeUndefined();
+    expect((await s.play()).content[0].text).not.toContain(LAYER_NOTE);
     s.env.netstat = async () => listening(4242);
-    expect((await s.play()).isError).toBeUndefined();
-    expect(s.plays()).toBe(2);
+    expect((await s.play()).content[0].text).not.toContain(LAYER_NOTE);
   });
 
   it("a layer create with no readable PID marks nothing, and the title check still runs", async () => {
@@ -194,69 +204,127 @@ describe("a layer created by the MCP counts as unsaved", () => {
   });
 });
 
-describe("wb_play checks for unsaved changes", () => {
-  it("an unsaved title is refused with the world named and no play call", async () => {
+describe("the mark cannot block an open for good", () => {
+  it.each([
+    ["unnamed", { worldPath: "" }],
+    ["packed (no file on disk)", { worldPath: "$T:W.ent", absPath: "" }],
+  ])("a layer create in a world that is %s is refused, sets no mark, and the open is not refused", async (_n, world) => {
     const s = setup();
-    s.env.wins = [CLEAN, DIRTY];
-    const r = await s.play();
-    expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain(
-      "Refused: the world open in Workbench (MCPParity/Worlds/MCPParity.ent) has unsaved changes (its World Editor title ends in *). " +
-        tail("Starting play", '"World needs to be saved" prompt')
-    );
-    expect(s.plays()).toBe(0);
+    s.env.world = world;
+    expect((await s.layer()).isError).toBe(true);
+    expect(s.sent).not.toContain("EMCP_WB_Layers:create");
+    const r = await s.open();
+    expect(r.isError).toBeUndefined();
+    expect(s.opens()).toBe(1);
   });
 
-  it("only the layer mark is refused too, and no window is read", async () => {
+  it("a wb_save that refuses because the world is not a savable file drops a stale mark, so the open can go ahead", async () => {
+    const s = setup();
+    await s.layer(); // marked in a savable world
+    s.env.world = { worldPath: "$T:Packed.ent", absPath: "" }; // the user then opened a packed world by hand
+    expect((await s.save()).isError).toBe(true);
+    expect((await s.open()).isError).toBeUndefined();
+  });
+
+  it("a wb_save that refuses for play mode keeps the mark: the layer may still be waiting", async () => {
     const s = setup();
     await s.layer();
-    const r = await s.play();
-    expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain(PLAY_MARK);
-    expect(s.plays()).toBe(0);
-    expect(s.titles).not.toHaveBeenCalled();
+    s.env.world = { ...savableWorld, gameMode: true };
+    expect((await s.save()).content[0].text).toContain("Play mode: stop it with wb_stop before saving.");
+    expect((await s.open()).content[0].text).toBe(OPEN_MARK);
   });
 
-  it("clean plays as before, with no extra line", async () => {
+  it("with no world open the mark is dropped: wb_save cannot run, and the open is the way to get a world", async () => {
     const s = setup();
+    await s.layer();
+    s.env.mode = "no_world";
+    expect((await s.save()).isError).toBe(true);
+    expect((await s.open()).isError).toBeUndefined();
+  });
+});
+
+describe("the footer after a world open", () => {
+  it("a .ent open that opened says edit mode, from any cached mode", async () => {
+    const s = setup();
+    s.client.setMode("no_world");
+    const r = await s.open();
+    expect(r.content[0].text.endsWith("`Workbench: edit mode`")).toBe(true);
+    s.client.setMode("unknown");
+    expect((await s.resOpen()).content[0].text.endsWith("`Workbench: edit mode`")).toBe(true);
+  });
+
+  it("a Resources open that answers SetOpenedResource returned false leaves the cached mode as it was", async () => {
+    const s = setup();
+    s.client.setMode("no_world");
+    s.env.resourcesOpenMessage = "SetOpenedResource returned false for: Worlds/Other.ent";
+    const r = await s.resOpen();
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text.endsWith("`Workbench: no world open`")).toBe(true);
+  });
+
+  it("a .gproj open loads no world, so it does not say edit mode", async () => {
+    const s = setup();
+    s.client.setMode("no_world");
+    const r = await s.open("C:/mods/Other/addon.gproj");
+    expect(r.content[0].text.endsWith("`Workbench: no world open`")).toBe(true);
+  });
+});
+
+describe("wb_play and unsaved changes", () => {
+  it("an unsaved title plays: no refusal, no window read, no extra line", async () => {
+    const s = setup();
+    s.env.wins = [CLEAN, DIRTY];
     const r = await s.play();
     expect(r.isError).toBeUndefined();
     expect(r.content[0].text).toContain("**Play Mode Started**");
     expect(r.content[0].text).not.toContain("Could not check");
+    expect(r.content[0].text).not.toContain("unsaved");
     expect(s.plays()).toBe(1);
+    expect(s.titles).not.toHaveBeenCalled();
   });
 
-  it("after a wb_save that wrote files, play goes ahead", async () => {
+  it("a layer this MCP created plays with exactly one line, and no window is read", async () => {
     const s = setup();
     await s.layer();
-    await s.save();
-    expect((await s.play()).isError).toBeUndefined();
-    expect(s.plays()).toBe(1);
-  });
-
-  const cannotTell: [string, (s: ReturnType<typeof setup>) => void, string, string?][] = [
-    ["netstat failed", (s) => (s.env.netstat = async () => ""), "the netstat query failed"],
-    ["netstat throws", (s) => (s.env.netstat = () => Promise.reject(new Error("only Windows can be checked"))), "only Windows can be checked"],
-    ["title read failed", (s) => (s.env.titles = async () => ({ unavailable: "the title read failed or took over 8 s (exit 1)" })), "the title read failed or took over 8 s (exit 1)"],
-    ["zero visible windows", (s) => (s.env.wins = []), "no window of Workbench PID 4242 is visible to this MCP, for example because it runs in another Windows session"],
-    ["remote host", () => {}, "the NET API host 10.0.0.5 is not this PC", "10.0.0.5"],
-  ];
-  it.each(cannotTell)("cannot tell (%s): play is sent and one warning line says why", async (_n, arrange, why, host) => {
-    const s = setup(host);
-    arrange(s);
     const r = await s.play();
     expect(r.isError).toBeUndefined();
     expect(s.plays()).toBe(1);
-    expect(r.content[0].text.split("Could not check for unsaved changes").length).toBe(2);
-    expect(r.content[0].text).toContain(PLAY_WARN(why));
+    expect(r.content[0].text.split(LAYER_NOTE).length).toBe(2);
+    expect(r.content[0].text).toContain(`entering game mode.\ndone\n\n${LAYER_NOTE}\n\n---`);
+    expect(s.titles).not.toHaveBeenCalled();
   });
 
-  it("no port owner skips the check and plays", async () => {
+  it("after a wb_save that wrote files, play carries no line", async () => {
     const s = setup();
-    s.env.netstat = async () => "Active Connections\r\n";
+    await s.layer();
+    await s.save();
     const r = await s.play();
-    expect(s.titles).not.toHaveBeenCalled();
+    expect(r.content[0].text).not.toContain(LAYER_NOTE);
     expect(s.plays()).toBe(1);
+  });
+
+  it("a netstat that fails cannot show the mark is stale, so the line is still said", async () => {
+    const s = setup();
+    await s.layer();
+    s.env.netstat = async () => "";
+    expect((await s.play()).content[0].text).toContain(LAYER_NOTE);
+    s.env.netstat = () => Promise.reject(new Error("only Windows can be checked"));
+    expect((await s.play()).content[0].text).toContain(LAYER_NOTE);
+  });
+
+  it("with no mark it reads no netstat at all, also off this PC", async () => {
+    const s = setup("10.0.0.5");
+    const r = await s.play();
+    expect(s.netstat).not.toHaveBeenCalled();
     expect(r.content[0].text).not.toContain("Could not check");
+    expect(s.plays()).toBe(1);
+  });
+
+  it("the description no longer claims a refusal for unsaved changes and says what it does instead", () => {
+    const d = setup().descriptions.wb_play;
+    expect(d).not.toContain("Also refuses, without playing, a world with unsaved changes");
+    expect(d).not.toContain("World needs to be saved");
+    expect(d).toContain("Plays a world with unsaved changes without asking to save");
+    expect(d).toContain("the reply adds a line that wb_save has to run first or the layer is dropped");
   });
 });
