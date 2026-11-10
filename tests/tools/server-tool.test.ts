@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -7,10 +7,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { crashLogsDir } from "../../src/workbench/cli.js";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../../src/config.js";
 import { registerServer, unpack } from "../../src/tools/server.js";
-import { isAlive, killPids, limitProcess, serverProcesses, spawnDetached } from "../../src/utils/process.js";
+import { isAlive, killPids, limitProcess, serverProcesses, sleep, spawnDetached } from "../../src/utils/process.js";
 import { INSTANCE_FILE, OWNER } from "../../src/utils/instances.js";
 import { PROC_WATCH_DIR } from "../../src/watchdog/proc-watch.js";
-import { MISSION_ROOT } from "../../src/tools/mission-server.js";
+import { MISSION_ROOT, SETTLE_MS } from "../../src/tools/mission-server.js";
 
 // A fake home before any module loads: the watcher state folder, the downloads and the instance registry are temp folders.
 const home = await vi.hoisted(async () => {
@@ -328,6 +328,75 @@ function putState(instance: string, over: Record<string, unknown> = {}) {
   writeFileSync(join(PROC_WATCH_DIR, `${s.pid}_${stateSeq++}.json`), JSON.stringify(s));
 }
 const HOUR = 3600_000;
+
+describe("server start: waits for the online line, then settles (B-156)", () => {
+  const cfg = { ...config, serverPath: join(root, "srv-on"), serverProfilePath: join(root, "prof-on"), packedPath: join(root, "packed-on") } as Config;
+  mkdirSync(cfg.serverPath, { recursive: true });
+  writeFileSync(join(cfg.serverPath, process.platform === "win32" ? "ArmaReforgerServer.exe" : "ArmaReforgerServer"), "");
+  let h!: Handler;
+  registerServer({ registerTool: (_n: string, _d: unknown, f: Handler) => { h = f; } } as unknown as McpServer, cfg);
+  const logDir = join(cfg.serverProfilePath, "logs", "logs_2026-11-09_12-14-01");
+  const putLog = (text: string) => {
+    rmSync(join(cfg.serverProfilePath, "logs"), { recursive: true, force: true });
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(join(logDir, "console.log"), text);
+  };
+  const sleeps: number[] = [];
+  let onSleep: ((ms: number) => void) | undefined;
+  beforeEach(() => {
+    sleeps.length = 0;
+    onSleep = undefined;
+    vi.mocked(sleep).mockImplementation(async (ms: number) => { sleeps.push(ms); onSleep?.(ms); });
+  });
+  afterEach(() => {
+    vi.mocked(sleep).mockImplementation(async () => {});
+    vi.mocked(isAlive).mockImplementation(() => false);
+    rmSync(PROC_WATCH_DIR, { recursive: true, force: true });
+  });
+
+  it("the settle after the online line catches a VME and crash.log written only then", async () => {
+    vi.mocked(isAlive).mockImplementation(() => true);
+    const at = VME_LOG.indexOf("12:14:18.032");
+    putLog(VME_LOG.slice(0, at));
+    onSleep = (ms) => {
+      if (ms !== SETTLE_MS) return;
+      appendFileSync(join(logDir, "console.log"), VME_LOG.slice(at));
+      writeFileSync(join(logDir, "crash.log"), CRASH_LOG);
+    };
+    const r = await h({ action: "start" });
+    expect(r.isError).toBeFalsy();
+    expect(r.content[0].text).toContain("**Server online after ");
+    expectReport(r.content[0].text);
+    expect(sleeps.filter((ms) => ms === SETTLE_MS)).toHaveLength(1);
+  });
+
+  it("a server that exited before the online line, or right after it, gets no settle and an error reply", async () => {
+    for (const log of ["00:00:01.000 ENGINE       : loading\r\n", "00:00:01.000 DEFAULT      : Entered online game state.\r\n"]) {
+      sleeps.length = 0;
+      putLog(log);
+      const r = await h({ action: "start" });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain("**Server exited early**");
+      expect(sleeps).toEqual([]); // no settle, and no fixed wait either
+    }
+  });
+
+  it("a server still running without the online line after 120 s gets no settle and a non-error reply naming server status", async () => {
+    vi.mocked(isAlive).mockImplementation(() => true);
+    putLog("00:00:01.000 ENGINE       : loading\r\n");
+    let clock = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    onSleep = (ms) => { clock += ms; };
+    try {
+      const r = await h({ action: "start" });
+      expect(r.isError).toBeFalsy();
+      expect(r.content[0].text).toContain("**Server running, not online after 120 s (`server status` shows more)**");
+      expect(sleeps).not.toContain(SETTLE_MS);
+    } finally {
+      now.mockRestore();
+    }
+  });
+});
 
 describe("server start: the process watcher", () => {
   const mk = (name: string, exe = true) => {

@@ -11,10 +11,13 @@ import { readGproj, resolveGproj } from "../workbench/cli.js";
 import { forbiddenRoot } from "../utils/safe-path.js";
 import { protectedAddonOf } from "../utils/game-paths.js";
 import { findPids, killPids, limitProcess, spawnDetached, newestDir, sleep, serverProcesses, processInfo, isAlive, argValue, refusedArg, DISABLE_CRASH_REPORTER, NO_THROW } from "../utils/process.js";
-import { fenced, runErrors } from "../utils/logwatch.js";
+import { fenced, resolveLogFile, runErrors, waitFor } from "../utils/logwatch.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
 import { procWatchLines } from "../watchdog/proc-watch.js";
-import { MISSION_ROOT, coreError, parseHexMask, watchStarted, windowsOnly } from "./mission-server.js";
+import { MISSION_ROOT, ONLINE, SETTLE_MS, coreError, parseHexMask, watchStarted, windowsOnly } from "./mission-server.js";
+
+// The online line came about 13 s after spawn in live runs, and Workshop downloads in -config mode take longer.
+const SERVER_ONLINE_SEC = 120;
 
 const IS_WIN = process.platform === "win32";
 const SERVER_APP_ID = "1874900"; // Arma Reforger Dedicated Server (anonymous login)
@@ -286,12 +289,24 @@ export function registerServer(server: McpServer, config: Config): void {
             if (gone) rmSync(instance, { force: true });
             return text(`**Server stopped**: cpuMask 0x${pin.toString(16)} could not be applied to server PID ${pid}.${gone ? "" : ` It is still running: server stop.`}`, true);
           }
-          await sleep(8000);
+          const w = await waitFor({
+            log: () => resolveLogFile({ dir: serverLogsDir(config), file: "console", newerThan: started - 5000 }),
+            patterns: [{ name: "online", regex: ONLINE }],
+            failPatterns: [],
+            from: "start",
+            pid,
+            timeoutMs: SERVER_ONLINE_SEC * 1000,
+          });
+          // Late script errors follow the online line by a fraction of a second; no settle for a server that is gone or not online.
+          if (w.status === "matched" && isAlive(pid)) await sleep(SETTLE_MS);
           const logDir = newestDir(serverLogsDir(config), started - 5000);
           const alive = isAlive(pid);
           const errors = logDir ? runErrors(logDir) : "";
+          const state = !alive
+            ? "exited early"
+            : w.status === "matched" ? `online after ${w.elapsedSec.toFixed(0)} s` : `running, not online after ${SERVER_ONLINE_SEC} s (\`server status\` shows more)`;
           return text(
-            `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
+            `**Server ${state}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
             (pin ? `CPU: cpuMask 0x${pin.toString(16)} applied, BelowNormal\n` : "") +
             (noWatch ? `${noWatch}\n` : "") +
             (logDir ? `Logs: ${logDir}\n\n${fenced(tail(join(logDir, "console.log"), 25))}` : "") +

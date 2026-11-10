@@ -16,7 +16,7 @@ import { findMissionHeader } from "./server-params.js";
 /** Everything this tool starts lives here, one folder per port: server/, peer<n>/, run.json. */
 export const MISSION_ROOT = join(MCP_HOME, "mission-server");
 // The server accepts clients from here on; GAME comes later and only from some game modes.
-const ONLINE = /Entered online game state/;
+export const ONLINE = /Entered online game state/;
 const GAME_STATE = /OnGameStateChanged = GAME\b/;
 // The engine logs this on every join and leave (seen 2026-11-02: "NETWORK : Players connected: 2 / 2").
 const PLAYERS = /Players connected: (\d+) \//g;
