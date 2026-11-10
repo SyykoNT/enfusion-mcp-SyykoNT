@@ -1146,6 +1146,63 @@ describe("mission_server status: the process watcher states", () => {
   });
 });
 
+describe("mission_server status: port", () => {
+  /** A run folder with its own log, its own crash.log text and a running server that has an instance-table row. */
+  const run = (port: number, crash: string) => {
+    const serverDir = join(MISSION_ROOT, String(port), "server");
+    const logDir = join(serverDir, "logs", "logs_x");
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(join(logDir, "console.log"), "12:00:00.000 DEFAULT      : Entered online game state.\r\n");
+    writeFileSync(join(logDir, "crash.log"), crash);
+    writeFileSync(join(serverDir, INSTANCE_FILE), JSON.stringify({ kind: "server", name: `mission-${port}`, pid: port, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: 1000, exe: "x" }));
+    return { log: join(logDir, "console.log"), proc: { pid: port, ppid: 1, cmd: `x.exe -profile "${serverDir}" -addr 127.0.0.1:${port}`, created: 1000 } };
+  };
+  const two = () => {
+    const a = run(2610, "Reason: alpha-crash");
+    const b = run(2611, "Reason: bravo-crash");
+    sys.servers = [a.proc, b.proc];
+    return { a, b };
+  };
+
+  it("with port, shows that port's row, log, errors and instance row, and nothing of another port", async () => {
+    const { a, b } = two();
+    const t = (await handler2(config(home))({ action: "status", port: 2610 })).content[0].text;
+    expect(t).toContain("- port 2610: 1 process(es) running, online, no GAME state yet");
+    expect(t).toContain(a.log);
+    expect(t).toContain("Reason: alpha-crash");
+    expect(t).toContain("mission-2610");
+    expect(t).not.toContain("port 2611");
+    expect(t).not.toContain(b.log);
+    expect(t).not.toContain("bravo-crash");
+    expect(t).not.toContain("mission-2611");
+  });
+
+  it("without port, shows every port as before", async () => {
+    const { a, b } = two();
+    const t = (await handler2(config(home))({ action: "status" })).content[0].text;
+    for (const [port, r, word] of [[2610, a, "alpha"], [2611, b, "bravo"]] as const) {
+      expect(t).toContain(`- port ${port}: 1 process(es) running`);
+      expect(t).toContain(r.log);
+      expect(t).toContain(`${word}-crash`);
+      expect(t).toContain(`mission-${port}`);
+    }
+  });
+
+  it("a port with no folder says there is no run on it", async () => {
+    two();
+    const t = (await handler2(config(home))({ action: "status", port: 2612 })).content[0].text;
+    expect(t).toContain("No run on port 2612.");
+    expect(t).not.toContain("- port 261");
+    expect(t).not.toContain("mission-26");
+  });
+
+  it("the port description says status filters by it", () => {
+    let def!: { inputSchema: { port: { description: string } } };
+    registerMissionServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config(home));
+    expect(def.inputSchema.port.description).toContain("status lists only this port");
+  });
+});
+
 function handler2(c: Config) {
   let h: (a: Record<string, unknown>) => Promise<Result> = async () => ({ content: [] });
   registerMissionServer({ registerTool: (_n: string, _d: unknown, fn: typeof h) => (h = fn) } as unknown as McpServer, c);

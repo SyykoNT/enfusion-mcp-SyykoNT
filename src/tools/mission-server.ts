@@ -376,7 +376,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         missionHeader: z.string().optional().describe("(start) Header .conf as {GUID}path; default the one in the world's addon whose World is this .ent. Without one the world starts bare"),
         addons: z.array(z.string()).optional().describe("(start) Addon IDs for -addons; default the world's addon (the server resolves its dependencies)"),
         addonsDirs: z.array(z.string()).optional().describe("(start) Folders for -addonsDir (read only); default ENFUSION_ADDONS_DIR, else the project folder and the Workbench addons folder; [] is an empty list (no default), so only the world's addon folder is listed"),
-        port: z.number().int().min(1024).max(65535).optional().describe("Loopback game port (-addr 127.0.0.1:<port>), one run per port; start and join default to 2521, stop without it stops every run of this tool"),
+        port: z.number().int().min(1024).max(65535).optional().describe("Loopback game port (-addr 127.0.0.1:<port>), one run per port; start and join default to 2521, status lists only this port, stop without it stops every run of this tool"),
         peers: z.number().int().min(0).max(4).default(0).describe("(start) Game clients to start once the server is online"),
         extraArgs: z.array(z.string()).optional().describe("(start) Extra server args, e.g. ['-jobsysShortWorkerCount','2']"),
         timeoutSec: z.number().int().min(10).max(600).default(180).describe("(start) How long to wait for the server to come online"),
@@ -518,8 +518,8 @@ export function registerMissionServer(server: McpServer, config: Config): void {
         }
 
         if (a.action === "status") {
-          const entries = mine();
-          const ports = existsSync(MISSION_ROOT) ? readdirSync(MISSION_ROOT).filter((d) => /^\d+$/.test(d)) : [];
+          const entries = mine(a.port ? portDir(a.port) : MISSION_ROOT);
+          const ports = existsSync(MISSION_ROOT) ? readdirSync(MISSION_ROOT).filter((d) => /^\d+$/.test(d) && (!a.port || d === String(a.port))) : [];
           const rows = ports.map((port) => {
             const log = resolveLogFile({ dir: join(MISSION_ROOT, port, "server"), file: "console" });
             const t = log ? readFileSync(log, "utf-8") : "";
@@ -530,7 +530,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
               ? `- port ${port}: ${live.length} process(es) running, ${game}${log ? `, log ${log}` : ""}`
               : `- port ${port}: nothing running; last run was ${game}${log ? `, log ${log}` : ""}`) + procWatchLines({ root: join(MISSION_ROOT, port) }).map((l) => `\n${l}`).join("") + runReport(Number(port));
           });
-          return text(`**mission_server**\n${rows.length ? rows.join("\n") : "No runs yet."}${entries.length ? `\n\n${instanceTable(entries)}` : ""}`);
+          return text(`**mission_server**\n${rows.length ? rows.join("\n") : a.port ? `No run on port ${a.port}.` : "No runs yet."}${entries.length ? `\n\n${instanceTable(entries)}` : ""}`);
         }
 
         // stop: clients first, then servers; only this tool's own (or adopted orphan) processes.
