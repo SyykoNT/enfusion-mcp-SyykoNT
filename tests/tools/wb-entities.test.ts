@@ -98,11 +98,13 @@ describe("wb_entity_select getSelected (B-173)", () => {
   // Reply shape of EMCP_WB_SelectEntity.c: selectedCount (line 31), then selectedEntities rows {name, className} (OnPack, lines 52-58), the array omitted when empty (line 50).
   const rows = [{ name: "Tree_01", className: "GenericEntity" }, { name: "", className: "Tree" }];
 
-  it("lists the entities the handler returns, with and without the empty row 1.9 packs before each", async () => {
+  it("lists the entities the handler returns, with and without the stray row 1.9 packs before each (an empty string live, 2026-11-08 WB19-LIVE row 1; an empty object also filtered)", async () => {
     const v18 = (await tool("wb_entity_select", { status: "ok", action: "getSelected", selectedCount: 2, selectedEntities: rows }).run({ action: "getSelected" })).content[0].text;
-    const v19 = (await tool("wb_entity_select", { status: "ok", action: "getSelected", selectedCount: 2, selectedEntities: rows.flatMap((r) => [{}, r]) }).run({ action: "getSelected" })).content[0].text;
+    for (const stray of ["", {}]) {
+      const v19 = (await tool("wb_entity_select", { status: "ok", action: "getSelected", selectedCount: 2, selectedEntities: rows.flatMap((r) => [stray, r]) }).run({ action: "getSelected" })).content[0].text;
+      expect(v19).toBe(v18);
+    }
     expect(v18).toContain("**Selected Entities**\n\n- Tree_01\n- (unnamed)");
-    expect(v19).toBe(v18);
     expect(v18).not.toContain("No entities selected");
   });
 

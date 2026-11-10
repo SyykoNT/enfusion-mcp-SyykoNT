@@ -336,6 +336,16 @@ describe("game launch: the process watcher", () => {
     expect(r.isError).toBeUndefined();
     expect(r.content[0].text).toContain("**Game launched** (pid 424242)");
     expect(existsSync(pidInstanceFile(config.clientProfilesRoot, 424242))).toBe(true);
+    // B-176: the reply says why, in one line, as mission_server does.
+    expect(r.content[0].text.match(/^No process watcher: .+$/gm)).toHaveLength(1);
+    expect(r.content[0].text).toMatch(/\nNo process watcher: [^\n]*mkdir/);
+  });
+
+  it("a launch whose watcher starts has no watcher line (B-176)", async () => {
+    const { launch } = rig("f");
+    const r = await launch({ action: "launch", lines: 80 });
+    expect(watch.spawns).toHaveLength(1);
+    expect(r.content[0].text).not.toContain("No process watcher");
   });
 });
 

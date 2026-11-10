@@ -418,6 +418,16 @@ describe("server start: the process watcher", () => {
     rmSync(PROC_WATCH_DIR);
     expect(r.content[0].text).toContain("(pid 424242)");
     expect(existsSync(join(cfg.serverProfilePath, INSTANCE_FILE))).toBe(true);
+    // B-176: the reply says why, in one line, as mission_server does.
+    expect(r.content[0].text.match(/^No process watcher: .+$/gm)).toHaveLength(1);
+    expect(r.content[0].text).toMatch(/\nNo process watcher: [^\n]*mkdir/);
+  });
+
+  it("a start whose watcher starts has no watcher line (B-176)", async () => {
+    const { h } = mk("w6");
+    const r = await h({ action: "start" });
+    expect(watch.spawns).toHaveLength(1);
+    expect(r.content[0].text).not.toContain("No process watcher");
   });
 });
 

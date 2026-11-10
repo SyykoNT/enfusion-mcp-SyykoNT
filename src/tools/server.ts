@@ -277,7 +277,7 @@ export function registerServer(server: McpServer, config: Config): void {
             kind: "server", name: "default", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt,
             startedAt: started, exe: runExe, port, profileDir: config.serverProfilePath,
           });
-          watchStarted({ pid, kind: "server", instance, logsRoot: serverLogsDir(config) }, config);
+          const noWatch = watchStarted({ pid, kind: "server", instance, logsRoot: serverLogsDir(config) }, config);
           if (pin && !limitProcess(pid, pin)) {
             // Only this server's PID: it would otherwise run on all cores next to other servers and Workbench.
             killPids([pid], true, true);
@@ -293,6 +293,7 @@ export function registerServer(server: McpServer, config: Config): void {
           return text(
             `**Server ${alive ? "running" : "exited early"}** (pid ${pid})\n\nCommand: ${basename(runExe)} ${args.join(" ")}\n` +
             (pin ? `CPU: cpuMask 0x${pin.toString(16)} applied, BelowNormal\n` : "") +
+            (noWatch ? `${noWatch}\n` : "") +
             (logDir ? `Logs: ${logDir}\n\n${fenced(tail(join(logDir, "console.log"), 25))}` : "") +
             (errors && `\n\n${errors}`) +
             `\n\nJoin from the game: \`game launch\` with connect=127.0.0.1:${port} (and the same local addons).${note}`,

@@ -101,9 +101,9 @@ export function registerGame(server: McpServer, config: Config): void {
           writeInstance(instance, {
             kind: "client", name: "default", pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe,
           });
-          watchStarted({ pid, kind: "client", instance, logsRoot: logsDir }, config);
+          const noWatch = watchStarted({ pid, kind: "client", instance, logsRoot: logsDir }, config);
           await sleep(3000);
-          return text(`**Game launched** (pid ${pid})\n\n${diag ? GAME_DIAG_EXE : GAME_EXE} ${args.join(" ")}`);
+          return text(`**Game launched** (pid ${pid})\n\n${diag ? GAME_DIAG_EXE : GAME_EXE} ${args.join(" ")}${noWatch ? `\n${noWatch}` : ""}`);
         }
 
         if (a.action === "stop") {
