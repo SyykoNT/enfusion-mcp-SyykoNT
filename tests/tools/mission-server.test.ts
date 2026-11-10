@@ -5,9 +5,15 @@ import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../../src/config.js";
 
-// A fake home first, so MISSION_ROOT is a temp folder; processes, kills and spawns are stubs.
-const home = mkdtempSync(join(tmpdir(), "emcp-ms-home-"));
-process.env.USERPROFILE = process.env.HOME = home;
+// A fake home before any module loads, so MISSION_ROOT and the watcher state folder are temp folders (MCP-0095); processes, kills and spawns are stubs.
+const home = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const h = fs.mkdtempSync(path.join(os.tmpdir(), "emcp-ms-home-"));
+  process.env.USERPROFILE = process.env.HOME = h;
+  return h;
+});
 
 const sys = vi.hoisted(() => ({
   servers: [] as { pid: number; ppid: number; cmd: string; created: number }[],
@@ -156,7 +162,10 @@ beforeEach(() => {
   sys.watcherThrows = undefined;
   sys.platform = "win32";
 });
-afterEach(() => rmSync(PROC_WATCH_DIR, { recursive: true, force: true }));
+afterEach(() => {
+  expect(PROC_WATCH_DIR.startsWith(home), "the delete below must never reach the real home").toBe(true);
+  rmSync(PROC_WATCH_DIR, { recursive: true, force: true });
+});
 
 describe("mission_server run plan and command lines", () => {
   it("builds the server and peer command lines: header as -server {GUID}path, our port, absolute profiles", () => {
@@ -1005,12 +1014,18 @@ describe("mission_server status: the process watcher states", () => {
     putState(inst(a), { pid: 2005, watcherPid: 4343, state: "ending_vme" });
     putState(inst(a), { pid: 2006, state: "watching" });
     putState(inst(a), { pid: 2007, state: "exited" });
+    // Damaged rows (B-148): a kind that is neither server nor client, and a time of 1e400 (JSON.parse gives Infinity).
+    putState(inst(a), { pid: 2008, kind: "peer" });
+    const infinite = JSON.stringify({ pid: 2009, kind: "server", instance: inst(a), ownerPid: 99999, watcherPid: 4242, state: "ended_vme", since: now, samples: 3, updated: 0 }).replace('"updated":0', '"updated":1e400');
+    expect(infinite).toContain('"updated":1e400');
+    writeFileSync(join(PROC_WATCH_DIR, "2009_1.json"), infinite);
     const t = (await tool({ action: "status" })).content[0].text;
     const part = (port: number) => t.split("\n- port ").find((x) => x.startsWith(`${port}:`)) ?? "";
     for (const pid of [1001, 1002, 1003, 1004, 1005]) expect(part(2594), String(pid)).toMatch(new RegExp(`PID ${pid},`));
     expect(part(2594)).not.toMatch(/PID 1006,/);
     expect(part(2595)).toMatch(/server PID 1006,/);
-    for (const pid of [2001, 2002, 2003, 2004, 2005, 2006, 2007]) expect(t, String(pid)).not.toContain(`PID ${pid},`);
+    for (const pid of [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009]) expect(t, String(pid)).not.toContain(`PID ${pid},`);
+    expect(t).not.toContain("NaN");
     expect(part(2594)).toContain('ended after a VM exception window "Virtual machine exception" stayed open; logs saved to C:\\crash\\server_x');
   });
 
@@ -1159,6 +1174,31 @@ describe("mission_server: the final state of a process that exited", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("Not all peers joined");
     expect(r.content[0].text).toContain("- Process watcher, client PID 802,");
+  });
+
+  it("start with peers that did not join waits for nothing and shows no state when every process is still alive (B-148)", async () => {
+    exes();
+    const t = addon();
+    sys.pids = [801, 802];
+    sys.onSpawn = (args, pid) => {
+      const profile = args[args.indexOf("-profile") + 1];
+      const proc = { pid, ppid: 1, cmd: `x.exe -profile "${profile}"`, created: Date.now() };
+      if (args.includes("-server")) {
+        const log = join(profile, "logs", "logs_x", "console.log");
+        mkdirSync(dirname(log), { recursive: true });
+        writeFileSync(log, "00:00:01.000 DEFAULT      : Entered online game state.\r\n");
+        sys.servers.push(proc);
+      } else {
+        sys.clients.push(proc);
+        // A final state for a PID that is still alive: only the `gone` filter keeps it out of the reply.
+        putState(join(MISSION_ROOT, "2607", "peer1", INSTANCE_FILE), { pid, kind: "client" });
+      }
+    };
+    const r = await handler2(config(home))({ action: "start", world: t.world, port: 2607, peers: 1, addonsDirs: [t.root], timeoutSec: 10, joinTimeoutSec: 0 });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("Not all peers joined");
+    expect(r.content[0].text).not.toContain("Process watcher");
+    expect(sys.polls).toBe(0);
   });
 
   it("join shows the state of the server that exited while it waited, and none after 5 s", async () => {
