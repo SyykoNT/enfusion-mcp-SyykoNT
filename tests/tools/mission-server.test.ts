@@ -28,6 +28,8 @@ const sys = vi.hoisted(() => ({
   onSleep: undefined as undefined | ((ms: number) => void),
   // The real startProcWatcher runs with this spawn: it records the watcher's argv and starts nothing.
   watcherSpawns: [] as { args: string[]; instanceThere: boolean }[],
+  /** When set, the watcher's spawn throws this (spawnDetached throws when the child has no PID). */
+  watcherThrows: undefined as undefined | string,
   platform: "win32",
 }));
 vi.mock("../../src/watchdog/proc-watch.js", async (importActual) => {
@@ -36,7 +38,11 @@ vi.mock("../../src/watchdog/proc-watch.js", async (importActual) => {
   return {
     ...actual,
     startProcWatcher: (w: Parameters<typeof actual.startProcWatcher>[0], spawn?: Parameters<typeof actual.startProcWatcher>[1], platform?: string) =>
-      actual.startProcWatcher(w, spawn ?? ((_exe, args) => (sys.watcherSpawns.push({ args, instanceThere: fs.existsSync(w.instance) }), 7777)), platform ?? sys.platform),
+      actual.startProcWatcher(w, spawn ?? ((_exe, args) => {
+        if (sys.watcherThrows) throw new Error(sys.watcherThrows);
+        sys.watcherSpawns.push({ args, instanceThere: fs.existsSync(w.instance) });
+        return 7777;
+      }), platform ?? sys.platform),
   };
 });
 // Free RAM is a stub; the rest of node:os (tmpdir, homedir) is real.
@@ -147,6 +153,7 @@ beforeEach(() => {
   sys.sleeps = [];
   sys.onSleep = undefined;
   sys.watcherSpawns = [];
+  sys.watcherThrows = undefined;
   sys.platform = "win32";
 });
 afterEach(() => rmSync(PROC_WATCH_DIR, { recursive: true, force: true }));
@@ -918,6 +925,32 @@ describe("mission_server: the process watcher", () => {
     expect(r.isError).toBeUndefined();
     expect(r.content[0].text).toContain("**Server online**");
     expect(existsSync(join(MISSION_ROOT, "2593", "server", INSTANCE_FILE))).toBe(true);
+    // B-147: the reply says why, in one line.
+    expect(r.content[0].text.match(/^No process watcher: .+$/gm)).toHaveLength(1);
+    expect(r.content[0].text).toMatch(/\nNo process watcher: [^\n]*mkdir/);
+  });
+
+  it("a watcher whose process has no PID is named in one line for the server and one under each peer; a normal start has none (B-147)", async () => {
+    exes();
+    const t = addon();
+    sys.pids = [801, 802, 803];
+    stubs();
+    const tool = handler2(config(home));
+    const ok = await tool({ action: "start", world: t.world, port: 2594, peers: 0, addonsDirs: [t.root], ...ready });
+    expect(ok.content[0].text).not.toContain("No process watcher");
+    sys.pids = [801, 802, 803];
+    sys.watcherThrows = "Failed to start node.exe";
+    const r = await tool({ action: "start", world: t.world, port: 2595, peers: 1, addonsDirs: [t.root], ...ready });
+    const text = r.content[0].text;
+    expect(r.isError).toBeUndefined();
+    expect(text).toContain("**Server online**");
+    expect(existsSync(join(MISSION_ROOT, "2595", "server", INSTANCE_FILE))).toBe(true);
+    expect(text.match(/^No process watcher: Failed to start node\.exe$/gm)).toHaveLength(2);
+    expect(text).toMatch(/Log: [^\n]*\nNo process watcher: Failed to start node\.exe\n/);
+    expect(text).toContain("Peer 1: PID 802\nNo process watcher: Failed to start node.exe");
+    const j = await tool({ action: "join", port: 2595, joinTimeoutSec: 2 });
+    expect(j.content[0].text).toContain("**Peer 2 joined** (PID 803)");
+    expect(j.content[0].text).toMatch(/\nCommand: [^\n]*\nNo process watcher: Failed to start node\.exe/);
   });
 });
 

@@ -217,13 +217,13 @@ function runReport(port: number): string {
 }
 /**
  * Start the process watcher for a server or client whose instance file was just written. The process is already running, so a watcher
- * that cannot start (no state folder, no spawn) must not turn the start into a failure.
+ * that cannot start (no state folder, no spawn) must not turn the start into a failure: it returns the reply line saying so.
  */
-export function watchStarted(w: Pick<StartProcWatcher, "pid" | "kind" | "instance" | "logsRoot">, config: Config): void {
+export function watchStarted(w: Pick<StartProcWatcher, "pid" | "kind" | "instance" | "logsRoot">, config: Config): string | undefined {
   try {
     startProcWatcher({ ...w, ownerPid: OWNER.pid, ownerStarted: OWNER.startedAt, crashDir: crashLogsDir(config) });
-  } catch {
-    // shortcut: no note in the reply, -noThrow is the first defence; surface a watcher that did not start if a user needs it
+  } catch (e) {
+    return `No process watcher: ${(e instanceof Error ? e.message : String(e)).replace(/\s+/g, " ").trim()}`;
   }
 }
 
@@ -280,7 +280,7 @@ async function stopOwn(port: number, started: { pid: number }[], peersOnly = tru
   );
 }
 
-function startPeer(r: Run, config: Config): { n: number; pid: number; args: string[]; pinned?: boolean } | string {
+function startPeer(r: Run, config: Config): { n: number; pid: number; args: string[]; pinned?: boolean; noWatch?: string } | string {
   const free = freemem() / 2 ** 30;
   if (free < MIN_FREE_GB_CLIENT) {
     return `Not enough free RAM for another game client: ${free.toFixed(1)} GB free, ${MIN_FREE_GB_CLIENT} GB needed (about 2 GB per Arma process).`;
@@ -298,8 +298,8 @@ function startPeer(r: Run, config: Config): { n: number; pid: number; args: stri
   writeInstance(instance, {
     kind: "client", name: `mission-${r.port}-peer${n}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe, port: r.port, profileDir: profile,
   });
-  watchStarted({ pid, kind: "client", instance, logsRoot: join(profile, "logs") }, config);
-  return { n, pid, args, pinned: r.cpu ? limitProcess(pid, r.cpu.client) : undefined };
+  const noWatch = watchStarted({ pid, kind: "client", instance, logsRoot: join(profile, "logs") }, config);
+  return { n, pid, args, pinned: r.cpu ? limitProcess(pid, r.cpu.client) : undefined, noWatch };
 }
 
 export function registerMissionServer(server: McpServer, config: Config): void {
@@ -363,7 +363,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           writeInstance(instance, {
             kind: "server", name: `mission-${port}`, pid, ownerPid: OWNER.pid, ownerStartedAt: OWNER.startedAt, startedAt: started, exe, port, profileDir: profile,
           });
-          watchStarted({ pid, kind: "server", instance, logsRoot: join(profile, "logs") }, config);
+          const noWatch = watchStarted({ pid, kind: "server", instance, logsRoot: join(profile, "logs") }, config);
           writeFileSync(join(portDir(port), "run.json"), JSON.stringify(run, null, 2));
           const serverPinned = run.cpu ? limitProcess(pid, run.cpu.server) : undefined;
           if (run.cpu && !serverPinned) {
@@ -382,7 +382,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
           const cpuNote = run.cpu
             ? `\nCPU: server 0x${run.cpu.server.toString(16)} ${serverPinned ? "applied" : "NOT applied"}, clients 0x${run.cpu.client.toString(16)}, BelowNormal`
             : "";
-          const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}${cpuNote}`;
+          const head = `Server PID ${pid} on 127.0.0.1:${port}\nCommand: ${basename(exe)} ${args.join(" ")}\nLog: ${w.file ?? "(none yet)"}${cpuNote}${noWatch ? `\n${noWatch}` : ""}`;
           if (w.status !== "matched") {
             const why = w.status === "failed" ? "stopped on: the log line below" : w.status === "exited" ? "the server exited" : `not online within ${a.timeoutSec} s`;
             const failLine = w.status === "failed" ? `\n\n${fenced(w.fatal[0].line.trim())}` : "";
@@ -404,6 +404,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
               return text(`**Server online**, but clientCpuMask 0x${run.cpu!.client.toString(16)} could not be applied to peer ${p.n} (PID ${p.pid}).${stopped}\n\n${head}\n${peers.join("\n")}${runReport(port)}`, true);
             }
             peers.push(`Peer ${p.n}: PID ${p.pid}${p.pinned === undefined ? "" : " (pinned)"}`);
+            if (p.noWatch) peers.push(p.noWatch);
             await sleep(2000);
           }
           if (a.peers === 0 && isAlive(pid)) await sleep(SETTLE_MS);
@@ -447,7 +448,7 @@ export function registerMissionServer(server: McpServer, config: Config): void {
             (joined
               ? `**Peer ${p.n} joined** (PID ${p.pid}): players connected ${before + 1}.`
               : `**Peer ${p.n} did not join** within ${a.joinTimeoutSec} s (PID ${p.pid}): players connected ${playersConnected(readFileSync(log, "utf-8"))}.${stopped}`) +
-              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}` + ended + runReport(port),
+              `\nCommand: ArmaReforgerSteamDiag.exe ${p.args.join(" ")}${p.noWatch ? `\n${p.noWatch}` : ""}` + ended + runReport(port),
             !joined
           );
         }
