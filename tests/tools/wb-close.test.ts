@@ -124,6 +124,9 @@ describe.runIf(process.platform === "win32")("wb_close and unsaved changes", () 
     ["packed (no file on disk)", { worldPath: "$T:P.ent", absPath: "" }, PACKED],
   ];
 
+  // The unnamed row has its own test: worldInfo gives the same empty path with no world open, so its note is the old one.
+  const NAMED_CANNOT_SAVE = CANNOT_SAVE.filter(([n]) => n !== "unnamed");
+
   function setup(netstat: () => Promise<string>, wins: { cls: string; text: string }[], world: Record<string, unknown> | Error = SAVABLE) {
     const client = new WorkbenchClient("127.0.0.1", 1);
     const net = vi.fn(netstat);
@@ -224,7 +227,7 @@ describe.runIf(process.platform === "win32")("wb_close and unsaved changes", () 
       expect(sys.alive.has(500)).toBe(true);
     });
 
-    it.each(CANNOT_SAVE)("%s, clean: closes with save:false and says nothing was saved and why", async (_n, world, why) => {
+    it.each(NAMED_CANNOT_SAVE)("%s, clean: closes with save:false and says nothing was saved and why", async (_n, world, why) => {
       const s = setup(async () => LISTENING, [CLEAN], world);
       const r = await s.close({ save: true, force: false });
       expect(r.isError).toBeUndefined();
@@ -232,13 +235,22 @@ describe.runIf(process.platform === "win32")("wb_close and unsaved changes", () 
       expect(r.content[0].text).toContain(`Nothing was saved: ${why}`);
     });
 
-    it.each(CANNOT_SAVE)("%s, unsaved, force=true: closes with save:false and reads no window", async (_n, world, why) => {
+    it.each(NAMED_CANNOT_SAVE)("%s, unsaved, force=true: closes with save:false and reads no window", async (_n, world, why) => {
       const s = setup(async () => LISTENING, [DIRTY], world);
       const r = await s.close({ save: true, force: true });
       expect(r.isError).toBeUndefined();
       expect(s.exits()).toEqual([{ save: false }]);
       expect(s.titles).not.toHaveBeenCalled();
       expect(r.content[0].text).toContain(`Nothing was saved: ${why}`);
+    });
+
+    it("an empty world path (no world open) closes with save:false and keeps the old line, not the unnamed-world advice", async () => {
+      const s = setup(async () => LISTENING, [CLEAN], { worldPath: "" });
+      const r = await s.close({ save: true, force: false });
+      expect(r.isError).toBeUndefined();
+      expect(s.exits()).toEqual([{ save: false }]);
+      expect(r.content[0].text).toContain("Nothing saved (no world open or save refused).");
+      expect(r.content[0].text).not.toContain("unnamed");
     });
 
     it("play mode does not count as clean: the title keeps * during play", async () => {

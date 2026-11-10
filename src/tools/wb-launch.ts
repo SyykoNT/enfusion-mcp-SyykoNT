@@ -170,12 +170,15 @@ export function registerWbLaunch(
       // A world read that fails (no world open, a dialog, an old handler) changes nothing: the close goes ahead as asked.
       let sendSave = save;
       let cannotSave = "";
+      let noWorld = false;
       if (save && !others.length) {
         const world = await readWorld(client, "");
         const refusal = "info" in world ? saveRefusal(world.info, config) : null;
         if (refusal) {
           sendSave = false;
           cannotSave = refusal.text;
+          // worldInfo answers an empty path both for an unnamed world and with no world loaded; the unnamed advice is wrong for the second
+          noWorld = refusal.otherWorld && "info" in world && world.info.worldPath === "";
         }
       }
       // save=false is the user's discard (no prompt on 1.9.0.37). A close the user wanted to save but cannot, and a window close for another Workbench (raises "World editor - closing" on 1.9.0.37), check first.
@@ -204,7 +207,8 @@ export function registerWbLaunch(
       } else {
         try {
           const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save: sendSave }, { timeout: 20_000 });
-          notes.push(sendSave ? (r.saved ? "World saved." : "Nothing saved (no world open or save refused).") : cannotSave ? `Nothing was saved: ${cannotSave}` : "Closed without saving.");
+          const nothing = "Nothing saved (no world open or save refused).";
+          notes.push(sendSave ? (r.saved ? "World saved." : nothing) : noWorld ? nothing : cannotSave ? `Nothing was saved: ${cannotSave}` : "Closed without saving.");
         } catch (e) {
           // In edit mode the handler exits at once, so the connection drops before it answers.
           await sleep(1500);
