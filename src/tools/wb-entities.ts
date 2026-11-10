@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { WorkbenchClient } from "../workbench/client.js";
 import { formatConnectionStatus, ensureMode } from "../workbench/status.js";
 
-// 1.9 packs an extra empty object before each real array row; a real property row has a name
+// 1.9 packs a stray row (an empty string live; an empty object is filtered too) before each real array row; a real property row has a name
 function namedRows(rows: unknown): Record<string, unknown>[] {
   return (Array.isArray(rows) ? rows : []).filter((r) => r?.name);
 }
@@ -19,7 +19,7 @@ function formatEntityDetails(data: Record<string, unknown>): string {
   if (data.layerPath) lines.push(`- **Layer:** ${data.layerPath}`);
   if (data.parentName) lines.push(`- **Parent:** ${data.parentName}`);
 
-  // 1.9 packs an empty object before each real component row; a real one has a class
+  // 1.9 packs a stray row (an empty string live; an empty object is filtered too) before each real component row; a real one has a class
   const comps = (Array.isArray(data.components) ? data.components : []).filter((c) => c?.className || c?.type);
   if (comps.length > 0) {
     lines.push(`\n### Components (${comps.length})`);
@@ -52,7 +52,7 @@ function formatEntityDetails(data: Record<string, unknown>): string {
 
 function formatEntityList(data: Record<string, unknown>): string {
   const lines: string[] = [];
-  // 1.9 packs an empty object before each real entity row; a real one has a name, class or position
+  // 1.9 packs a stray row (an empty string live; an empty object is filtered too) before each real entity row; a real one has a name, class or position
   const entities = (Array.isArray(data.entities) ? data.entities : []).filter((e) => e?.name || e?.className || e?.position);
   // the handler sends totalCount; total is only a fallback (no handler has sent it)
   const count = data.totalCount ?? data.total;
@@ -457,7 +457,7 @@ export function registerWbEntityTools(server: McpServer, client: WorkbenchClient
         const result = await client.call<Record<string, unknown>>("EMCP_WB_SelectEntity", params);
 
         if (action === "getSelected") {
-          // The handler packs the list as selectedEntities (EMCP_WB_SelectEntity.c); 1.9 adds an empty object before each real row
+          // The handler packs the list as selectedEntities (EMCP_WB_SelectEntity.c); 1.9 adds a stray row (an empty string live; an empty object is filtered too) before each real row
           const selected = (Array.isArray(result.selectedEntities) ? result.selectedEntities : []).filter((e) => e?.name || e?.className);
           if (selected.length === 0) {
             return {

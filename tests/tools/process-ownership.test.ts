@@ -289,6 +289,21 @@ describe("game launch: the process watcher", () => {
     expect(watch.spawns).toEqual([]);
   });
 
+  it("refuses a .ent world that leads out of the resource tree (with or without a {GUID}), spawns nothing, and still takes a plain one", async () => {
+    const { launch } = rig("ent");
+    const guid = "{0123456789ABCDEF}";
+    for (const world of [`${guid}../x.ent`, `${guid}/x.ent`, `${guid}a/../x.ent`, "../x.ent", "a/../x.ent"]) {
+      const r = await launch({ action: "launch", lines: 80, world });
+      expect(r.isError, world).toBe(true);
+      expect(r.content[0].text, world).toContain("world must be a .ent resource path");
+    }
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(watch.spawns).toEqual([]);
+    for (const world of [`${guid}worlds/MP/MPTest.ent`, "worlds/MP/MPTest.ent"]) {
+      expect((await launch({ action: "launch", lines: 80, world })).isError, world).toBeUndefined();
+    }
+  });
+
   it("starts none for a launch that is refused or fails before the instance file is written", async () => {
     const { config, launch } = rig("b");
     const noExe = tool(registerGame, { ...config, gamePath: join(config.gamePath, "nowhere") });
