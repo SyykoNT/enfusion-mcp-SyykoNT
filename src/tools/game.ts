@@ -9,7 +9,7 @@ import { findPids, killPids, spawnDetached, newestDir, sleep, clientProcesses, i
 import { runErrors } from "../utils/logwatch.js";
 import { OWNER, pidInstanceFile, scan, planStop, instanceTable, writeInstance } from "../utils/instances.js";
 import { procWatchLines } from "../watchdog/proc-watch.js";
-import { watchStarted } from "./mission-server.js";
+import { isMissionHeader, watchStarted } from "./mission-server.js";
 
 const GAME_EXE = "ArmaReforgerSteam.exe";
 const GAME_DIAG_EXE = "ArmaReforgerSteamDiag.exe"; // needed for -client / -world
@@ -59,7 +59,7 @@ export function registerGame(server: McpServer, config: Config): void {
       const running = () => [...findPids(GAME_EXE), ...findPids(GAME_DIAG_EXE)];
       try {
         if (a.action === "launch") {
-          // connect and world reach the argv too: a host[:port] and a .ent resource path, nothing else.
+          // connect and world reach the argv too: a host[:port], and a .ent world or a {GUID}Missions/*.conf header, nothing else.
           // A letter or digit first, so neither can be read as a flag (-createDB, -logsDir).
           const port = a.connect?.match(/^[A-Za-z0-9][\w.-]*(?::(\d{1,5}))?$/);
           if (a.connect && (!port || (port[1] !== undefined && (Number(port[1]) < 1 || Number(port[1]) > 65535)))) {
@@ -67,7 +67,7 @@ export function registerGame(server: McpServer, config: Config): void {
           }
           // A mission header goes as `-server {GUID}path`, the form mission_server uses; its {GUID} is required (a path-only name crashes or is ignored).
           const header = a.world && /\.conf$/i.test(a.world) ? a.world : undefined;
-          if (header && (!/^\{[0-9A-Fa-f]{16}\}[\w ./-]+\.conf$/i.test(header) || header.split("/").includes(".."))) {
+          if (header && !isMissionHeader(header)) {
             return text(`A mission header must be {GUID}path .conf, for example {0123456789ABCDEF}Missions/Name.conf: a path-only resource name crashes or is ignored. Got: ${a.world}`, true);
           }
           if (a.world && !header && (!/^(\{[0-9A-Fa-f]{16}\})?[A-Za-z0-9][\w./-]*\.ent$/i.test(a.world) || a.world.split("/").includes(".."))) {

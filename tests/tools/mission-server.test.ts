@@ -351,6 +351,28 @@ describe("write-path flags and the other server tools (review MM-SERVER-3)", () 
     expect(sys.spawned).toEqual([]);
   });
 
+  it("mission_server refuses .. and an absolute path after the GUID in a mission header (B-175)", () => {
+    const t = addon();
+    const c = config(t.root);
+    // Literal strings: path.join would fold the `..` away before the check sees it (MCP-0139).
+    const GUID = "{1234567890ABCDEF}";
+    for (const h of [`${GUID}../x.conf`, `${GUID}/abs.conf`, `${GUID}Missions/../x.conf`]) {
+      expect(planRun({ world: t.world, port: 2521, missionHeader: h }, c), h).toMatch(/must be a \{GUID\}path/);
+    }
+    expect(planRun({ world: t.world, port: 2521, missionHeader: `${GUID}Missions/Some.conf` }, c)).toMatchObject({ header: `${GUID}Missions/Some.conf` });
+  });
+
+  it("game launch refuses .. and an absolute path after the GUID in a mission header (B-175)", async () => {
+    const game = handler(registerGame, { ...config(home), clientProfilesRoot: join(home, "cli") } as Config);
+    const GUID = "{1234567890ABCDEF}";
+    for (const h of [`${GUID}../x.conf`, `${GUID}/abs.conf`, `${GUID}Missions/../x.conf`]) {
+      const r = await game({ action: "launch", world: h, lines: 80 });
+      expect(r.isError, h).toBe(true);
+      expect(r.content[0].text, h).toMatch(/^A mission header must be \{GUID\}path \.conf/);
+    }
+    expect((await game({ action: "launch", world: `${GUID}Missions/Some.conf`, lines: 80 })).content[0].text).not.toMatch(/^A mission header must be/);
+  });
+
   it("server stop leaves a mission_server run to mission_server (N4); log_watch may read its logs folders (N1)", async () => {
     const write = (pid: number, dir: string) => {
       mkdirSync(dir, { recursive: true });

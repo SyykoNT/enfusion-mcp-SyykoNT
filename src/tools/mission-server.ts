@@ -149,6 +149,13 @@ export interface StartArgs {
   port: number;
 }
 
+/** A mission header: `{GUID}path.conf` with no absolute path or `..` after the GUID. Shared by `mission_server` and `game launch`. */
+export function isMissionHeader(h?: string): boolean {
+  if (!h || !/^\{[0-9A-Fa-f]{16}\}[\w ./-]+\.conf$/i.test(h)) return false;
+  const rest = h.slice(h.indexOf("}") + 1);
+  return !rest.startsWith("/") && !rest.split("/").includes("..");
+}
+
 /** Checks the inputs and works out the run, or says why not. Every value here ends up in a process argv. */
 export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addonsDir">, myGames = myGamesDir): Run | string {
   if (!isAbsolute(a.world) || !/\.ent$/i.test(a.world) || !existsSync(a.world)) return `world must be an existing absolute .ent path: ${a.world}`;
@@ -158,9 +165,8 @@ export function planRun(a: StartArgs, config: Pick<Config, "projectPath" | "addo
   const world = relative(found.addon, a.world).replace(/\\/g, "/");
   if (/[",]/.test(world)) return `World path has a quote or comma: ${world}`;
   // A path-only resource name crashes or is ignored by a dedicated server, so the header must carry its {GUID}.
-  const guidConf = (h?: string) => !!h && /^\{[0-9A-Fa-f]{16}\}[\w ./-]+\.conf$/i.test(h) && !h.split("/").includes("..");
-  if (a.missionHeader !== undefined && !guidConf(a.missionHeader)) return `missionHeader must be a {GUID}path .conf: ${a.missionHeader}`;
-  const header = a.missionHeader ?? (guidConf(found.header) ? found.header : undefined);
+  if (a.missionHeader !== undefined && !isMissionHeader(a.missionHeader)) return `missionHeader must be a {GUID}path .conf: ${a.missionHeader}`;
+  const header = a.missionHeader ?? (isMissionHeader(found.header) ? found.header : undefined);
   const addons = a.addons ?? [readGproj(gproj).id];
   if (!addons.length || addons.some((id) => !/^[\w.-]+$/.test(id))) return `addons must be addon IDs (letters, digits, . _ -): ${addons.join(", ")}`;
   // Default as wb_launch: ENFUSION_ADDONS_DIR when set, else the guide's Params (projects plus the Workbench addons folder).
