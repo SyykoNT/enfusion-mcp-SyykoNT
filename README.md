@@ -7,7 +7,7 @@ the dedicated server. It speaks the Model Context Protocol over stdio, so it is 
 agent or client that can launch an MCP server can use it.
 
 - **Maintained.** Changes land on the `syyko/dev` branch after review and a full test run.
-- **Tested on 1.9.** Tested against Arma Reforger and Arma Reforger Tools 1.9.0.37 (stable); see the 0.15.0 release notes for known issues.
+- **Tested on 1.9.** Tested against Arma Reforger and Arma Reforger Tools 1.9.0.37 (stable); see [Known issues](#known-issues) below.
 - **For new and experienced modders.** If you build mods by describing them to an AI agent, the agent works
   from the real 1.9 API and the game's own files instead of guessing. If you write Enforce Script yourself,
   the repetitive Workbench steps become single tool calls.
@@ -68,8 +68,8 @@ agent or client that can launch an MCP server can use it.
 
 In the first test pass, which ran on Workbench 1.8.0.13, every tool call that worked under BK in real modding
 sessions (27) and every enfusion-mcp-ma addition (17) was re-tested: 44 checks, 40 pass, 3 partial, 1 not applicable
-(the npm package and Claude Code plugin, which this fork does not use). Those numbers are for 1.8.0.13 only; the
-later runs on 1.9.0.37 are in the [Changelog](#changelog). The partial ones are listed under
+(the npm package and Claude Code plugin, which this fork does not use). Those numbers are for 1.8.0.13 only; what the
+re-test on 1.9.0.37 covered is in the [0.15.0 release notes](https://github.com/SyykoNT/enfusion-mcp-SyykoNT/releases/tag/v0.15.0). The partial ones are listed under
 [Known limitations](#known-limitations). Fixes made in that pass:
 
 - `wb_state` reports play mode correctly, so `wb_stop` works again.
@@ -107,7 +107,7 @@ Added since that test pass:
   tools, off by default and read-only except `mission_git fetch`, which updates git's remote refs, described under
   [COALITION missions](#coalition-missions-optional).
 
-Run the test suite with `npx vitest run`. At the time of writing the suite runs 2253 tests (15 skipped) and none fail.
+Run the test suite with `npx vitest run`. At the time of writing 2253 tests pass, 15 are skipped and none fail.
 
 ## Requirements
 
@@ -282,7 +282,7 @@ Script errors and dialogs in the servers and game clients the MCP starts (`serve
 | `wb_entity_create` / `wb_entity_delete` | Create an entity from a prefab; delete one by name |
 | `wb_entity_list` / `wb_entity_inspect` | List entities; show one entity's components and properties |
 | `wb_entity_modify` | Move, rotate, rename, reparent; get, set and clear properties and array items |
-| `wb_entity_select` | Select, deselect, clear or read the selection |
+| `wb_entity_select` | Deselect, clear or read the selection; `select` only locates the entity (see [Known issues](#known-issues)) |
 | `wb_entity_duplicate` | Save a scene entity as a new prefab in an addon |
 | `wb_component` | Add, remove or list an entity's components |
 | `wb_layers` | List layers, create top-level layers, set and read the active layer, show layer info and toggle a layer's lock; a new layer counts as unsaved until `wb_save` runs |
@@ -419,8 +419,10 @@ only read (apart from those git refs), so they are not affected. To write, name 
   anything, and starts with a warning when less than 9 GB is free. A GUI Workbench held 4.3 to 8.9 GB on the PC
   where this was measured.
 - A headless run (`mod compile`, `pack`, `build`) that stays on a dialog other than Script Authorization or a
-  "Validating" progress window is ended (only its own process) and its result names the dialog. A Script
-  Authorization dialog never ends the run; the result names it only when the run timed out.
+  "Validating" progress window is ended (only its own process) and its result names the dialog (the leak assert is
+  the exception, below). A Script Authorization dialog never ends the run; the result names it only when the run
+  timed out. A run stopped on the diag "Resources are leaking" assert is ended the same way, but its result does not
+  name it (it is judged from `console.log`) and it does not count as a failure.
 - Before it starts any Workbench, and when a watcher attaches to one, the server copies finished Workbench log
   folders that hold a real crash to the crash logs folder (see `ENFUSION_CRASH_LOGS_DIR`). It only copies: nothing is
   moved or deleted.
@@ -490,18 +492,19 @@ only read (apart from those git refs), so they are not affected. To write, name 
 Open bugs you can hit today, each with what to do about it.
 
 - A dedicated server started with `-addons` naming a mod that is in no addon folder and no cache still stops at a
-  "Missing Addon" dialog, even with `-noThrow`, and the process watcher does not end it. Press OK in that dialog or
-  stop the server (it then starts without the mod), and make sure the mod is in the addon folders you pass.
+  "Missing Addon" dialog, even with `-noThrow`, and the process watcher does not end it. Close that dialog (the server
+  then starts without the mod) or end the server with `server stop`, and make sure the mod is in the addon folders you
+  pass.
 - `game launch` takes only a `.ent` world, not a mission header (`{GUID}Missions/...conf`). To run a mission from
   its header, use `mission_server`.
 - Whether `-noThrow` removes the script exception window on a game client is not proven; it is proven on the
   dedicated server. If the window shows up on a client the MCP started, its process watcher ends that client.
-- The MCP never writes handler scripts into a protected addon such as a framework clone, so stale ones there are only
-  reported (by `wb_connect` and `wb_launch`), and a Workbench you start yourself gets no check at launch. Refresh
+- `wb_launch` never refreshes handler scripts in a protected addon such as a framework clone, so stale ones there are
+  only reported (by `wb_connect` and `wb_launch`), and a Workbench you start yourself gets no check at launch. Refresh
   them with `wb_handlers install` (with the owner's OK) and restart Workbench.
 - If `wb_layers create` works in a world that `wb_save` refuses to save (a packed world, or one in the game or Tools
   folders), the world stays marked unsaved: `.ent` opens and `wb_close` with `save=false` keep being refused. Restart
-  Workbench, or close it with `force=true`.
+  Workbench. If this MCP started it, `wb_close` (by default or with `force=true`) works too.
 - `wb_close` with the default `save=true`, on a world that `wb_save` would refuse (play mode, unnamed world, prefab
   edit mode), closes Workbench without saving and the unsaved-world check does not run; the reply says nothing was
   saved. Stop play mode or save by hand first.
@@ -511,6 +514,10 @@ Open bugs you can hit today, each with what to do about it.
   property's own list.
 - `wb_script_editor` `getCurrentFile` and `getLine` return empty text on 1.9 after `openFile`, while
   `getLinesCount`, `insertLine` and `removeLine` work. Read the file with `project read`.
+- `wb_entity_select` with `select` clears the current selection and only locates the entity; it does not select it.
+  Use `getSelected` to read the selection and select the entity in Workbench by hand.
+- A dedicated server started on a scenario made by `scenario_create_conflict` has not been re-checked since the
+  template was updated for 1.9.0.37. If it fails to start, read the log with `server status` and report what it says.
 
 ## Known limitations
 
