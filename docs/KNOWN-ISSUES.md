@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-State at `c070e21` on Arma Reforger 1.9.0.37.
+State at 0.16.0 on Arma Reforger 1.9.0.37.
 
 ## Known issues
 

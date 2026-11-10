@@ -1,6 +1,6 @@
 # What changed since enfusion-mcp-BK
 
-This fork starts at enfusion-mcp-BK `0acfa88` (0.12.0, 2026-08-05). Since then: **500 commits**, 24 new tools, the script API rebuilt for 1.9.0.37, and every BK tool that worked in real modding sessions re-tested on Workbench 1.8.0.13 and again on 1.9.0.37.
+This fork starts at enfusion-mcp-BK `0acfa88` (0.12.0, 2026-08-05). Since then: **more than 500 commits**, 24 new tools, the script API rebuilt for 1.9.0.37, and every BK tool that worked in real modding sessions re-tested on Workbench 1.8.0.13 and again on 1.9.0.37.
 
 **(ma)** marks a tool that came from [enfusion-mcp-ma](https://github.com/MyckaelAutier/enfusion-mcp-ma) by MyckaelAutier, ported as one credited commit; its bullet says what the tool does and what this fork changed in it. Everything else was written and tested in this fork.
 

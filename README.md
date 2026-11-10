@@ -86,7 +86,7 @@ Docs: https://community.bistudio.com/wikidata/external-data/arma-reforger/ArmaRe
 
 That class is new in 1.9 and is missing from BK's index. The first reply tells you what the server can reach; the second shows the agent reading the 1.9 API. (Paths shortened; only the first of the three matches is shown.)
 
-**Why not just use enfusion-mcp-BK?** BK is the base of this fork and its tools are still here. Its bundled script API was scraped in February 2026, while Reforger 1.6 was live, and its last commit on `main` (2026-08-05) predates the 1.8 release by eight days. BK starts Workbench on any live call, and on a setup like the COALITION guide's it can copy its scripts into a downloaded Workshop mod. This fork re-tested BK's tools on 1.8.0.13 and 1.9.0.37, fixed what failed, and added the build, server, watchdog and release tools that agents running a long modding session need.
+**Why not just use enfusion-mcp-BK?** BK is the base of this fork and its tools are still here. Its bundled script API was scraped in February 2026, while Reforger 1.6 was live, and its last commit on the default branch (2026-08-05) predates the 1.8 release. BK starts Workbench on any live call, and on a setup like the COALITION guide's it can copy its scripts into a downloaded Workshop mod. This fork re-tested BK's tools on 1.8.0.13 and 1.9.0.37, fixed what failed, and added the build, server, watchdog and release tools that agents running a long modding session need.
 
 | | enfusion-mcp-BK 0.12.0 | enfusion-mcp-SyykoNT 0.16.0 |
 |---|---|---|

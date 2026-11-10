@@ -28,8 +28,9 @@ Reforger 1.9 vehicle data.
 - With writing on, the server does not start for an addon the other writing tools refuse (one in the game or Tools install,
   a Workshop cache or download, `ENFUSION_FORBIDDEN_DIRS` or `ENFUSION_PROTECTED_ADDONS`, the projects folder itself, or a
   folder without a `.gproj`) and says why; point `ENFUSION_TUNING_ADDON` at your own addon.
-  `ENFUSION_TUNING_READONLY=1` turns writing off and starts anyway. The server listens on 127.0.0.1 only and refuses requests whose
-  Host or Origin is not its own address.
+  `ENFUSION_TUNING_READONLY=1` turns writing off and starts anyway. The server listens on 127.0.0.1 only. It answers 403 to any request
+  whose Host is not `127.0.0.1` or `localhost` with its own port, and to any POST whose Origin is set and is not one of those
+  two addresses (a request with no Origin passes).
 
 ## Source layout
 
