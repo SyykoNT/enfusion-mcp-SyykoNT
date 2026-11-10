@@ -212,14 +212,15 @@ const opensWorld = (params: Record<string, unknown>) =>
 
 /**
  * Handlers that read World Editor state through WorldEditorAPI. After a refused open, EMCP_WB_GetState crashed Workbench natively in 6 of 6 live runs (B-181).
- * Ping (the connection check) and Exit (the way to restart) are left out: neither crashed in those runs.
+ * Ping (the connection check) is left out: it ran after a refused open without a crash (repro life 4). Exit is left out too, but it was not run after a
+ * refused open in either record, so wb_close sends save=false while the mark is set (it never reaches Save() on the stale world).
  */
 const WORLD_STATE_HANDLERS = new Set(
   ["Clipboard", "Components", "CreateEntity", "DeleteEntity", "EditorControl", "GetCameraPos", "GetEntity", "GetState", "Layers", "ListEntities", "ModifyEntity", "Prefabs", "SelectEntity", "Terrain"].map((n) => `EMCP_WB_${n}`)
 );
 
 /** The reply while a refused open has left the world stale. */
-const WORLD_STALE =
+export const WORLD_STALE =
   "Refused: a refused open left the world in this Workbench in a state where this call can crash Workbench. " +
   "Open a world with wb_open_resource (a .ent) or restart Workbench first. Nothing was sent.";
 
@@ -611,7 +612,7 @@ export class WorkbenchClient {
    * Read the live mode for a mode gate. Never launches Workbench.
    * Reads EMCP_WB_GetState, not Ping: every installed Ping still answers "edit" during Play.
    */
-  async probeMode(): Promise<WorkbenchMode | "not_running" | "no_handlers" | "timeout"> {
+  async probeMode(): Promise<WorkbenchMode | "not_running" | "no_handlers" | "timeout" | "stale"> {
     try {
       const stale = await this.worldStaleLine("EMCP_WB_GetState", {});
       if (stale) throw new WorkbenchError(stale, "API_ERROR");
@@ -624,6 +625,7 @@ export class WorkbenchClient {
       const code = err instanceof WorkbenchError ? err.code : undefined;
       this._state = { connected: code === "API_ERROR", mode: "unknown", lastUpdated: Date.now() };
       if (isUndefinedHandler(err)) return "no_handlers";
+      if (code === "API_ERROR" && err instanceof Error && err.message === WORLD_STALE) return "stale";
       if (code === "CONNECTION_REFUSED") return "not_running";
       if (code === "TIMEOUT") return "timeout";
       return "unknown";

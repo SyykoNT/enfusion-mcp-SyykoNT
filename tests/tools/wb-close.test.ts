@@ -29,7 +29,7 @@ vi.mock("../../src/utils/instances.js", async (orig) => ({
 
 const { registerWbLaunch } = await import("../../src/tools/wb-launch.js");
 const { killPids } = await import("../../src/utils/process.js");
-const { WorkbenchClient } = await import("../../src/workbench/client.js");
+const { WorkbenchClient, WORLD_STALE } = await import("../../src/workbench/client.js");
 const { loadConfig } = await import("../../src/config.js");
 
 type Result = { content: { text: string }[]; isError?: boolean };
@@ -186,6 +186,16 @@ describe.runIf(process.platform === "win32")("wb_close and unsaved changes", () 
       expect(s.net).not.toHaveBeenCalled(); // the save writes the layer, so there is nothing to warn about
       expect(s.titles).not.toHaveBeenCalled();
       expect(r.content[0].text).not.toContain(LAYER_NOTE);
+    });
+
+    it("while a refused open has left the world stale sends save:false, never save:true, and says why (B-181)", async () => {
+      // the pre-save world read is refused with the stale line, so the save guard cannot judge the world: Save() on it is not attempted
+      const s = setup(async () => LISTENING, [CLEAN], new Error(`Could not read the open world: ${WORLD_STALE}`));
+      const r = await s.close({ save: true, force: false });
+      expect(r.isError).toBeUndefined();
+      expect(s.exits()).toEqual([{ save: false }]);
+      expect(r.content[0].text).toContain("Closed without saving: a refused open left the world in this Workbench unstable");
+      expect(r.content[0].text).toContain("wb_open_resource");
     });
 
     it("on a world inside a forbidden root sends save:false, never save:true, and says why", async () => {

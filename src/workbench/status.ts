@@ -1,6 +1,6 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { WorkbenchClient } from "./client.js";
+import { WORLD_STALE, type WorkbenchClient } from "./client.js";
 import { WATCH_DIR, alertLine, isAlert, readStates } from "../watchdog/wb-watch.js";
 import { isAlive } from "../utils/process.js";
 
@@ -100,6 +100,8 @@ export async function ensureMode(client: WorkbenchClient, want: "edit" | "play",
     }
     case "no_handlers":
       return `Cannot ${action}: the MCP handlers are not loaded in this Workbench; run wb_diagnose.`;
+    case "stale":
+      return WORLD_STALE;
     case "unknown":
       return `Cannot ${action}: could not read the Workbench mode; run wb_diagnose.`;
     case "no_world":

@@ -17,6 +17,7 @@ type Handler = (args: Record<string, unknown>) => Promise<Result>;
 const PORT = 5775;
 const listening = (pid: number) => `  TCP    0.0.0.0:${PORT}    0.0.0.0:0    LISTENING    ${pid}\r\n`;
 const STALE = "a refused open left the world in this Workbench in a state where this call can crash Workbench";
+const STALE_LINE = `Refused: ${STALE}. Open a world with wb_open_resource (a .ent) or restart Workbench first. Nothing was sent.`;
 
 function setup() {
   const env = { netstat: async (): Promise<string> => listening(4242), openFails: "" };
@@ -58,13 +59,18 @@ describe("a refused open leaves the world stale", () => {
     expect(s.sent).toEqual([]);
   });
 
-  it("wb_play does not read the mode from Workbench either", async () => {
-    const s = setup();
-    await s.refuseOpen();
-    const r = await s.tools.wb_play({});
-    expect(r.isError).toBe(true);
-    expect(s.sent).toEqual([]);
-  });
+  it.each([["wb_play", {}], ["wb_entity_create", { prefab: "Prefabs/X.et", position: "0 0 0" }]] as const)(
+    "%s reads no mode from Workbench and replies with the stale line, not a mode error",
+    async (name, args) => {
+      const s = setup();
+      await s.refuseOpen();
+      const r = await s.tools[name](args);
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain(STALE_LINE);
+      expect(r.content[0].text).not.toContain("could not read the Workbench mode");
+      expect(s.sent).toEqual([]);
+    }
+  );
 
   it("an open reply without \"could not open\" marks nothing", async () => {
     const s = setup();
@@ -77,6 +83,7 @@ describe("a refused open leaves the world stale", () => {
   it("a successful .ent open clears the mark; an open is never refused while marked", async () => {
     const s = setup();
     await s.refuseOpen();
+    expect((await s.tools.wb_state({})).isError).toBe(true);
     expect((await s.tools.wb_open_resource({ path: "Worlds/Other.ent" })).isError).toBeUndefined();
     expect(s.sent).toEqual(["EMCP_WB_EditorControl:openResource"]);
     expect((await s.tools.wb_state({})).isError).toBeUndefined();
@@ -93,6 +100,7 @@ describe("a refused open leaves the world stale", () => {
   it("a different PID on the port is not marked, and the old mark is gone for good", async () => {
     const s = setup();
     await s.refuseOpen();
+    expect((await s.tools.wb_state({})).isError).toBe(true);
     s.env.netstat = async () => listening(5151); // Workbench restarted
     expect((await s.tools.wb_state({})).isError).toBeUndefined();
     s.env.netstat = async () => listening(4242);

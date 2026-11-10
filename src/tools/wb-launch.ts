@@ -3,7 +3,7 @@ import { z } from "zod";
 import { basename, dirname, join, resolve } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import type { Config } from "../config.js";
-import { ADDONS_DIRS_NOT_APPLIED, handlerGitState, type WorkbenchClient } from "../workbench/client.js";
+import { ADDONS_DIRS_NOT_APPLIED, WORLD_STALE, handlerGitState, type WorkbenchClient } from "../workbench/client.js";
 import { addonsDirsError } from "../workbench/cli.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 import { findPids, killPids, sleep } from "../utils/process.js";
@@ -171,8 +171,14 @@ export function registerWbLaunch(
       let sendSave = save;
       let cannotSave = "";
       let noWorld = false;
+      let staleNote = "";
       if (save && !others.length) {
         const world = await readWorld(client, "");
+        // A refused open left the world unstable (B-181): Save() there is untested and the save guard cannot read the world, so discard instead.
+        if ("error" in world && world.error.includes(WORLD_STALE)) {
+          sendSave = false;
+          staleNote = "Closed without saving: a refused open left the world in this Workbench unstable, so saving it could crash Workbench. To keep changes, the user can reopen a world with wb_open_resource and save it first.";
+        }
         const refusal = "info" in world ? saveRefusal(world.info, config) : null;
         if (refusal) {
           sendSave = false;
@@ -208,7 +214,7 @@ export function registerWbLaunch(
         try {
           const r = await client.call<Record<string, unknown>>("EMCP_WB_Exit", { save: sendSave }, { timeout: 20_000 });
           const nothing = "Nothing saved (no world open or save refused).";
-          notes.push(sendSave ? (r.saved ? "World saved." : nothing) : noWorld ? nothing : cannotSave ? `Nothing was saved: ${cannotSave}` : "Closed without saving.");
+          notes.push(sendSave ? (r.saved ? "World saved." : nothing) : staleNote ? staleNote : noWorld ? nothing : cannotSave ? `Nothing was saved: ${cannotSave}` : "Closed without saving.");
         } catch (e) {
           // In edit mode the handler exits at once, so the connection drops before it answers.
           await sleep(1500);
