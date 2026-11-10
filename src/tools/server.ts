@@ -147,6 +147,7 @@ export function registerServer(server: McpServer, config: Config): void {
         rconPassword: z.string().optional().describe("Enable RCON with this password"),
         autoSaveInterval: z.number().optional().describe("Persistence autosave interval in minutes"),
         aiLimit: z.number().int().optional(),
+        bindAddress: z.string().ip({ version: "v4" }).optional().describe("(config/start) IPv4 the game, A2S and RCON sockets bind to (default 0.0.0.0, every interface; 127.0.0.1 keeps a local test server on this PC only)"),
         // start options
         addons: z.array(z.string()).optional()
           .describe("(start) Local addon folder names to load from their packed build (run `mod` build first)"),
@@ -213,7 +214,7 @@ export function registerServer(server: McpServer, config: Config): void {
             name: a.name ?? "Enfusion MCP test server",
             scenarioId: a.scenarioId, maxPlayers: a.maxPlayers, port: a.port, password: a.password,
             passwordAdmin: a.passwordAdmin, admins: a.admins, visible: a.visible, crossPlatform: a.crossPlatform,
-            battlEye: a.battlEye, mods: a.workshopMods, rconPassword: a.rconPassword, autoSaveInterval: a.autoSaveInterval, aiLimit: a.aiLimit,
+            battlEye: a.battlEye, mods: a.workshopMods, rconPassword: a.rconPassword, autoSaveInterval: a.autoSaveInterval, aiLimit: a.aiLimit, bindAddress: a.bindAddress,
           });
           const schema = loadSchema(config);
           const errs = schema ? validateAgainstSchema(JSON.parse(json), schema) : [];

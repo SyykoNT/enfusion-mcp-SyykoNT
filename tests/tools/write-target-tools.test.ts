@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -144,6 +144,19 @@ describe("guarded writers write into an explicit addon", () => {
     expect(files).toContain(join("scripts", "Game", "GameMode", "SCR_GameModeCampaign_modded.c"));
     expect(files).toContain(join("Prefabs", "Structures", "WTT_House", "WTT_House.et"));
     expect(files).toContain("server.json");
+  });
+
+  it("server_config bindAddress binds the game and A2S sockets, and the schema refuses anything but dotted IPv4", async () => {
+    const bindDir = join(root, "elsewhere", "Bind");
+    mkdirSync(bindDir, { recursive: true });
+    writeFileSync(join(bindDir, "addon.gproj"), "GameProject {\n ID \"Bind\"\n}\n");
+    expect((await tools.server_config({ name: "T", projectPath: bindDir, bindAddress: "127.0.0.1" })).isError).toBeUndefined();
+    const cfg = JSON.parse(readFileSync(join(bindDir, "server.json"), "utf-8"));
+    expect([cfg.bindAddress, cfg.a2s.address]).toEqual(["127.0.0.1", "127.0.0.1"]);
+    let def!: { inputSchema: Record<string, import("zod").ZodTypeAny> };
+    registerServerConfig({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config);
+    for (const bad of ["localhost", "256.1.1.1", "1.2.3"]) expect(def.inputSchema.bindAddress.safeParse(bad).success, bad).toBe(false);
+    expect(def.inputSchema.bindAddress.safeParse("127.0.0.1").success).toBe(true);
   });
 
   it("building_setup refuses an outputDir outside the addon", async () => {

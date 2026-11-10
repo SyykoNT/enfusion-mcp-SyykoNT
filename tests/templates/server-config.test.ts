@@ -122,6 +122,74 @@ describe("server.json follows the 1.8 schema", () => {
   });
 });
 
+// Output of the 4676c38 template for { name: "T", rconPassword: "x" }, before bindAddress existed.
+const BASE_JSON = `{
+  "bindAddress": "0.0.0.0",
+  "bindPort": 2001,
+  "publicAddress": "",
+  "publicPort": 2001,
+  "a2s": {
+    "address": "0.0.0.0",
+    "port": 17777
+  },
+  "rcon": {
+    "address": "0.0.0.0",
+    "port": 19999,
+    "password": "x",
+    "permission": "admin",
+    "maxClients": 4
+  },
+  "game": {
+    "name": "T",
+    "password": "",
+    "passwordAdmin": "",
+    "admins": [],
+    "scenarioId": "{ECC61978EDCC2B5A}Missions/23_Campaign.conf",
+    "maxPlayers": 32,
+    "visible": false,
+    "crossPlatform": false,
+    "gameProperties": {
+      "serverMaxViewDistance": 1600,
+      "networkViewDistance": 1500,
+      "serverMinGrassDistance": 50,
+      "disableThirdPerson": false,
+      "fastValidation": true,
+      "battlEye": false
+    },
+    "mods": []
+  },
+  "operating": {
+    "lobbyPlayerSynchronise": true
+  }
+}`;
+
+describe("bindAddress", () => {
+  it("is byte-identical to the earlier output without it", () => {
+    expect(generateServerConfig({ name: "T", rconPassword: "x" })).toBe(BASE_JSON);
+  });
+
+  it("sets the game, A2S and RCON addresses and leaves publicAddress alone", () => {
+    const cfg = JSON.parse(generateServerConfig({ name: "T", rconPassword: "x", bindAddress: "127.0.0.1" }));
+    expect(cfg.bindAddress).toBe("127.0.0.1");
+    expect(cfg.a2s.address).toBe("127.0.0.1");
+    expect(cfg.rcon.address).toBe("127.0.0.1");
+    expect(cfg.publicAddress).toBe("");
+  });
+
+  it("passes the game's schema rules for the three address fields", () => {
+    // The three address definitions copied from backend/DSConfigSchema.json (1.9.0.37).
+    const ipv4 = "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$";
+    const schema = { type: "object", additionalProperties: false, properties: {
+      bindAddress: { type: "string", pattern: "^([0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3})?$", patternDesc: "Param should contain IPv4 address or be removed for default value" },
+      a2s: { type: "object", properties: { address: { type: "string", pattern: ipv4 } }, required: ["address"] },
+      rcon: { type: "object", properties: { address: { type: "string", pattern: ipv4 } }, required: ["address"] },
+    } };
+    const cfg = JSON.parse(generateServerConfig({ name: "T", rconPassword: "x", bindAddress: "127.0.0.1" }));
+    expect(cfg.bindAddress).toBe("127.0.0.1");
+    expect(validateAgainstSchema({ bindAddress: cfg.bindAddress, a2s: cfg.a2s, rcon: cfg.rcon }, schema)).toEqual([]);
+  });
+});
+
 describe("validateAgainstSchema", () => {
   const schema = {
     type: "object", required: ["game"], additionalProperties: false,

@@ -41,10 +41,13 @@ export interface ServerConfigOptions {
   /** Persistence: autosave every N minutes (0 = off) */
   autoSaveInterval?: number;
   aiLimit?: number;
+  /** IPv4 the game, A2S and RCON sockets bind to (default 0.0.0.0 = every interface; 127.0.0.1 = this PC only) */
+  bindAddress?: string;
 }
 
 export function generateServerConfig(opts: ServerConfigOptions): string {
   const port = opts.port ?? 2001;
+  const bind = opts.bindAddress ?? "0.0.0.0";
   const mods: ServerMod[] = [...(opts.mods ?? [])];
   if (opts.modId) mods.push({ modId: opts.modId, name: opts.modName ?? "" });
 
@@ -61,13 +64,13 @@ export function generateServerConfig(opts: ServerConfigOptions): string {
   }
 
   const config: Record<string, unknown> = {
-    bindAddress: "0.0.0.0",
+    bindAddress: bind,
     bindPort: port,
     publicAddress: "",
     publicPort: port,
-    a2s: { address: "0.0.0.0", port: opts.a2sPort ?? 17777 },
+    a2s: { address: bind, port: opts.a2sPort ?? 17777 },
     ...(opts.rconPassword
-      ? { rcon: { address: "0.0.0.0", port: 19999, password: opts.rconPassword, permission: "admin", maxClients: 4 } }
+      ? { rcon: { address: bind, port: 19999, password: opts.rconPassword, permission: "admin", maxClients: 4 } }
       : {}),
     game: {
       name: opts.name,

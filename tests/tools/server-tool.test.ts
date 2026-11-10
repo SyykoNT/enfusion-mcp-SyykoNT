@@ -121,6 +121,17 @@ describe("server config", () => {
     expect(JSON.parse(readFileSync(join(config.serverProfilePath, "server.json"), "utf-8")).game.name).toBe("B");
   });
 
+  it("bindAddress binds the game, A2S and RCON sockets; the schema refuses anything but dotted IPv4", async () => {
+    const p = join(root, "bind", "server.json");
+    expect((await tool({ action: "config", configPath: p, rconPassword: "pw", bindAddress: "127.0.0.1" })).isError).toBeFalsy();
+    const cfg = JSON.parse(readFileSync(p, "utf-8"));
+    expect([cfg.bindAddress, cfg.a2s.address, cfg.rcon.address]).toEqual(["127.0.0.1", "127.0.0.1", "127.0.0.1"]);
+    let def!: { inputSchema: Record<string, import("zod").ZodTypeAny> };
+    registerServer({ registerTool: (_n: string, d: typeof def) => { def = d; } } as unknown as McpServer, config);
+    for (const bad of ["localhost", "256.1.1.1", "1.2.3"]) expect(def.inputSchema.bindAddress.safeParse(bad).success, bad).toBe(false);
+    expect(def.inputSchema.bindAddress.safeParse("127.0.0.1").success).toBe(true);
+  });
+
   it("writes a new file at configPath", async () => {
     const p = join(root, "new", "server.json");
     expect((await tool({ action: "config", configPath: p })).isError).toBeFalsy();

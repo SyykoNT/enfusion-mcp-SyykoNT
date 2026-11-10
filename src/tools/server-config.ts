@@ -56,6 +56,11 @@ export function registerServerConfig(
           .string()
           .optional()
           .describe("Server password (empty = no password)"),
+        bindAddress: z
+          .string()
+          .ip({ version: "v4" })
+          .optional()
+          .describe("IPv4 address the game, A2S and RCON sockets bind to (default 0.0.0.0, every interface; 127.0.0.1 keeps a local test server on this PC only)"),
         projectPath: z
           .string()
           .optional()
@@ -72,6 +77,7 @@ export function registerServerConfig(
       a2sPort,
       visible,
       password,
+      bindAddress,
       projectPath,
     }) => {
       const target = resolveWriteAddon(config, { projectPath });
@@ -87,6 +93,7 @@ export function registerServerConfig(
           a2sPort,
           visible,
           password,
+          bindAddress,
         });
 
         if (!("error" in target)) {
