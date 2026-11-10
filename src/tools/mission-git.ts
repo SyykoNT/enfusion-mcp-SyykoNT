@@ -152,8 +152,8 @@ export function registerMissionGit(server: McpServer, config: Config): void {
         ".conf, gearscripts, prefabs and other, and warnings for MCP handler files, files outside the mission folders, a world " +
         "without a .conf or the reverse, and new resources without a .meta. fetch: true runs git fetch origin release first (writes refs).",
       inputSchema: {
-        crfPath: z.string().optional().describe("CRF clone inside the project path (default: found under the project path)"),
-        lobbyPath: z.string().optional().describe("COALITION-Lobby clone (default: CRF's sibling)"),
+        crfPath: z.string().optional().describe("CRF clone inside the project path, or a git worktree of one (default: found under the project path)"),
+        lobbyPath: z.string().optional().describe("COALITION-Lobby clone (default: CRF's sibling; a junction to the Lobby clone beside a worktree CRF works)"),
         base: z.string().optional().describe("Ref to compare with (default origin/release)"),
         fetch: z.boolean().optional().describe("Run git fetch origin release first; writes refs, so only when the user asks"),
         format: z.enum(["markdown", "json"]).optional().describe("Default markdown"),

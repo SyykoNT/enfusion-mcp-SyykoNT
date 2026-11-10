@@ -7,10 +7,11 @@ import { mergeNode } from "../formats/config-override.js";
 import { parseAll, type EnfusionNode } from "../formats/enfusion-text.js";
 import { member, prop, SETTINGS_FIELD, slotRoles, SIDES, textOf, type Side } from "../coalition/mission-model.js";
 import {
-  CRF_PATH_HELP, LOBBY_PATH_HELP, LOBBY_PREFAB, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
+  CRF_PATH_HELP, LOBBY_PATH_HELP, LOBBY_PREFAB, resolveCoalitionRoots, SOURCE_HELP, worktreeMainClone, type CoalitionCopy, type CoalitionRoots,
 } from "../utils/coalition-paths.js";
 import { levenshtein } from "../utils/fuzzy.js";
 import { enumDefault, loadLobbyEnums, type LobbyEnums } from "../utils/lobby-enums.js";
+import { sameRealPath } from "../utils/safe-path.js";
 import { loadLobbyMission, lobbyNodes } from "./mission-inspect.js";
 
 // Kept where the drift test and other tools import them from
@@ -278,10 +279,12 @@ export interface Usage { file: string; fields: string[] }
  */
 export function findGearscriptUsage(guid: string, projectPath: string, roots: CoalitionRoots): Usage[] {
   const isWorld = (f: string) => /\.(layer|ent)$/i.test(f);
+  // A worktree CRF is read in place of its main clone, so the clone's missions are not listed a second time
+  const main = worktreeMainClone(roots.crf.root);
   const files: { file: string; read: () => string }[] = existsSync(projectPath)
     ? readdirSync(projectPath, { withFileTypes: true })
         // A project the project path holds as a junction counts, as in resolveCoalitionRoots
-        .filter((d) => (d.isDirectory() || d.isSymbolicLink()) && existsSync(join(projectPath, d.name, "Worlds")))
+        .filter((d) => (d.isDirectory() || d.isSymbolicLink()) && existsSync(join(projectPath, d.name, "Worlds")) && !(main && sameRealPath(join(projectPath, d.name), main)))
         .flatMap((d) => {
           const dir = join(projectPath, d.name, "Worlds");
           return (readdirSync(dir, { recursive: true }) as string[]).filter(isWorld).map((f) => join(dir, f));
@@ -433,14 +436,14 @@ export function registerGearscriptInspect(server: McpServer, config: Config): vo
         "COALITION-Lobby's gear manager: weapon pools picked at random, magazines (assistant counts on assistant slots), " +
         "clothing per slot, items, and radios under the radio toggles. Lists what the gear manager silently skips, " +
         "and with usedBy which missions and Lobby defaults use the gearscript. Read-only and offline: reads CRF and " +
-        "COALITION-Lobby files inside the project path, no Workbench.",
+        "COALITION-Lobby files inside the project path (or a git worktree of CRF), no Workbench.",
       inputSchema: {
         gearscript: z
           .string()
           .min(1)
           .optional()
           .describe("'{GUID}Configs/Gearscripts/...conf', a CRF or Lobby relative path, or a bare file name such as 'COA_GS_USSR_Late_War.conf' (searched under Configs/Gearscripts). Optional with world and side."),
-        world: z.string().optional().describe("Mission world .ent (CRF-relative, project-relative or absolute, inside the project path or the guide's Projects folder). With side: gearscript, radios, CVON choice and slotted roles come from the mission."),
+        world: z.string().optional().describe("Mission world .ent (CRF-relative, project-relative or absolute, inside the project path, the guide's Projects folder or the CRF clone or git worktree in use). With side: gearscript, radios, CVON choice and slotted roles come from the mission."),
         side: z.enum(SIDES).optional().describe("Side to read from the mission world (CIV uses m_CIVILIANGearScriptSettings)."),
         roles: z
           .array(z.string())

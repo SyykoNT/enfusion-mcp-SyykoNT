@@ -11,11 +11,10 @@ import { prefabClassifier, type Classified, type PrefabKind } from "../coalition
 import { collectNameRefs, gamemodeNames, nameDefaults, resolveNames, taskEntries, type NameRef } from "../coalition/name-refs.js";
 import type { Layer } from "../pak/stack.js";
 import {
-  cloneCopy, CRF_PATH_HELP, guideProjectsDir, LOBBY_PATH_HELP, LOBBY_PREFAB, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
+  cloneCopy, CRF_PATH_HELP, guideProjectsDir, LOBBY_PATH_HELP, LOBBY_PREFAB, pathInside, resolveCoalitionRoots, SOURCE_HELP, type CoalitionCopy, type CoalitionRoots,
 } from "../utils/coalition-paths.js";
 import { enumDefault, loadLobbyEnums } from "../utils/lobby-enums.js";
 import { stripGuid } from "../utils/prefab-ancestry.js";
-import { validateProjectPath } from "../utils/safe-path.js";
 
 const SECTIONS = ["summary", "sides", "names", "tasks", "rules", "progress", "settings", "standards"] as const;
 type Section = (typeof SECTIONS)[number];
@@ -54,15 +53,8 @@ function locateWorld(config: Config, crf: CoalitionCopy, world: string): { copy:
   const slashed = world.replace(/\\/g, "/");
   if (!isAbsolute(world) && crf.exists(slashed)) return { copy: crf, rel: slashed };
   const abs = isAbsolute(world) ? world : join(config.projectPath, world);
-  let file: string | undefined;
-  for (const base of [config.projectPath, guideProjectsDir()]) {
-    try {
-      file = validateProjectPath(base, abs);
-      break;
-    } catch {
-      // try the next allowed folder
-    }
-  }
+  // An accepted CRF clone or worktree may sit outside the two folders, so its own root counts too
+  const file = pathInside([config.projectPath, guideProjectsDir(), ...(crf.kind === "loose" ? [crf.root] : [])], abs);
   if (!file) throw new Error(`World must be inside the project path ${config.projectPath}.`);
   // A relative world was looked for in CRF first, so name both places
   if (!isAbsolute(world) && !existsSync(file)) throw new Error(`World not found: ${slashed} is not in CRF ${crf.label} nor under ${config.projectPath}.`);
@@ -312,7 +304,7 @@ export function registerMissionInspect(server: McpServer, config: Config): void 
         "(which of the guide's plugin steps are done and the next one), settings (plugin 2 to 4 values) and standards " +
         "(Rule of Twos, callsigns, 9-man squad). Read-only and offline, no Workbench.",
       inputSchema: {
-        world: z.string().min(1).describe("Mission world .ent, CRF-relative (e.g. 'Worlds/Arland/MyMission.ent'; also a published mission in the Workshop CRF), project-path-relative or absolute. Must be inside the project path or the guide's Projects folder."),
+        world: z.string().min(1).describe("Mission world .ent, CRF-relative (e.g. 'Worlds/Arland/MyMission.ent'; also a published mission in the Workshop CRF), project-path-relative or absolute. Must be inside the project path, the guide's Projects folder or the CRF clone or git worktree in use."),
         sections: z.array(z.enum(SECTIONS)).optional().describe("Limit or extend the report. Default: summary, sides, names, tasks, rules. Also: progress, settings, standards."),
         format: z.enum(["markdown", "json"]).default("markdown").describe("json returns the same data with entity names per row."),
         crfPath: z.string().optional().describe(CRF_PATH_HELP),

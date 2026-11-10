@@ -299,7 +299,7 @@ export function registerMissionValidate(server: McpServer, config: Config): void
         "validate_mission.py (mission QA), mission_synopsis.py (PR title, automated check ticks, synopsis) and " +
         "validate_resources.py (resource integrity across CRF and Lobby). Returns a verdict, then failures, warnings " +
         "and the synopsis. Read-only and no Workbench needed: it executes the Python scripts in place from the CRF " +
-        "clone inside the project path (python -I -B -X utf8) and writes nothing.",
+        "clone inside the project path, or a git worktree of one (python -I -B -X utf8) and writes nothing.",
       inputSchema: {
         world: z
           .string()
@@ -318,11 +318,11 @@ export function registerMissionValidate(server: McpServer, config: Config): void
         crfPath: z
           .string()
           .optional()
-          .describe("CRF clone. Default: ENFUSION_DEFAULT_MOD if it holds Tools/Validation/validate_mission.py, else the first project folder that does, else the Coalition Mission Making Guide's Documents\\My Games\\ArmaReforgerWorkbench\\Projects\\Coalition-Reforger-Framework. Must be inside the project path or that Projects folder."),
+          .describe("CRF clone. Default: ENFUSION_DEFAULT_MOD if it holds Tools/Validation/validate_mission.py, else the first project folder that does, else the Coalition Mission Making Guide's Documents\\My Games\\ArmaReforgerWorkbench\\Projects\\Coalition-Reforger-Framework. Must be inside the project path or that Projects folder, or be a git worktree of a CRF clone inside them."),
         lobbyPath: z
           .string()
           .optional()
-          .describe("COALITION-Lobby clone. Default: the COALITION-Lobby folder next to the CRF clone. Must be inside the project path or the guide's Projects folder. The Workshop copy cannot be used: CRF's Python scripts read the Lobby folder."),
+          .describe("COALITION-Lobby clone. Default: the COALITION-Lobby folder next to the CRF clone. Must be inside the project path or the guide's Projects folder, or be the COALITION-Lobby folder next to a git worktree CRF (a junction works). The Workshop copy cannot be used: CRF's Python scripts read the Lobby folder."),
         extraRoots: z
           .array(z.string())
           .default([])

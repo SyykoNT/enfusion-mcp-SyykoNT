@@ -152,8 +152,8 @@ export function registerMissionPrDraft(server: McpServer, config: Config): void 
         "origin/release. Lists what it could not fill. Returns text only: never posts, never touches GitHub.",
       inputSchema: {
         world: z.string().optional().describe("Mission world (.ent), CRF-relative or absolute (default: the one world the branch changes)"),
-        crfPath: z.string().optional().describe("CRF clone inside the project path (default: found under the project path)"),
-        lobbyPath: z.string().optional().describe("COALITION-Lobby clone (default: CRF's sibling)"),
+        crfPath: z.string().optional().describe("CRF clone inside the project path, or a git worktree of one (default: found under the project path)"),
+        lobbyPath: z.string().optional().describe("COALITION-Lobby clone (default: CRF's sibling; a junction to the Lobby clone beside a worktree CRF works)"),
         base: z.string().optional().describe("Ref for the addon.gproj comparison (default origin/release)"),
         roles: z.object(Object.fromEntries(SIDES.map((s) => [s, z.enum(ROLES).optional()]))).optional()
           .describe("Attacking, Defending or NA per side, when the author has decided; otherwise the line keeps 'Attacking/Defending/NA'"),

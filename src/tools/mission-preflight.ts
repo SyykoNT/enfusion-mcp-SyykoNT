@@ -140,8 +140,8 @@ export function registerMissionPreflight(server: McpServer, config: Config): voi
         "commits, pushes or posts.",
       inputSchema: {
         world: z.string().optional().describe("Mission world (.ent), CRF-relative or absolute (default: the one world the branch changes)"),
-        crfPath: z.string().optional().describe("CRF clone inside the project path (default: found under the project path)"),
-        lobbyPath: z.string().optional().describe("COALITION-Lobby clone (default: CRF's sibling)"),
+        crfPath: z.string().optional().describe("CRF clone inside the project path, or a git worktree of one (default: found under the project path)"),
+        lobbyPath: z.string().optional().describe("COALITION-Lobby clone (default: CRF's sibling; a junction to the Lobby clone beside a worktree CRF works)"),
         base: z.string().optional().describe("Ref for mission_git (default origin/release)"),
         format: z.enum(["markdown", "json"]).optional().describe("Default markdown"),
       },
