@@ -43,10 +43,10 @@ vi.mock("../../src/config.js", async (importActual) => {
   return { ...(await importActual<typeof import("../../src/config.js")>()), SERVER_DOWNLOAD_DIR: join(tmpdir(), `emcp-srv-dl-${process.pid}-${Date.now()}`) };
 });
 
-// A 16-core PC, so the cpuMask core check does not depend on the machine running the suite.
+// A 16-core Windows PC (watch.platform, per test), so the cpuMask checks do not depend on the machine running the suite.
 vi.mock("node:os", async (orig) => {
   const actual = await orig<typeof import("node:os")>();
-  const stubs = { availableParallelism: () => 16 };
+  const stubs = { availableParallelism: () => 16, platform: () => watch.platform };
   return { ...actual, ...stubs, default: { ...actual, ...stubs } };
 });
 
@@ -478,6 +478,7 @@ describe("server start: cpuMask", () => {
     vi.mocked(limitProcess).mockClear();
     vi.mocked(limitProcess).mockImplementation(() => true);
     vi.mocked(killPids).mockClear();
+    watch.platform = "win32";
     rmSync(cfg.serverProfilePath, { recursive: true, force: true });
   });
   afterEach(() => {
@@ -498,6 +499,7 @@ describe("server start: cpuMask", () => {
     ["zero", "0x0", /^cpuMask must be given as a hex mask/],
     ["empty", "", /^cpuMask must be given as a hex mask/],
     ["a core this PC lacks", "0x30000", /^cpuMask 0x30000 names core 17, but this PC has 16 logical cores \(0 to 15\)$/],
+    ["the first core past the last one", "0x10000", /^cpuMask 0x10000 names core 16, but this PC has 16 logical cores \(0 to 15\)$/],
   ])("refuses %s before anything is written or spawned", async (_why, cpuMask, msg) => {
     const r = await h({ action: "start", cpuMask, name: "X" });
     expect(r.isError).toBe(true);
@@ -505,6 +507,17 @@ describe("server start: cpuMask", () => {
     expect(spawnDetached).not.toHaveBeenCalled();
     expect(limitProcess).not.toHaveBeenCalled();
     expect(existsSync(join(cfg.serverProfilePath, "server.json"))).toBe(false);
+  });
+
+  it("on a platform other than Windows refuses cpuMask before anything is written or spawned", async () => {
+    watch.platform = "linux";
+    const r = await h({ action: "start", cpuMask: "0x3000", name: "X" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe("cpuMask works on Windows only");
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(limitProcess).not.toHaveBeenCalled();
+    expect(existsSync(join(cfg.serverProfilePath, "server.json"))).toBe(false);
+    expect(existsSync(instanceFile)).toBe(false);
   });
 
   it("stops only the server's PID and returns an error when the mask cannot be applied", async () => {

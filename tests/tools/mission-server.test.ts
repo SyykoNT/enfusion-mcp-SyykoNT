@@ -48,7 +48,7 @@ vi.mock("../../src/watchdog/proc-watch.js", async (importActual) => {
 // Free RAM is a stub; the rest of node:os (tmpdir, homedir) is real.
 vi.mock("node:os", async (orig) => {
   const actual = await orig<typeof import("node:os")>();
-  const stubs = { freemem: () => sys.freeBytes, availableParallelism: () => sys.cores };
+  const stubs = { freemem: () => sys.freeBytes, availableParallelism: () => sys.cores, platform: () => sys.platform };
   return { ...actual, ...stubs, default: { ...actual, ...stubs } };
 });
 vi.mock("../../src/utils/process.js", async (orig) => ({
@@ -541,6 +541,18 @@ describe("client gates after the 2026-11-02 freeze (join health, RAM, cores, sto
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("names core 17");
     expect(sys.spawned).toEqual([]);
+  });
+
+  it("on a platform other than Windows both cpu masks are refused before anything is written or spawned (B-167)", async () => {
+    sys.platform = "linux";
+    const t = addon();
+    const r = await startWithMasks(t, 2541);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe("cpuMask (serverCpuMask, clientCpuMask) works on Windows only");
+    expect(sys.spawned).toEqual([]);
+    expect(existsSync(join(MISSION_ROOT, "2541"))).toBe(false);
+    expect(cpuMasks("0x3000", "0x0C00", 16)).toBe("cpuMask (serverCpuMask, clientCpuMask) works on Windows only");
+    expect(cpuMasks(undefined, undefined, 16)).toBeUndefined();
   });
 
   it("a server that cannot be pinned is ended at once and no peer is started (B1)", async () => {

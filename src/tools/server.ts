@@ -14,7 +14,7 @@ import { findPids, killPids, limitProcess, spawnDetached, newestDir, sleep, serv
 import { fenced, runErrors } from "../utils/logwatch.js";
 import { INSTANCE_FILE, OWNER, scan, planStop, instanceTable, writeInstance, isUnder, type Entry } from "../utils/instances.js";
 import { procWatchLines } from "../watchdog/proc-watch.js";
-import { MISSION_ROOT, coreError, parseHexMask, watchStarted } from "./mission-server.js";
+import { MISSION_ROOT, coreError, parseHexMask, watchStarted, windowsOnly } from "./mission-server.js";
 
 const IS_WIN = process.platform === "win32";
 const SERVER_APP_ID = "1874900"; // Arma Reforger Dedicated Server (anonymous login)
@@ -201,7 +201,7 @@ export function registerServer(server: McpServer, config: Config): void {
         // Before server.json is written or anything is spawned.
         const pin = a.action === "start" && a.cpuMask !== undefined ? parseHexMask(a.cpuMask) : undefined;
         if (pin !== undefined) {
-          const bad = pin ? coreError("cpuMask", pin) : "cpuMask must be given as a hex mask, for example 0x3000";
+          const bad = windowsOnly("cpuMask") ?? (pin ? coreError("cpuMask", pin) : "cpuMask must be given as a hex mask, for example 0x3000");
           if (bad) return text(bad, true);
         }
 
@@ -279,7 +279,7 @@ export function registerServer(server: McpServer, config: Config): void {
           });
           watchStarted({ pid, kind: "server", instance, logsRoot: serverLogsDir(config) }, config);
           if (pin && !limitProcess(pid, pin)) {
-            // Only this server's PID: it would otherwise run on all cores next to the other lanes.
+            // Only this server's PID: it would otherwise run on all cores next to other servers and Workbench.
             killPids([pid], true, true);
             for (let i = 0; i < 20 && isAlive(pid); i++) await sleep(500);
             const gone = !isAlive(pid);

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { availableParallelism, freemem } from "node:os";
+import { availableParallelism, freemem, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { MCP_HOME, SERVER_DOWNLOAD_DIR, type Config } from "../config.js";
 import { findGproj, myGamesDir } from "../utils/game-paths.js";
@@ -93,6 +93,9 @@ export interface Run {
 /** A hex CPU mask ("0x3000") as a number, 0 when the text is not one. shortcut: 32-bit masks only, so no cores above 31. */
 export const parseHexMask = (v?: string) => (v && /^(0x)?[0-9a-f]{1,8}$/i.test(v) ? parseInt(v.replace(/^0x/i, ""), 16) : 0);
 
+/** The refusal for an option that only works on Windows (limitProcess pins nothing elsewhere), or undefined there. */
+export const windowsOnly = (what: string) => (platform() === "win32" ? undefined : `${what} works on Windows only`);
+
 /** The refusal for a mask that names a core this PC lacks, or undefined. Such a bit makes the pin fail (0x30000 on 16 cores). */
 export function coreError(name: string, m: number, cores = availableParallelism()): string | undefined {
   const top = 31 - Math.clz32(m);
@@ -105,6 +108,8 @@ export function coreError(name: string, m: number, cores = availableParallelism(
  */
 export function cpuMasks(server?: string, client?: string, cores = availableParallelism()): Run["cpu"] | string {
   if (server === undefined && client === undefined) return undefined;
+  const elsewhere = windowsOnly("cpuMask (serverCpuMask, clientCpuMask)");
+  if (elsewhere) return elsewhere;
   const s = parseHexMask(server);
   const c = parseHexMask(client);
   if (!s || !c) return "serverCpuMask and clientCpuMask must both be given as hex masks, for example 0x3000 and 0x0C00";
