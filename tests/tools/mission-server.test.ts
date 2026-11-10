@@ -83,6 +83,7 @@ vi.mock("../../src/utils/process.js", async (orig) => ({
 }));
 
 const { planRun, serverArgs, peerArgs, checkExtra, cpuMasks, joinMask, peerProblems, playersConnected, registerMissionServer, MISSION_ROOT, SETTLE_MS } = await import("../../src/tools/mission-server.js");
+import type { Run } from "../../src/tools/mission-server.js";
 const { SERVER_DOWNLOAD_DIR } = await import("../../src/config.js");
 const { PROC_WATCH_DIR } = await import("../../src/watchdog/proc-watch.js");
 const { INSTANCE_FILE, OWNER } = await import("../../src/utils/instances.js");
@@ -399,7 +400,7 @@ describe("client gates after the 2026-11-02 freeze (join health, RAM, cores, sto
   const FAIL = "01:23:09.071 ENGINE    (F): Application hangs (force crash) 305 s";
 
   /** A running server on `port` with `counted` players in its log, and peers (own, alive) whose logs were written ageSec ago. */
-  function run(port: number, counted: number, peers: { ageSec: number; log?: string }[], opts: { cpu?: { server: number; client: number }; serverLog?: string } = {}) {
+  function run(port: number, counted: number, peers: { ageSec: number; log?: string }[], opts: { cpu?: Run["cpu"]; serverLog?: string } = {}) {
     const t = addon();
     const dir = join(MISSION_ROOT, String(port));
     const serverDir = join(dir, "server");
