@@ -107,7 +107,7 @@ Added since that test pass:
   tools, off by default and read-only except `mission_git fetch`, which updates git's remote refs, described under
   [COALITION missions](#coalition-missions-optional).
 
-Run the test suite with `npx vitest run`. At the time of writing 2253 tests pass, 15 are skipped and none fail.
+Run the test suite with `npx vitest run`. At the time of writing 2253 tests pass, 15 are skipped and none fail (in Git Bash).
 
 ## Requirements
 
@@ -503,8 +503,7 @@ Open bugs you can hit today, with what to do where a way is known.
   them with `wb_handlers install` (with the owner's OK) and restart Workbench.
 - If `wb_layers create` works in a world that `wb_save` refuses to save (a packed world, or one in the game or Tools
   folders), the world stays marked unsaved: `.ent` opens and `wb_close` with `save=false` keep being refused. Restart
-  Workbench. If this MCP started it, `wb_close` with `force=true` works too, and so does the default `wb_close` when
-  no other Workbench is running.
+  Workbench. If this MCP started it, `wb_close` with `save=false` and `force=true` also closes it, without saving.
 - `wb_close` with the default `save=true`, on a world that `wb_save` would refuse (play mode, unnamed world, prefab
   edit mode), closes Workbench without saving and the unsaved-world check does not run; the reply says nothing was
   saved. In play mode run `wb_stop` first; otherwise save in Workbench by hand before closing.
