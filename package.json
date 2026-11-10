@@ -1,6 +1,6 @@
 {
   "name": "enfusion-mcp-syykont",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "type": "module",
   "description": "MCP server for Arma Reforger 1.9 modding: API + game data knowledge, headless compile/pack, game & dedicated server control, economy/config overrides",
   "bin": {
