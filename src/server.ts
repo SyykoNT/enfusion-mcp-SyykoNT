@@ -57,6 +57,7 @@ import { registerResourceResolve } from "./tools/resource-resolve.js";
 import { registerGameDuplicate } from "./tools/game-duplicate.js";
 import { registerWbEntityDuplicate } from "./tools/wb-entity-duplicate.js";
 import { registerWorkshopInfo } from "./tools/workshop-info.js";
+import { registerWorkshopPublish } from "./tools/workshop-publish.js";
 import { registerAddonDeps } from "./tools/addon-deps.js";
 import { registerAddonGitGuard } from "./tools/addon-git-guard.js";
 import { registerReleaseAudit } from "./tools/release-audit.js";
@@ -144,6 +145,7 @@ export function registerTools(server: McpServer, config: Config): void {
   registerGameDuplicate(server, config, wbClient);
   registerWbEntityDuplicate(server, config, wbClient);
   registerWorkshopInfo(server, config);
+  registerWorkshopPublish(server, config);
   registerAddonDeps(server, config);
   registerAddonGitGuard(server, config);
   registerReleaseAudit(server, config);
