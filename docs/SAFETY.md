@@ -76,7 +76,7 @@ What the server will and will not touch, and what it does on its own.
   are: Ignore on the diag build's "Resources are leaking!" assert (`dismissLeakAssert=never` turns it off); answers
   to "Script Authorization Required" by `ENFUSION_SCRIPT_AUTH` (`authorizeScripts=never` turns it off for one watch),
   by pressing Yes, No or, in `all` mode, Yes to All with UI Automation, never `No to All` and never
-  `-scriptAuthorizeAll`; and, after a crash of a Workbench it watches, copying that run's log files to
+  `-scriptAuthorizeAll`; only when set, Yes on the "modified outside, reload?" box (`ENFUSION_RELOAD_PROMPT=yes`) and No on the "save changes?" box (`ENFUSION_SAVE_PROMPT=no`), both off by default and pressed with BM_CLICK after a fresh read of the box; and, after a crash of a Workbench it watches, copying that run's log files to
   `ENFUSION_CRASH_LOGS_DIR` and ending that Workbench's own CrashReporter without sending a report (only when the Workbench's start time is known; otherwise it is left running and the report says so). Every action is
   reported. After an answer in a Workbench that loaded CRF or COALITION-Lobby, the report adds the `git status` and
   the diff stat of the gear list in those clones; nothing is restored.

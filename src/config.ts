@@ -55,6 +55,10 @@ export interface Config {
   coalitionTools?: boolean;
   /** How the watchdog answers "Script Authorization Required": rules (default), all (Yes to All) or off. Set via ENFUSION_SCRIPT_AUTH. */
   scriptAuth?: AuthMode;
+  /** "yes": the watchdog presses Yes on Workbench's "modified outside, reload?" box. Anything else (default): left open. ENFUSION_RELOAD_PROMPT. */
+  reloadPrompt?: "yes" | "off";
+  /** "no": the watchdog presses No on Workbench's "save changes?" box (unsaved editor changes are lost). Default off. ENFUSION_SAVE_PROMPT. */
+  savePrompt?: "no" | "off";
   /** Where the log files of a crashed Workbench are copied. Set via ENFUSION_CRASH_LOGS_DIR; default: "Workbench Crash Logs" beside the Workbench profile folder. */
   crashLogsDir?: string;
   /** Attach a watcher by itself to the Workbench on the NET API port, whoever started it. On unless ENFUSION_WB_AUTOWATCH is off; set only by loadConfig. */
@@ -203,6 +207,10 @@ export function loadConfig(): Config {
     authWarned = true;
     logger.warn(`ENFUSION_SCRIPT_AUTH "${auth.invalid}" is not rules, all or off; using rules.`);
   }
+  // Opt-in prompt answers: only the exact word turns one on; anything else leaves the box open for a person.
+  const word = (v: unknown) => (typeof v === "string" ? v.trim().toLowerCase() : "");
+  config.reloadPrompt = word(process.env.ENFUSION_RELOAD_PROMPT || config.reloadPrompt) === "yes" ? "yes" : "off";
+  config.savePrompt = word(process.env.ENFUSION_SAVE_PROMPT || config.savePrompt) === "no" ? "no" : "off";
   if (process.env.ENFUSION_CRASH_LOGS_DIR) config.crashLogsDir = process.env.ENFUSION_CRASH_LOGS_DIR;
   // Same rule for the file and the variable; an unknown value is off, with one warning per process.
   const autoWatch = parseAutoWatch(process.env.ENFUSION_WB_AUTOWATCH || config.autoWatch);
