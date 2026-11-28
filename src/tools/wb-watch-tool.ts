@@ -88,10 +88,7 @@ export async function watchAction(a: WatchArgs, d: WatchToolDeps, o: { auto?: bo
     }
     const now = Date.now();
     const { shown, hidden } = recentStates(states);
-    const reports = shown.map((s) => {
-      const gone = s.state !== "exited" && s.state !== "crashed" && !d.alive(s.watcherPid);
-      return formatReport(s, now) + (gone ? `\n  (watcher not running; last report ${hms(s.updated)})` : "");
-    });
+    const reports = shown.map((s) => formatReport(s, now, d.alive));
     return { text: [...reports, ...(hidden ? [olderLine(hidden)] : []), ...errors].join("\n\n") };
   }
   if (!a.pid) return fail(`pid is required for ${a.action}.`);

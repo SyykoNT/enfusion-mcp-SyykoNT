@@ -3,7 +3,7 @@ import { z } from "zod";
 import { basename, dirname, join, resolve } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import type { Config } from "../config.js";
-import { ADDONS_DIRS_NOT_APPLIED, WORLD_STALE, handlerGitState, type WorkbenchClient } from "../workbench/client.js";
+import { ADDONS_DIRS_NOT_APPLIED, WORLD_STALE, WORLD_STALE_TOOLS, handlerGitState, type WorkbenchClient } from "../workbench/client.js";
 import { addonsDirsError } from "../workbench/cli.js";
 import { formatConnectionStatus } from "../workbench/status.js";
 import { findPids, killPids, sleep } from "../utils/process.js";
@@ -84,6 +84,8 @@ export function registerWbLaunch(
           config.launchedGproj = undefined; // a fresh launch of the default addon
         }
 
+        // "Ready" needs it too: ensureRunning may find the marked Workbench answering after the first ping failed.
+        const tools = (await client.worldStaleLine("EMCP_WB_GetState", {})) ? WORLD_STALE_TOOLS : "All `wb_*` tools are available.";
         if (who) {
           const notOpened = worldPath
             ? `\n\nworldPath was not opened: a running Workbench does not switch worlds here. Open it with **wb_open_resource**, or close Workbench and launch again.`
@@ -93,7 +95,7 @@ export function registerWbLaunch(
             content: [
               {
                 type: "text" as const,
-                text: `**Workbench Already Running**: NET API is responding. All \`wb_*\` tools are available.\n\n${who.line}${notOpened}${notApplied}${formatConnectionStatus(client)}`,
+                text: `**Workbench Already Running**: NET API is responding. ${tools}\n\n${who.line}${notOpened}${notApplied}${formatConnectionStatus(client)}`,
               },
             ],
           };
@@ -116,7 +118,7 @@ export function registerWbLaunch(
           content: [
             {
               type: "text" as const,
-              text: `**Workbench Ready**: launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. All \`wb_*\` tools are available.${world}${note}${gitNote ? `\n\n${gitNote}` : ""}${formatConnectionStatus(client)}`,
+              text: `**Workbench Ready**: launched, ${isProtected ? "handler scripts present" : "handler scripts installed"}, NET API responding. ${tools}${world}${note}${gitNote ? `\n\n${gitNote}` : ""}${formatConnectionStatus(client)}`,
             },
           ],
         };

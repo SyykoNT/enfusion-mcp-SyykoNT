@@ -121,3 +121,27 @@ describe("wb_launch with a Workbench that already answers the port", () => {
     }
   });
 });
+
+describe("wb_launch after a refused open (B-189)", () => {
+  const STALE = "Tools that read World Editor state are refused: a refused open left the world unstable. Open a world with wb_open_resource (a .ent) or restart Workbench.";
+
+  /** A client marked stale by a real refused open; rawCall and netstat are stubbed, so nothing is sent or queried. */
+  async function staleClient() {
+    const client = new WorkbenchClient("127.0.0.1", 5775);
+    client.worldProbe = { netstat: async () => "  TCP    0.0.0.0:5775    0.0.0.0:0    LISTENING    4321\r\n", titles: async () => ({ wins: [] }) };
+    client.ownerProbe = { platform: "win32", proc: async () => undefined, owned: () => false };
+    vi.spyOn(client as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockResolvedValue({ status: "error", message: "Workbench could not open: X.et" });
+    await expect(client.call("EMCP_WB_EditorControl", { action: "openResource", path: "X.et" })).rejects.toThrow("Workbench could not open");
+    vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined);
+    return client;
+  }
+
+  it.each([["Already Running", true], ["Ready", false]])("the %s reply says the stale line, not that all tools are available", async (title, answers) => {
+    const client = await staleClient();
+    client.ping = async () => answers; // false then a stubbed ensureRunning: the same Workbench answered only the second ping
+    const text = (await launchTool({} as Config, client)({})).content[0].text;
+    expect(text).toContain("**Workbench " + title + "**");
+    expect(text).not.toContain("tools are available");
+    expect(text).toContain(STALE);
+  });
+});

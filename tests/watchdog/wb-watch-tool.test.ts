@@ -187,12 +187,12 @@ describe("status line and reports", () => {
     writeFileSync(join(d.stateDir, "19524.json"), JSON.stringify(st("busy", { watcherPid: 999999 })));
     writeFileSync(join(d.stateDir, "1.json"), "{broken");
     const text = (await watchAction({ action: "status" }, d)).text;
-    expect(text).toContain("watcher not running; last report 09:32:58");
+    expect(text).toContain("WATCHER DEAD (last state BUSY at 09:32:58)");
     expect(text).toMatch(/watch state unreadable: .*1\.json/);
   });
 
   it("status lists live watchers and the newest finished ones, then counts the older finished ones", async () => {
-    const d = deps();
+    const d = deps({ alive: (pid) => pid === process.pid });
     const put = (pid: number, state: WatchState["state"], updated: number) => writeFileSync(join(d.stateDir, pid + ".json"), JSON.stringify(st(state, { pid, updated })));
     put(100, "ok", at("01:00:00.000")); // the oldest file, but still running
     for (let i = 0; i < 5; i++) put(200 + i, "exited", at("0" + (2 + i) + ":00:00.000"));
@@ -394,5 +394,22 @@ describe("wb_watch start as registered: the profile roots reach the watcher", ()
     const roots = args.flatMap((a, i) => (a === "--settings-root" ? [args[i + 1]] : []));
     expect(roots).toEqual(profileRoots(config));
     expect(roots[0]).toBe(dirname(config.workshopPath!));
+  });
+});
+
+describe("the watcher listing (B-190)", () => {
+  const now = at("12:01:00.000");
+  const st = (state: WatchState["state"]): WatchState => ({
+    pid: 19524, watcherPid: 600, owned: false, state, since: at("09:00:00.000"), lastLines: [], actions: [],
+    dismiss: "watched", autoRecover: false, updated: at("09:32:58.000"),
+  });
+
+  it.each([["ok", "OK"], ["busy", "BUSY"]] as const)("a dead watcher's %s state is shown as dead, with whether the Workbench PID runs", (state, label) => {
+    for (const [running, said] of [[true, "is running"], [false, "is not running"]] as const) {
+      const r = formatReport(st(state), now, (pid) => pid === 19524 && running);
+      expect(r.split("\n")[0]).toBe("Workbench PID 19524 (not owned): WATCHER DEAD (last state " + label + " at 09:32:58)");
+      expect(r).toContain("watcher PID 600 is not running; a process with Workbench PID 19524 " + said + ".");
+    }
+    expect(formatReport(st(state), now, () => true)).toBe("Workbench PID 19524 (not owned): " + label + " since 09:00:00 (3 h 1 min)\n  actions: none (dismissLeakAssert = watched)");
   });
 });

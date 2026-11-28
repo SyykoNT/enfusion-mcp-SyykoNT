@@ -224,6 +224,10 @@ export const WORLD_STALE =
   "Refused: a refused open left the world in this Workbench in a state where this call can crash Workbench. " +
   "Open a world with wb_open_resource (a .ent) or restart Workbench first. Nothing was sent.";
 
+/** What wb_diagnose and wb_launch say in place of "all tools are available" while the world is stale. */
+export const WORLD_STALE_TOOLS =
+  "Tools that read World Editor state are refused: a refused open left the world unstable. Open a world with wb_open_resource (a .ent) or restart Workbench.";
+
 /** What play and close say about a layer this MCP created: a warning, since only a .ent or .gproj open raises a prompt for it (live check, 1.9.0.37). */
 const LAYER_NOTE = "A layer this MCP created is not saved yet and is dropped unless wb_save runs first.";
 

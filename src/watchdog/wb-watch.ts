@@ -745,9 +745,15 @@ const LABEL: Record<WatchStateName, string> = {
 };
 
 /** Full report for wb_watch status and wb_diagnose. */
-export function formatReport(s: WatchState, now = Date.now()): string {
+export function formatReport(s: WatchState, now = Date.now(), alive = isAlive): string {
   const who = `${s.owned ? "owned" : "not owned"}${s.auto ? ", attached automatically" : ""}`;
-  const lines = [`Workbench PID ${s.pid} (${who}): ${LABEL[s.state]}${s.kind ? ` (${s.kind})` : ""} since ${hms(s.since)} (${dur(now - s.since)})`];
+  const state = `${LABEL[s.state]}${s.kind ? ` (${s.kind})` : ""}`;
+  const dead = s.state !== "exited" && s.state !== "crashed" && !alive(s.watcherPid);
+  const lines = [
+    `Workbench PID ${s.pid} (${who}): ` +
+      (dead ? `WATCHER DEAD (last state ${state} at ${hms(s.updated)})` : `${state} since ${hms(s.since)} (${dur(now - s.since)})`),
+  ];
+  if (dead) lines.push(`  watcher PID ${s.watcherPid} is not running; a process with Workbench PID ${s.pid} ${alive(s.pid) ? "is running" : "is not running"}. The lines below are its last report.`);
   if (s.dialog) lines.push(`  dialog: "${s.dialog.title}" ${s.dialog.text ? `"${s.dialog.text}"` : ""}`.trimEnd());
   if (s.crash?.reason) lines.push(`  crash.log: ${s.crash.reason}${s.crash.line ? ` (line ${s.crash.line})` : ""}`);
   if (s.reloadOpenSince) lines.push(`  open operation: script reload started ${hms(s.reloadOpenSince)}, not finished`);

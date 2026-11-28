@@ -85,7 +85,7 @@ describe("wb_diagnose", () => {
   it("lists exited watchers only for the newest few and counts the rest; live ones always", async () => {
     const watchDir = temp("emcp-diag-watch-");
     const put = (pid: number, state: string, updated: number) =>
-      writeFileSync(join(watchDir, `${pid}.json`), JSON.stringify({ pid, watcherPid: 1, owned: false, state, since: updated, lastLines: [], actions: [], dismiss: "watched", autoRecover: false, updated }));
+      writeFileSync(join(watchDir, `${pid}.json`), JSON.stringify({ pid, watcherPid: process.pid, owned: false, state, since: updated, lastLines: [], actions: [], dismiss: "watched", autoRecover: false, updated }));
     put(100, "ok", 1000);
     for (let i = 0; i < 25; i++) put(200 + i, "exited", 2000 + i);
     const text = await run([], watchDir);
