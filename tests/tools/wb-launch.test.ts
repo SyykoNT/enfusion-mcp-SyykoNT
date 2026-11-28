@@ -29,7 +29,7 @@ function launchTool(config: Config, client: InstanceType<typeof WorkbenchClient>
 describe("wb_launch", () => {
   it("leaves defaultMod alone when the launch is refused", async () => {
     const config = { defaultMod: "TestAddon" } as Config;
-    const client = new WorkbenchClient("127.0.0.1", 1);
+    const client = new WorkbenchClient("127.0.0.1", 5775);
     client.ping = async () => false;
     client.ensureRunning = async () => { throw new WorkbenchError("Refused: protected", "LAUNCH_FAILED"); };
     const tools: Record<string, (a: Record<string, unknown>) => Promise<{ isError?: boolean }>> = {};
@@ -42,7 +42,7 @@ describe("wb_launch", () => {
 
 describe("wb_launch reply after handlers were refreshed", () => {
   it("carries the line that names the replaced and added files", async () => {
-    const client = new WorkbenchClient("127.0.0.1", 1);
+    const client = new WorkbenchClient("127.0.0.1", 5775);
     client.ping = async () => false;
     const note = "Handler scripts in X refreshed from this MCP version: replaced EMCP_WB_Clipboard.c; added EMCP_WB_Components.c.";
     client.ensureRunning = async () => note;
@@ -119,5 +119,19 @@ describe("wb_launch with a Workbench that already answers the port", () => {
       expect(r.content[0].text, why).toContain("project unknown");
       expect(netstat.mock.calls.length, why).toBe(runsNetstat ? 1 : 0);
     }
+  });
+});
+
+describe("wb_launch with a NET API port other than 5775", () => {
+  it("refuses to start Workbench and names the launcher", async () => {
+    const client = new WorkbenchClient("127.0.0.1", 5776);
+    client.ping = async () => false;
+    let started = false;
+    client.ensureRunning = async () => { started = true; return undefined; };
+    const r = await launchTool({} as Config, client)({ gprojPath: join(home, "A", "addon.gproj") });
+    expect(r.isError).toBe(true);
+    expect(started).toBe(false);
+    expect(r.content[0].text).toContain("5776");
+    expect(r.content[0].text).toContain("tools/wb-launch/wb-launch.ps1");
   });
 });

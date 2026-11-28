@@ -64,7 +64,7 @@ function setup(protectedAddons = [BASE_GUID, DEP_GUID]) {
   const junction = join(mission, "DepAddon");
   symlinkSync(dep, junction, "junction");
   const config = { projectPath: projects, workbenchPath: join(root, "tools"), protectedAddons } as Config;
-  const client = new WorkbenchClient("127.0.0.1", 1, config);
+  const client = new WorkbenchClient("127.0.0.1", 5775, config);
   client.worldProbe.netstat = async () => ""; // no real netstat
   const tools: Record<string, (a: Record<string, unknown>) => Promise<Result>> = {};
   registerWbLaunch({ registerTool: (n: string, _d: unknown, h: (a: Record<string, unknown>) => Promise<Result>) => { tools[n] = h; } } as unknown as McpServer, config, client);

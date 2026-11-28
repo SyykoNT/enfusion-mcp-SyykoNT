@@ -134,6 +134,38 @@ function loadJsonFile(path: string): Partial<Config> {
   return {};
 }
 
+/** Parse the content of a .wb-port file: one port number, nothing else. */
+export function parseWbPort(text: string): number | undefined {
+  const t = text.trim();
+  if (!/^\d+$/.test(t)) return undefined;
+  const port = parseInt(t, 10);
+  return port > 0 && port < 65536 ? port : undefined;
+}
+
+/**
+ * Find the first `.wb-port` file in each start directory or its parents, in order.
+ * The first file found decides, even when its content is invalid (then no port).
+ */
+export function findWbPortFile(startDirs: string[]): { port: number; file: string } | undefined {
+  for (const start of startDirs) {
+    if (!start) continue;
+    let dir = resolve(start);
+    for (let i = 0; i < 12; i++) {
+      const file = join(dir, ".wb-port");
+      if (existsSync(file)) {
+        let port: number | undefined;
+        try { port = parseWbPort(readFileSync(file, "utf-8")); } catch { /* unreadable: no port */ }
+        if (port === undefined) logger.warn(`Ignoring ${file}: not a port number`);
+        return port === undefined ? undefined : { port, file };
+      }
+      const up = dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+  }
+  return undefined;
+}
+
 export function loadConfig(): Config {
   // 1. Start with defaults
   const config = { ...DEFAULTS };
@@ -144,11 +176,13 @@ export function loadConfig(): Config {
     "..",
     "enfusion-mcp.config.json"
   );
-  Object.assign(config, loadJsonFile(localConfigPath));
+  const localJson = loadJsonFile(localConfigPath);
+  Object.assign(config, localJson);
 
   // 3. User home config
   const homeConfigPath = resolve(homedir(), ".enfusion-mcp", "config.json");
-  Object.assign(config, loadJsonFile(homeConfigPath));
+  const homeJson = loadJsonFile(homeConfigPath);
+  Object.assign(config, homeJson);
 
   // 4. Environment variables override everything
   if (process.env.ENFUSION_WORKBENCH_PATH) {
@@ -175,6 +209,13 @@ export function loadConfig(): Config {
     const port = parseInt(process.env.ENFUSION_WORKBENCH_PORT, 10);
     if (!isNaN(port) && port > 0 && port < 65536) {
       config.workbenchPort = port;
+    }
+  } else if (!("workbenchPort" in localJson) && !("workbenchPort" in homeJson)) {
+    // No port set explicitly: a per-project .wb-port file may name one.
+    const found = findWbPortFile([config.projectPath, process.cwd()]);
+    if (found) {
+      config.workbenchPort = found.port;
+      logger.info(`Workbench port ${found.port} from ${found.file}`);
     }
   }
   if (process.env.ENFUSION_SERVER_PATH) config.serverPath = process.env.ENFUSION_SERVER_PATH;

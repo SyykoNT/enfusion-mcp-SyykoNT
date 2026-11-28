@@ -60,6 +60,7 @@ describe("wb_launch worldPath", () => {
   it("passes worldPath to the launch and asks the caller to confirm with wb_state", async () => {
     const { addon, config, client } = setup();
     const gproj = join(addon("TestAddon", "1111111111111111"), "addon.gproj");
+    Object.defineProperty(client, "port", { value: 5775 }); // the default port: wb_launch refuses to start Workbench on any other
     vi.spyOn(client, "ping").mockResolvedValue(false);
     const launch = vi.spyOn(client, "ensureRunning").mockResolvedValue(undefined); // never starts a real Workbench
     const r = await wbTools(config, client).wb_launch({ gprojPath: gproj, worldPath: "worlds/Test.ent" });

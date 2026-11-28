@@ -41,4 +41,25 @@ sets one up), writes there are refused (see [COALITION missions](COALITION.md)).
 | `ENFUSION_WB_AUTOWATCH` | `autoWatch` | On. Any live call attaches a watcher by itself to the Workbench on the NET API port of this PC, whoever started it. `off`, `0`, `false` or `no` (any case) turns that off; `on`, `1`, `true` and `yes` keep it on. Any other value is off, with one warning in the log |
 | `ENFUSION_MCP_DEBUG` | | Any value turns on debug logging (stderr) |
 
+### Per-project Workbench port (`.wb-port`)
+
+To run several Workbenches side by side, each project can name its NET API port in a `.wb-port`
+file holding only the port number (for example `5776`). At startup the server looks for that file
+in the `ENFUSION_PROJECT_PATH` folder and its parents, then in its working directory (the folder the
+MCP client opened) and its parents. The first file found decides; an invalid one is ignored with a
+warning and the port stays `5775`.
+
+Precedence, highest first:
+
+1. `ENFUSION_WORKBENCH_PORT`
+2. `workbenchPort` in `enfusion-mcp.config.json` or `~/.enfusion-mcp/config.json`
+3. `.wb-port`
+4. the default `5775`
+
+Workbench reads its port from the registry (`NetAPI_Port`) only when it starts, so a Workbench that
+`wb_launch` starts would listen on `5775`. With any other port, `wb_launch` therefore refuses to
+start Workbench when nothing answers on that port. Start it with a launcher that sets the registry
+value first, such as `tools/wb-launch/wb-launch.ps1` in finesthourdemo/fh-claude, then call
+`wb_launch` again: it attaches to the running Workbench.
+
 The COALITION tools also read `ENFUSION_PYTHON`; see [COALITION missions](COALITION.md).
