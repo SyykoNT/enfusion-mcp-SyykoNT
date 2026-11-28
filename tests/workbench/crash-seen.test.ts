@@ -16,7 +16,7 @@ const LOGS = "C:\\logs\\logs_2026-11-10_09-08-52";
 const CRASHED = (who: string, logs = ` crash logs are in ${LOGS}`) =>
   `Workbench appears to have crashed: ${who};${logs}. Tell the user before starting Workbench again.`;
 
-type Probes = { reporters?: () => Promise<number[]>; netstat?: () => Promise<string>; logs?: () => string | undefined; live?: number[] };
+type Probes = { reporters?: () => Promise<number[]>; netstat?: () => Promise<string>; logs?: () => string | undefined; live?: number[]; alive?: (pid: number) => boolean };
 
 /** A client whose call fails with `fail` and whose every probe is stubbed. */
 function setup(fail: WorkbenchError, p: Probes = {}, host = "127.0.0.1", config?: Config) {
@@ -24,7 +24,7 @@ function setup(fail: WorkbenchError, p: Probes = {}, host = "127.0.0.1", config?
   (c as unknown as { rawCall: () => Promise<never> }).rawCall = () => Promise.reject(fail);
   c.dialogProbe = async () => [];
   c.worldProbe.netstat = p.netstat ?? (async () => "");
-  c.crashProbe = { reporters: p.reporters ?? (async () => []), logs: p.logs ?? (() => undefined) };
+  c.crashProbe = { reporters: p.reporters ?? (async () => []), logs: p.logs ?? (() => undefined), alive: p.alive ?? (() => false) };
   vi.mocked(findPids).mockReturnValue(p.live ?? []);
   return c;
 }
@@ -38,14 +38,38 @@ describe("a failed call with no live Workbench says it appears to have crashed",
   it("names the CrashReporter, the port and the newest logs folder", async () => {
     const err = await msg(setup(timeout(), { reporters: async () => [49736], netstat: async () => LISTEN(19664), logs: () => LOGS }));
     expect(err.code).toBe("TIMEOUT");
-    expect(err.message).toBe([timeout().message, CRASHED("CrashReporter PID 49736 holds port 5775")].join("\n"));
+    expect(err.message).toBe([timeout().message, CRASHED("CrashReporter PID 49736 is running; port 5775 is still listed for PID 19664")].join("\n"));
   });
 
-  it("leaves out the part it could not find", async () => {
+  it("says only that the CrashReporter runs when nothing is listed", async () => {
     expect((await msg(setup(timeout(), { reporters: async () => [49736] }))).message).toContain(
       "Workbench appears to have crashed: CrashReporter PID 49736 is running. Tell the user"
     );
-    expect((await msg(setup(timeout(), { netstat: async () => LISTEN(19664), logs: () => LOGS }))).message).toContain(CRASHED("PID 19664 holds port 5775"));
+  });
+
+  it("says the port is still listed for a PID that is no longer running", async () => {
+    const alive = vi.fn(() => false);
+    const err = await msg(setup(timeout(), { netstat: async () => LISTEN(19664), logs: () => LOGS, alive }));
+    expect(err.message).toBe([timeout().message, CRASHED("port 5775 is still listed for PID 19664, which is no longer running")].join("\n"));
+    expect(alive).toHaveBeenCalledWith(19664);
+  });
+
+  it("a live process on the port with no CrashReporter is named as not a Workbench, not as a crash", async () => {
+    const err = await msg(setup(timeout(), { netstat: async () => LISTEN(19664), logs: () => LOGS, alive: () => true }));
+    expect(err.message).toBe([timeout().message, "Port 5775 is held by PID 19664, a running process that is not a Workbench."].join("\n"));
+  });
+
+  it("a CrashReporter with a live PID on the port is still a crash line", async () => {
+    const err = await msg(setup(timeout(), { reporters: async () => [49736], netstat: async () => LISTEN(19664), alive: () => true }));
+    expect(err.message).toContain("Workbench appears to have crashed: CrashReporter PID 49736 is running; port 5775 is still listed for PID 19664. Tell the user");
+  });
+
+  it("a logs read that throws drops only the logs part", async () => {
+    const err = await msg(setup(timeout(), { reporters: async () => [49736], netstat: async () => LISTEN(19664), logs: () => { throw new Error("no folder"); } }));
+    expect(err.code).toBe("TIMEOUT");
+    expect(err.message).toBe(
+      [timeout().message, "Workbench appears to have crashed: CrashReporter PID 49736 is running; port 5775 is still listed for PID 19664. Tell the user before starting Workbench again."].join("\n")
+    );
   });
 
   it("adds nothing when no CrashReporter runs and the port is free", async () => {
@@ -76,11 +100,8 @@ describe("a failed call with no live Workbench says it appears to have crashed",
     const all = await msg(setup(timeout(), { reporters: boom, netstat: boom }));
     expect(all.code).toBe("TIMEOUT");
     expect(all.message).toBe(timeout().message);
-    const logs = await msg(setup(timeout(), { reporters: async () => [1], logs: () => { throw new Error("no folder"); } }));
-    expect(logs.code).toBe("TIMEOUT");
-    expect(logs.message).toContain("timed out after 10000ms");
     // one failing probe leaves the other one's finding
-    expect((await msg(setup(timeout(), { reporters: boom, netstat: async () => LISTEN(19664) }))).message).toContain("PID 19664 holds port 5775");
+    expect((await msg(setup(timeout(), { reporters: boom, netstat: async () => LISTEN(19664) }))).message).toContain("port 5775 is still listed for PID 19664");
     expect((await msg(setup(timeout(), { reporters: async () => [49736], netstat: boom }))).message).toContain("CrashReporter PID 49736 is running");
   });
 
@@ -94,7 +115,7 @@ describe("a failed call with no live Workbench says it appears to have crashed",
   it("a connection reset gets the line; a reset with nothing found, or a live Workbench, is unchanged", async () => {
     const err = await msg(setup(reset(), { reporters: async () => [49736], netstat: async () => LISTEN(19664), logs: () => LOGS }));
     expect(err.code).toBe("PROTOCOL_ERROR");
-    expect(err.message).toBe([reset().message, CRASHED("CrashReporter PID 49736 holds port 5775")].join("\n"));
+    expect(err.message).toBe([reset().message, CRASHED("CrashReporter PID 49736 is running; port 5775 is still listed for PID 19664")].join("\n"));
     expect((await msg(setup(reset()))).message).toBe(reset().message);
     expect((await msg(setup(reset(), { reporters: async () => [1], live: [4242] }))).message).toBe(reset().message);
   });
@@ -152,10 +173,17 @@ describe("the logs folder the line names", () => {
     vi.unstubAllEnvs();
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
-  const profile = (...logFolders: string[]) => {
+  const temp = () => {
     const root = mkdtempSync(join(tmpdir(), "emcp-crash-"));
     dirs.push(root);
     vi.stubEnv("ENFUSION_WORKBENCH_PROFILE", root);
+    // The profile lookup falls back to "My Games" under the home folder: keep that off the real one.
+    vi.stubEnv("USERPROFILE", root);
+    vi.stubEnv("HOME", root);
+    return root;
+  };
+  const profile = (...logFolders: string[]) => {
+    const root = temp();
     mkdirSync(join(root, "logs"), { recursive: true });
     logFolders.forEach((f, i) => {
       mkdirSync(join(root, "logs", f));
@@ -172,6 +200,11 @@ describe("the logs folder the line names", () => {
   it("is the logs root when it holds no folder", () => {
     const { root, client } = profile();
     expect(client.crashProbe.logs()).toBe(join(root, "logs"));
+  });
+
+  it("is nothing when the profile has no logs folder", () => {
+    const root = temp();
+    expect(new WorkbenchClient("127.0.0.1", PORT, { projectPath: join(root, "proj") } as Config).crashProbe.logs()).toBeUndefined();
   });
 
   it("is nothing without a config", () => {

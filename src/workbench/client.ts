@@ -255,7 +255,7 @@ export class WorkbenchClient {
   /** Free memory in bytes before a GUI launch. Public so tests can set it. */
   freeMemory: () => number = () => freemem();
   /** What crashNote reads besides worldProbe.netstat and findPids. Public so tests can stub it: the real ones run PowerShell and read the logs folder. */
-  crashProbe = {
+  crashProbe: { reporters: () => Promise<number[]>; logs: () => string | undefined; alive?: (pid: number) => boolean } = {
     reporters: async (): Promise<number[]> => crashReporters().map((p) => p.pid),
     logs: (): string | undefined => {
       if (!this.config) return undefined;
@@ -532,8 +532,9 @@ export class WorkbenchClient {
 
   /**
    * After a failed call with no live Workbench: the line saying it appears to have crashed, or "" when nothing points to a crash.
-   * A CrashReporter running, or the port still listed, counts: CrashReporter inherits the dead Workbench's socket, so the connect
-   * succeeds and the call times out instead of being refused. Only reads; never throws, so the original error stays.
+   * A CrashReporter running, or the port still listed for a dead PID, counts: CrashReporter inherits the dead Workbench's socket, so
+   * the connect succeeds and the call times out instead of being refused. A live PID on the port with no CrashReporter is another
+   * program, which the line says instead. Only reads; never throws, so the original error stays.
    */
   private async crashNote(running: number[]): Promise<string> {
     if (running.length || !LOCAL_HOSTS.includes(this.host.toLowerCase())) return "";
@@ -542,11 +543,20 @@ export class WorkbenchClient {
         this.crashProbe.reporters().catch((): number[] => []),
         this.worldProbe.netstat().then((out) => portOwner(out, this.port), () => undefined),
       ]);
-      if (!reporters.length && !owner) return "";
+      if (!reporters.length) {
+        if (!owner) return "";
+        if ((this.crashProbe.alive ?? isAlive)(owner)) return `Port ${this.port} is held by PID ${owner}, a running process that is not a Workbench.`;
+      }
+      const listed = owner ? `port ${this.port} is still listed for PID ${owner}` : "";
       const who = reporters.length
-        ? `CrashReporter PID ${reporters.join(", ")}${owner ? ` holds port ${this.port}` : " is running"}`
-        : `PID ${owner} holds port ${this.port}`;
-      const logs = this.crashProbe.logs();
+        ? [`CrashReporter PID ${reporters.join(", ")} is running`, listed].filter(Boolean).join("; ")
+        : `${listed}, which is no longer running`;
+      let logs: string | undefined;
+      try {
+        logs = this.crashProbe.logs();
+      } catch {
+        // only the logs part is left out
+      }
       return `Workbench appears to have crashed: ${who}${logs ? `; crash logs are in ${logs}` : ""}. Tell the user before starting Workbench again.`;
     } catch {
       return "";

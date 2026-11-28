@@ -1,9 +1,11 @@
 import { afterAll, describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WorkbenchClient } from "../../src/workbench/client.js";
+import { WATCH_DIR } from "../../src/watchdog/wb-watch.js";
 import type { TitleProbe } from "../../src/watchdog/probe.js";
 import { registerWbEditorTools } from "../../src/tools/wb-editor.js";
 import { registerWbLayers } from "../../src/tools/wb-layers.js";
@@ -13,6 +15,17 @@ import type { Config } from "../../src/config.js";
 // A layer the MCP creates does not put * in the World Editor title, so the client remembers it until a wb_save call succeeds.
 // Workbench 1.9.0.37 asks "Loading world" for it on a .ent open but not on play or exit, so an open refuses and play warns.
 // Nothing here runs netstat or PowerShell or reads a window: worldProbe and rawCall are stubbed on every client.
+
+// The footer reads WATCH_DIR, which is fixed from the home folder when the module loads: a fake home before any import keeps
+// the watch state of a real watched Workbench on this PC out of the replies.
+const home = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const h = fs.mkdtempSync(path.join(os.tmpdir(), "emcp-mark-home-"));
+  process.env.USERPROFILE = process.env.HOME = h;
+  return h;
+});
 
 type Result = { content: { text: string }[]; isError?: boolean };
 type Handler = (args: Record<string, unknown>) => Promise<Result>;
@@ -24,7 +37,9 @@ const CLEAN = { cls: "Qt683QWindowIcon", text: "World Editor - MCPParity/Worlds/
 const dir = mkdtempSync(join(tmpdir(), "emcp-mark-"));
 const WORLD = join(dir, "W.ent");
 writeFileSync(WORLD, "x");
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  for (const d of [dir, home]) rmSync(d, { recursive: true, force: true });
+});
 
 const OPEN_PATH = "Worlds/Other.ent";
 const OPEN_MARK =
@@ -244,29 +259,57 @@ describe("the mark cannot block an open for good", () => {
 });
 
 describe("the footer after a world open", () => {
-  it("a .ent open that opened says edit mode, from any cached mode", async () => {
+  const entOpen = async () => {
     const s = setup();
     s.client.setMode("no_world");
     const r = await s.open();
     expect(r.content[0].text.endsWith("`Workbench: edit mode`")).toBe(true);
     s.client.setMode("unknown");
     expect((await s.resOpen()).content[0].text.endsWith("`Workbench: edit mode`")).toBe(true);
-  });
+  };
 
-  it("a Resources open that answers SetOpenedResource returned false leaves the cached mode as it was", async () => {
+  const refusedResOpen = async () => {
     const s = setup();
     s.client.setMode("no_world");
     s.env.resourcesOpenMessage = "SetOpenedResource returned false for: Worlds/Other.ent";
     const r = await s.resOpen();
     expect(r.isError).toBe(true);
     expect(r.content[0].text.endsWith("`Workbench: no world open`")).toBe(true);
-  });
+  };
 
-  it("a .gproj open loads no world, so it does not say edit mode", async () => {
+  const gprojOpen = async () => {
     const s = setup();
     s.client.setMode("no_world");
     const r = await s.resOpen("C:/mods/Other/addon.gproj");
     expect(r.content[0].text.endsWith("`Workbench: no world open`")).toBe(true);
+  };
+
+  it("a .ent open that opened says edit mode, from any cached mode", entOpen);
+  it("a Resources open that answers SetOpenedResource returned false leaves the cached mode as it was", refusedResOpen);
+  it("a .gproj open loads no world, so it does not say edit mode", gprojOpen);
+
+  it("reads the watch folder of the temp home, not of the real profile", () => {
+    expect(WATCH_DIR).toBe(join(home, ".enfusion-mcp", "watch"));
+    expect(WATCH_DIR.startsWith(join(userInfo().homedir, ".enfusion-mcp"))).toBe(false);
+  });
+
+  it("the three cases above also pass with something listening on port 5775", async (ctx) => {
+    const server = createServer((socket) => socket.destroy());
+    const listened = await new Promise<boolean>((done, fail) => {
+      server.once("error", (e: NodeJS.ErrnoException) => (e.code === "EADDRINUSE" ? done(false) : fail(e)));
+      server.listen(PORT, "127.0.0.1", () => done(true));
+    });
+    if (!listened) {
+      console.warn(`Skipped: 127.0.0.1:${PORT} is already in use, so no throwaway listener was opened.`);
+      return ctx.skip();
+    }
+    try {
+      await entOpen();
+      await refusedResOpen();
+      await gprojOpen();
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+    }
   });
 });
 
