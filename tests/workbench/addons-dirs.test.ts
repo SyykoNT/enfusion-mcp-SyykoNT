@@ -82,7 +82,7 @@ function world() {
 
 /** A client whose NET API is down until the spawn, then answers (the first `down` pings fail). */
 function client(config: Config, down = 2) {
-  const c = new WorkbenchClient("127.0.0.1", 1, config);
+  const c = new WorkbenchClient("127.0.0.1", 5775, config);
   const raw = vi.spyOn(c as unknown as { rawCall: () => Promise<unknown> }, "rawCall").mockResolvedValue({});
   for (let i = 0; i < down; i++) raw.mockRejectedValueOnce(new Error("refused"));
   return c;
@@ -263,7 +263,7 @@ describe("the launched .gproj and mod compile without a path", () => {
 
   it("is cleared by a fresh launch without a path, kept when a running Workbench is shared", async () => {
     const config = { launchedGproj: "C:\\m\\A\\addon.gproj" } as Config;
-    const c = new WorkbenchClient("127.0.0.1", 1);
+    const c = new WorkbenchClient("127.0.0.1", 5775);
     c.ping = async () => true;
     c.answeringWorkbench = async () => ({ line: "shared" });
     await launchTool(config, c)({});

@@ -118,6 +118,7 @@ describe("wb_launch reply", () => {
   it("passes on the exclude note", async () => {
     const { registerWbLaunch } = await import("../../src/tools/wb-launch.js");
     const s = setup();
+    Object.defineProperty(s.client, "port", { value: 5775 }); // the default port: wb_launch refuses to start Workbench on any other
     vi.spyOn(s.client, "ping").mockResolvedValue(false);
     vi.spyOn(s.client, "ensureRunning").mockResolvedValue("Added Scripts/WorkbenchGame/EnfusionMCP/ to x/.git/info/exclude (local, not committed)"); // never starts a real Workbench
     const tools: Record<string, (a: Record<string, unknown>) => Promise<{ content: { text: string }[] }>> = {};

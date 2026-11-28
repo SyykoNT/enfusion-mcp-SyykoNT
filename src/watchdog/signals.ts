@@ -118,12 +118,14 @@ export function isDialog(w: WinInfo): boolean {
   return !!w.visible && ((!!w.owner && w.ownerEnabled === false && w.enabled !== false) || w.cls === "#32770" || DIALOG_TITLES.includes(w.text) || w.text.startsWith(VALIDATING));
 }
 
-export type DialogKind = "leak_assert" | "script_authorization" | "open_world_prompt" | "obsolete_world" | "save_as" | "other";
+export type DialogKind = "leak_assert" | "script_authorization" | "reload_prompt" | "save_prompt" | "open_world_prompt" | "obsolete_world" | "save_as" | "other";
 
 /** Title and body text are data from the window, only compared here, never used to build a command. */
 export function dialogKind(w: WinInfo): DialogKind {
   if (leakAssertButton(w)) return "leak_assert";
   if (w.text === "Script Authorization Required") return "script_authorization";
+  const prompt = promptKind(w);
+  if (prompt) return prompt;
   if (w.text === "Opening world") return "open_world_prompt";
   if (/obsolete/i.test(dialogText(w))) return "obsolete_world";
   if (w.text.startsWith("Save world as")) return "save_as";
@@ -162,6 +164,41 @@ export function leakAssertButton(win: WinInfo): number | undefined {
   const kids = win.children ?? [];
   if (!kids.some((c) => c.text.includes(LEAK_TEXT))) return undefined;
   return kids.find((c) => c.cls === "Button" && c.text === "&Ignore")?.hwnd;
+}
+
+/** Prompts the watcher may answer when the setting allows it: ENFUSION_RELOAD_PROMPT and ENFUSION_SAVE_PROMPT. */
+export type PromptKind = "reload_prompt" | "save_prompt";
+
+/** The two buttons of a Yes/No message box, by exact label (with or without the access-key ampersand). */
+const yesNo = (win: WinInfo) => {
+  const kids = (win.children ?? []).filter((c) => c.cls === "Button");
+  const one = (labels: string[]) => {
+    const found = kids.filter((c) => labels.includes(c.text));
+    return found.length === 1 ? found[0].hwnd : undefined;
+  };
+  return { yes: one(["&Yes", "Yes"]), no: one(["&No", "No"]) };
+};
+
+/**
+ * "File was modified outside / by another program, reload?" (reload_prompt) or "Save changes?" (save_prompt): a visible #32770 box with
+ * exactly one Yes and one No button. The body text is only compared here. A box that matches both reads as reload_prompt.
+ */
+export function promptKind(win: WinInfo): PromptKind | undefined {
+  if (win.cls !== "#32770" || !win.visible) return undefined;
+  const { yes, no } = yesNo(win);
+  if (!yes || !no) return undefined;
+  const body = (win.children ?? []).filter((c) => c.cls !== "Button").map((c) => c.text).join(" ");
+  if (/reload/i.test(body) && /modified|changed/i.test(body)) return "reload_prompt";
+  if (/save/i.test(body) && /changes|modified|unsaved/i.test(body)) return "save_prompt";
+  return undefined;
+}
+
+/** Handle of the button the watcher presses on a prompt: Yes on reload_prompt (load the file from disk), No on save_prompt (do not save). */
+export function promptButton(win: WinInfo): number | undefined {
+  const kind = promptKind(win);
+  if (!kind) return undefined;
+  const { yes, no } = yesNo(win);
+  return kind === "reload_prompt" ? yes : no;
 }
 
 /** `key: value` lines of WORKBENCH_LOCK.txt; the first of each key wins. */
@@ -205,7 +242,7 @@ export interface Signals {
   now: number;
   alive: boolean;
   /** Visible dialog box of the PID and when it was first seen. */
-  dialog?: { hwnd: number; kind: "leak_assert" | "script_authorization" | "other"; since: number; button?: number };
+  dialog?: { hwnd: number; kind: "leak_assert" | "script_authorization" | PromptKind | "other"; since: number; button?: number };
   /** Main window has reported IsHungAppWindow continuously since. */
   hungSince?: number;
   /** Last "Application hangs" line or FREEZE_*.mdmp. */
@@ -226,14 +263,23 @@ export interface Ctx {
   autoRecover: boolean;
   lockHeld: boolean;
   recoverAfterMs: number;
+  /** ENFUSION_RELOAD_PROMPT: "yes" presses Yes on reload_prompt; off (default) leaves it open. */
+  reloadPrompt?: PromptMode;
+  /** ENFUSION_SAVE_PROMPT: "no" presses No on save_prompt; off (default) leaves it open. */
+  savePrompt?: PromptMode;
   /** When the current not_responding or stalled spell began. */
   badSince?: number;
   recovered?: boolean;
 }
 
-export type Action = { type: "click"; hwnd: number; button: number } | { type: "recover" };
+export type PromptMode = "answer" | "off";
 
-/** State and actions per PX-N5 sections 3.3 and 3.4. Only one click (Ignore on the leak assert) and one recovery exist. */
+export type Action = { type: "click"; hwnd: number; button: number; label?: "Yes" | "No" } | { type: "recover" };
+
+/**
+ * State and actions per PX-N5 sections 3.3 and 3.4. Clicks: Ignore on the leak assert, and, only when their setting is on, Yes on a
+ * reload_prompt and No on a save_prompt. One recovery exists.
+ */
 export function decide(s: Signals, ctx: Ctx): { state: WatchStateName; kind?: string; actions: Action[] } {
   if (!s.alive) {
     const fresh = (t?: number) => t !== undefined && t >= (s.lastLogAt ?? 0) - 2000;
@@ -246,11 +292,15 @@ export function decide(s: Signals, ctx: Ctx): { state: WatchStateName; kind?: st
   if (d?.kind === "leak_assert" && d.button && s.now - d.since >= 5000 && s.clicked !== d.hwnd && mayClick) {
     actions.push({ type: "click", hwnd: d.hwnd, button: d.button });
   }
+  const promptOn = (d?.kind === "reload_prompt" && ctx.reloadPrompt === "answer") || (d?.kind === "save_prompt" && ctx.savePrompt === "answer");
+  if (promptOn && d?.button && s.now - d.since >= 2000 && s.clicked !== d.hwnd && mayClick) {
+    actions.push({ type: "click", hwnd: d.hwnd, button: d.button, label: d.kind === "reload_prompt" ? "Yes" : "No" });
+  }
   // An assert writes crash.log at once; it stays blocked until Workbench logs again.
   const crashBlocks = !!s.crash?.assert && s.crash.at >= (s.lastLogAt ?? 0) - 2000;
   if ((d && s.now - d.since >= 10_000) || crashBlocks) {
     const leak = d?.kind === "leak_assert" || (!d && !!s.crash?.reason?.includes("Resources are leaking"));
-    return { state: "blocked_dialog", kind: leak ? "leak_assert" : d?.kind === "script_authorization" ? "script_authorization" : "other", actions };
+    return { state: "blocked_dialog", kind: leak ? "leak_assert" : d?.kind && d.kind !== "leak_assert" ? d.kind : "other", actions };
   }
   let state: WatchStateName = "ok";
   if ((s.hungSince !== undefined && s.now - s.hungSince >= 60_000) || (s.hangAt !== undefined && s.hangAt >= (s.lastLogAt ?? 0))) {

@@ -7,7 +7,7 @@
 
 import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { isDialog, leakAssertButton, LEAK_TEXT, type DialogProbe, type WinInfo } from "./signals.js";
+import { isDialog, leakAssertButton, LEAK_TEXT, promptButton, promptKind, type DialogProbe, type WinInfo } from "./signals.js";
 
 export interface ProbeSample {
   t: number;
@@ -89,6 +89,25 @@ if ($Button -eq 0) { Say ([ordered]@{ hwnd = $Hwnd; cls = '#32770'; text = [Emcp
 $btn = $kids | Where-Object { $_.hwnd -eq $Button -and $_.cls -ceq 'Button' -and $_.text -ceq '&Ignore' } | Select-Object -First 1
 $leak = $kids | Where-Object { $_.text.Contains('${LEAK_TEXT}') } | Select-Object -First 1
 if (-not $btn -or -not $leak) { 'refused: not the leak assert or no &Ignore button'; exit 2 }
+[void][EmcpWatch]::PostMessage([IntPtr][long]$Button, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+'clicked'
+`;
+
+/**
+ * Needs $WbPid, $Hwnd, $Button and $Choice (1 Yes, 2 No). Presses $Button of the #32770 box $Hwnd with BM_CLICK, only after checking
+ * that the box is a visible window of $WbPid and that $Button is its child Button labelled Yes or No as $Choice says. What kind of
+ * prompt it is was checked before (promptKind in signals.ts) on a fresh read of the same box. No focus, key or mouse calls.
+ */
+export const PROMPT_SCRIPT = `$ProgressPreference = 'SilentlyContinue'
+${WIN32}
+$want = switch ($Choice) { 1 { @('&Yes', 'Yes') } 2 { @('&No', 'No') } default { $null } }
+if (-not $want) { 'refused: choice must be 1 or 2'; exit 2 }
+$h = [IntPtr][long]$Hwnd
+[uint32]$owner = 0
+[void][EmcpWatch]::GetWindowThreadProcessId($h, [ref]$owner)
+if ($owner -ne $WbPid -or -not [EmcpWatch]::IsWindowVisible($h) -or [EmcpWatch]::Cls($h) -cne '#32770') { 'refused: the window is gone or is not a dialog box of that Workbench'; exit 2 }
+$btn = Kids $h | Where-Object { $_.hwnd -eq $Button -and $_.cls -ceq 'Button' -and $want -ccontains $_.text } | Select-Object -First 1
+if (-not $btn) { 'refused: no ' + $want[1] + ' button with that handle'; exit 2 }
 [void][EmcpWatch]::PostMessage([IntPtr][long]$Button, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
 'clicked'
 `;
@@ -265,6 +284,22 @@ export async function dismissLeakAssert(pid: number, hwnd: number, run: PsRunner
   }
   if (!button) return "refused: not the leak assert or no &Ignore button";
   return (await run(withArgs(DISMISS_SCRIPT, { WbPid: pid, Hwnd: hwnd, Button: button }))).out.trim();
+}
+
+/** Press Yes on a reload_prompt or No on a save_prompt `hwnd` of Workbench `pid`, only when a fresh read still shows that prompt. */
+export async function answerPrompt(pid: number, hwnd: number, run: PsRunner = runPs): Promise<string> {
+  const look = await run(withArgs(DISMISS_SCRIPT, { WbPid: pid, Hwnd: hwnd, Button: 0 }));
+  if (look.code !== 0) return look.out.trim() || `refused: dialog check failed (exit ${look.code})`;
+  let win: WinInfo;
+  try {
+    win = JSON.parse(look.out) as WinInfo;
+  } catch {
+    return "refused: unreadable dialog check output";
+  }
+  const kind = promptKind(win);
+  const button = promptButton(win);
+  if (!kind || !button) return "refused: not a reload or save prompt with one Yes and one No button";
+  return (await run(withArgs(PROMPT_SCRIPT, { WbPid: pid, Hwnd: hwnd, Button: button, Choice: kind === "reload_prompt" ? 1 : 2 }))).out.trim();
 }
 
 /** Run the probe for `pid`, call `onSample` per line, restart it 5 s after it dies until stopped. */

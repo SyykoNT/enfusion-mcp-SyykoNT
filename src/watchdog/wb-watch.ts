@@ -18,10 +18,10 @@ import { logger } from "../utils/logger.js";
 import { crashLogsDir, workbenchProfileDir } from "../workbench/cli.js";
 import { crashReporters, findPids, isAlive, killPids, processInfo, sleep, spawnDetached, type ProcInfo } from "../utils/process.js";
 import {
-  decide, dialogText, isDialog, likelyTrigger, leakAssertButton, loadedProjects, lockHeldBy, newCarry, parseCrashLog, parseLogChunk, portOwner,
-  type Dismiss, type LogCarry, type Signals, type WatchStateName,
+  decide, dialogText, isDialog, likelyTrigger, leakAssertButton, promptButton, loadedProjects, lockHeldBy, newCarry, parseCrashLog, parseLogChunk, portOwner,
+  type Dismiss, type LogCarry, type PromptMode, type Signals, type WatchStateName,
 } from "./signals.js";
-import { answerDialog, dismissLeakAssert, probeDialogs, startProbe, type ProbeSample } from "./probe.js";
+import { answerDialog, answerPrompt, dismissLeakAssert, probeDialogs, startProbe, type ProbeSample } from "./probe.js";
 import {
   authLine, authText, crashLine, decideAuth, dialogKind, parseAuthWindow, recentPresses, textHash,
   type AuthLog, type CrashLog, type WinInfo,
@@ -49,6 +49,9 @@ export interface WatchOpts {
   scriptAuth?: AuthMode;
   /** Which Workbench gets it (authorizeScripts): owned, watched (default) or never. */
   authScope?: Dismiss;
+  /** ENFUSION_RELOAD_PROMPT / ENFUSION_SAVE_PROMPT: answer Yes to "reload?" and No to "save changes?" (default off: left open). */
+  reloadPrompt?: PromptMode;
+  savePrompt?: PromptMode;
   /** Where the log files of a crash of this Workbench are copied. */
   crashDir?: string;
   /** Game and Workbench profile folders whose settings files are checked for lost blocks at attach and at exit. */
@@ -88,7 +91,8 @@ export interface WatchDeps {
   sample(): ProbeSample | undefined;
   alive(pid: number): boolean;
   now(): number;
-  dismiss(pid: number, hwnd: number): Promise<string>;
+  /** Press the dialog's answer: Ignore on the leak assert, or (`prompt`) Yes on a reload prompt / No on a save prompt. */
+  dismiss(pid: number, hwnd: number, prompt?: boolean): Promise<string>;
   recover(o: WatchOpts, startTime: number | undefined): Promise<string>;
   /** Script Authorization and crash handling. Each is off when its deps are missing, so a test never touches a real process. */
   readAuth?(pid: number, hwnd: number): Promise<WinInfo | undefined>;
@@ -328,8 +332,10 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
       const win = s?.wins?.find(isDialog);
       if (!win) sig.dialog = undefined;
       else if (sig.dialog?.hwnd !== win.hwnd) {
-        const button = leakAssertButton(win);
-        sig.dialog = { hwnd: win.hwnd, kind: button ? "leak_assert" : dialogKind(win) === "script_authorization" ? "script_authorization" : "other", since: now, button };
+        const k = dialogKind(win);
+        const button = k === "leak_assert" ? leakAssertButton(win) : k === "reload_prompt" || k === "save_prompt" ? promptButton(win) : undefined;
+        const kind = k === "leak_assert" || k === "script_authorization" || k === "reload_prompt" || k === "save_prompt" ? k : "other";
+        sig.dialog = { hwnd: win.hwnd, kind, since: now, button };
         st.dialog = { title: win.text, text: dialogText(win) };
       }
       if (!win) st.dialog = undefined;
@@ -359,7 +365,7 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
 
       let d = decide(
         { ...sig, now, alive },
-        { owned: o.owned, dismiss: o.dismiss, autoRecover: o.autoRecover, recoverAfterMs: o.recoverAfterMin * 60_000,
+        { owned: o.owned, dismiss: o.dismiss, autoRecover: o.autoRecover, recoverAfterMs: o.recoverAfterMin * 60_000, reloadPrompt: o.reloadPrompt, savePrompt: o.savePrompt,
           lockHeld: lockHeldBy(o.lock ? readText(o.lock) : undefined, o), badSince, recovered }
       );
       badSince = d.state === "not_responding" || d.state === "stalled" ? (badSince ?? now) : undefined;
@@ -374,10 +380,13 @@ export function createWatcher(o: WatchOpts, deps: WatchDeps) {
       for (const a of d.actions) {
         if (a.type === "click") {
           sig.clicked = a.hwnd;
-          const r = await deps.dismiss(o.pid, a.hwnd);
+          const r = await (a.label ? deps.dismiss(o.pid, a.hwnd, true) : deps.dismiss(o.pid, a.hwnd));
           const on = (st.dialog?.text || st.dialog?.title || "dialog").slice(0, 120);
-          note(now, `DIALOG ${hms(now)} PID ${o.pid} ${r === "clicked" ? `Ignore pressed on "${on}"` : `Ignore not pressed: ${r}`}`, "dialog");
-          if (r === "clicked") {
+          const label = a.label ?? "Ignore";
+          note(now, `DIALOG ${hms(now)} PID ${o.pid} ${r === "clicked" ? `${label} pressed on "${on}"` : `${label} not pressed: ${r}`}`, "dialog");
+          if (r === "clicked" && a.label) {
+            if (d.state === "blocked_dialog") d = { ...d, state: "ok", kind: undefined };
+          } else if (r === "clicked") {
             clickAt = now;
             // The assert is answered: crash.log keeps saying so until Workbench logs again, which must not keep the state blocked (B-098).
             if (sig.crash) sig.crash.assert = false;
@@ -593,7 +602,7 @@ export async function runWatcher(
     sample: () => latest,
     alive: isAlive,
     now: Date.now,
-    dismiss: (pid, hwnd) => dismissLeakAssert(pid, hwnd),
+    dismiss: (pid, hwnd, prompt) => (prompt ? answerPrompt(pid, hwnd) : dismissLeakAssert(pid, hwnd)),
     recover,
     readAuth: async (pid, hwnd) => {
       const r = (await probeDialogs([pid]))[0];
@@ -649,14 +658,17 @@ export interface StartWatcher {
   stateDir?: string;
   scriptAuth?: AuthMode;
   authScope?: Dismiss;
+  reloadPrompt?: PromptMode;
+  savePrompt?: PromptMode;
   crashDir?: string;
   settingsRoots?: string[];
   auto?: boolean;
 }
 
 /** What every watcher starter takes from the config (wb_launch, the automatic attach, wb_watch start); each adds its own host and port. */
-export const watcherBase = (config: Config): Pick<StartWatcher, "logsRoot" | "scriptAuth" | "crashDir" | "settingsRoots"> => ({
+export const watcherBase = (config: Config): Pick<StartWatcher, "logsRoot" | "scriptAuth" | "reloadPrompt" | "savePrompt" | "crashDir" | "settingsRoots"> => ({
   logsRoot: join(workbenchProfileDir(config), "logs"), scriptAuth: config.scriptAuth ?? "rules", crashDir: crashLogsDir(config), settingsRoots: profileRoots(config),
+  reloadPrompt: config.reloadPrompt === "yes" ? "answer" : "off", savePrompt: config.savePrompt === "no" ? "answer" : "off",
 });
 
 /** Start a detached watcher for one Workbench. Returns the watcher PID. */
@@ -671,6 +683,8 @@ export function startWatcher(w: StartWatcher): number {
   if (w.logsRoot) args.push("--logs-root", w.logsRoot);
   if (w.scriptAuth) args.push("--auth", w.scriptAuth);
   if (w.authScope) args.push("--auth-scope", w.authScope);
+  if (w.reloadPrompt === "answer") args.push("--reload-prompt");
+  if (w.savePrompt === "answer") args.push("--save-prompt");
   if (w.crashDir) args.push("--crash-dir", w.crashDir);
   for (const r of w.settingsRoots ?? []) args.push("--settings-root", r);
   if (process.env.ENFUSION_WORKBENCH_LOCK) args.push("--lock", process.env.ENFUSION_WORKBENCH_LOCK);
@@ -793,7 +807,7 @@ async function main(argv: string[]): Promise<number> {
       dismiss: { type: "string" }, "auto-recover": { type: "boolean" }, "recover-after-min": { type: "string" },
       host: { type: "string" }, port: { type: "string" }, event: { type: "string" },
       auth: { type: "string" }, "auth-scope": { type: "string" }, "crash-dir": { type: "string" },
-      "settings-root": { type: "string", multiple: true },
+      "settings-root": { type: "string", multiple: true }, "reload-prompt": { type: "boolean" }, "save-prompt": { type: "boolean" },
     },
   });
   const stateDir = values["state-dir"] ?? WATCH_DIR;
@@ -817,6 +831,7 @@ async function main(argv: string[]): Promise<number> {
     host: values.host ?? "127.0.0.1", port: Number(values.port ?? 5775),
     scriptAuth: parseAuthMode(values.auth).mode, authScope, crashDir: values["crash-dir"],
     settingsRoots: values["settings-root"],
+    reloadPrompt: values["reload-prompt"] ? "answer" : "off", savePrompt: values["save-prompt"] ? "answer" : "off",
   });
 }
 

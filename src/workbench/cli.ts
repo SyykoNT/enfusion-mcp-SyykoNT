@@ -207,6 +207,55 @@ export async function packAddon(config: Config, gprojPath: string, outDir: strin
   return { ok, run, outDir, files, errors };
 }
 
+export interface PublishOptions {
+  version?: string;
+  changeNote?: string;
+  previewImage?: string;
+  screenshotsDir?: string;
+  publishDir?: string;
+}
+
+export interface PublishResult {
+  ok: boolean;
+  run: WorkbenchRun;
+  /** Log lines about publishing, the Workshop and the upload, last 15 */
+  lines: string[];
+  /** "(E)" lines logged after "Publishing project" */
+  errors: string[];
+}
+
+/**
+ * Workbench arguments for a Workshop update (-publishAddon). Bohemia documents these flags for updating an addon that is already on the
+ * Workshop only; the first publish goes through File > Publish to Workshop in the Workbench GUI.
+ */
+export function publishArgs(gprojPath: string, o: PublishOptions): string[] {
+  const a = ["-gproj", gprojPath, "-publishAddon", "-noThrow"];
+  if (o.version) a.push("-publishAddonVersion", o.version);
+  if (o.changeNote) a.push("-publishAddonChangeNote", o.changeNote);
+  if (o.previewImage) a.push("-publishAddonPreviewImage", o.previewImage);
+  if (o.screenshotsDir) a.push("-publishAddonScreenshots", o.screenshotsDir);
+  if (o.publishDir) a.push("-publishAddonDir", o.publishDir);
+  return a;
+}
+
+/** The verdict of a publish run from its console.log: "Project uploaded successfully" is success; an (E) line after "Publishing project" is a failure. */
+export function publishVerdict(consoleText: string): { uploaded: boolean; errors: string[]; lines: string[] } {
+  const all = consoleText.split(/\r?\n/);
+  const lines = all.filter((l) => /publish|workshop|upload/i.test(l)).slice(-15);
+  const start = consoleText.search(/Publishing project/i);
+  const tail = start >= 0 ? consoleText.slice(start) : "";
+  const errors = [...tail.matchAll(/^.*\(E\): (.+)$/gm)].map((m) => m[1].trim());
+  return { uploaded: /Project uploaded successfully/i.test(consoleText), errors, lines };
+}
+
+/** Run a headless Workshop update. Ends our own Workbench at the timeout: the CLI publish is known to stall after "Pending workshop invites request done". */
+export async function publishAddon(config: Config, gprojPath: string, o: PublishOptions, timeoutMs = 10 * 60_000, addonsDirs?: string[]): Promise<PublishResult> {
+  if (o.publishDir) mkdirSync(o.publishDir, { recursive: true });
+  const run = await runWorkbench(config, publishArgs(gprojPath, o), timeoutMs, addonsDirs);
+  const v = publishVerdict(run.console);
+  return { ok: v.uploaded && v.errors.length === 0 && !run.timedOut && !run.dialog, run, lines: v.lines, errors: v.errors };
+}
+
 /** Why a list of -addonsDir folders is unusable (each goes into a process argument), or null. */
 export function addonsDirsError(dirs: string[]): string | null {
   const bad = dirs.find((d) => !isAbsolute(d) || /[",\r\n]/.test(d) || !existsSync(d));

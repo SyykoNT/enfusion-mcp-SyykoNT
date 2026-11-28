@@ -55,6 +55,10 @@ export interface Config {
   coalitionTools?: boolean;
   /** How the watchdog answers "Script Authorization Required": rules (default), all (Yes to All) or off. Set via ENFUSION_SCRIPT_AUTH. */
   scriptAuth?: AuthMode;
+  /** "yes": the watchdog presses Yes on Workbench's "modified outside, reload?" box. Anything else (default): left open. ENFUSION_RELOAD_PROMPT. */
+  reloadPrompt?: "yes" | "off";
+  /** "no": the watchdog presses No on Workbench's "save changes?" box (unsaved editor changes are lost). Default off. ENFUSION_SAVE_PROMPT. */
+  savePrompt?: "no" | "off";
   /** Where the log files of a crashed Workbench are copied. Set via ENFUSION_CRASH_LOGS_DIR; default: "Workbench Crash Logs" beside the Workbench profile folder. */
   crashLogsDir?: string;
   /** Attach a watcher by itself to the Workbench on the NET API port, whoever started it. On unless ENFUSION_WB_AUTOWATCH is off; set only by loadConfig. */
@@ -130,6 +134,38 @@ function loadJsonFile(path: string): Partial<Config> {
   return {};
 }
 
+/** Parse the content of a .wb-port file: one port number, nothing else. */
+export function parseWbPort(text: string): number | undefined {
+  const t = text.trim();
+  if (!/^\d+$/.test(t)) return undefined;
+  const port = parseInt(t, 10);
+  return port > 0 && port < 65536 ? port : undefined;
+}
+
+/**
+ * Find the first `.wb-port` file in each start directory or its parents, in order.
+ * The first file found decides, even when its content is invalid (then no port).
+ */
+export function findWbPortFile(startDirs: string[]): { port: number; file: string } | undefined {
+  for (const start of startDirs) {
+    if (!start) continue;
+    let dir = resolve(start);
+    for (let i = 0; i < 12; i++) {
+      const file = join(dir, ".wb-port");
+      if (existsSync(file)) {
+        let port: number | undefined;
+        try { port = parseWbPort(readFileSync(file, "utf-8")); } catch { /* unreadable: no port */ }
+        if (port === undefined) logger.warn(`Ignoring ${file}: not a port number`);
+        return port === undefined ? undefined : { port, file };
+      }
+      const up = dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+  }
+  return undefined;
+}
+
 export function loadConfig(): Config {
   // 1. Start with defaults
   const config = { ...DEFAULTS };
@@ -140,11 +176,13 @@ export function loadConfig(): Config {
     "..",
     "enfusion-mcp.config.json"
   );
-  Object.assign(config, loadJsonFile(localConfigPath));
+  const localJson = loadJsonFile(localConfigPath);
+  Object.assign(config, localJson);
 
   // 3. User home config
   const homeConfigPath = resolve(homedir(), ".enfusion-mcp", "config.json");
-  Object.assign(config, loadJsonFile(homeConfigPath));
+  const homeJson = loadJsonFile(homeConfigPath);
+  Object.assign(config, homeJson);
 
   // 4. Environment variables override everything
   if (process.env.ENFUSION_WORKBENCH_PATH) {
@@ -171,6 +209,13 @@ export function loadConfig(): Config {
     const port = parseInt(process.env.ENFUSION_WORKBENCH_PORT, 10);
     if (!isNaN(port) && port > 0 && port < 65536) {
       config.workbenchPort = port;
+    }
+  } else if (!("workbenchPort" in localJson) && !("workbenchPort" in homeJson)) {
+    // No port set explicitly: a per-project .wb-port file may name one.
+    const found = findWbPortFile([config.projectPath, process.cwd()]);
+    if (found) {
+      config.workbenchPort = found.port;
+      logger.info(`Workbench port ${found.port} from ${found.file}`);
     }
   }
   if (process.env.ENFUSION_SERVER_PATH) config.serverPath = process.env.ENFUSION_SERVER_PATH;
@@ -203,6 +248,10 @@ export function loadConfig(): Config {
     authWarned = true;
     logger.warn(`ENFUSION_SCRIPT_AUTH "${auth.invalid}" is not rules, all or off; using rules.`);
   }
+  // Opt-in prompt answers: only the exact word turns one on; anything else leaves the box open for a person.
+  const word = (v: unknown) => (typeof v === "string" ? v.trim().toLowerCase() : "");
+  config.reloadPrompt = word(process.env.ENFUSION_RELOAD_PROMPT || config.reloadPrompt) === "yes" ? "yes" : "off";
+  config.savePrompt = word(process.env.ENFUSION_SAVE_PROMPT || config.savePrompt) === "no" ? "no" : "off";
   if (process.env.ENFUSION_CRASH_LOGS_DIR) config.crashLogsDir = process.env.ENFUSION_CRASH_LOGS_DIR;
   // Same rule for the file and the variable; an unknown value is off, with one warning per process.
   const autoWatch = parseAutoWatch(process.env.ENFUSION_WB_AUTOWATCH || config.autoWatch);

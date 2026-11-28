@@ -10,6 +10,20 @@ import { findPids, killPids, sleep } from "../utils/process.js";
 import { readWorld, saveRefusal } from "./wb-editor.js";
 import { isOwned } from "../utils/instances.js";
 
+export const DEFAULT_NET_API_PORT = 5775;
+
+/**
+ * Workbench reads its NET API port (registry NetAPI_Port) only when it starts, so a Workbench
+ * launched from here would listen on 5775, not on a per-project port.
+ */
+export function portLaunchRefusal(port: number): string {
+  return (
+    `**Launch refused** — the NET API port is ${port} (ENFUSION_WORKBENCH_PORT, config or .wb-port) and nothing answers there. ` +
+    `Workbench reads its port from the registry only at start, so a Workbench started from here would listen on ${DEFAULT_NET_API_PORT}. ` +
+    "Start it with the launcher `tools/wb-launch/wb-launch.ps1` from finesthourdemo/fh-claude, which sets the port before the start, then call wb_launch again."
+  );
+}
+
 export function registerWbLaunch(
   server: McpServer,
   config: Config,
@@ -74,6 +88,7 @@ export function registerWbLaunch(
         if (who?.refuse) {
           return { content: [{ type: "text" as const, text: `${who.refuse}${formatConnectionStatus(client)}` }], isError: true };
         }
+        if (!alreadyRunning && client.port !== DEFAULT_NET_API_PORT) return { content: [{ type: "text" as const, text: portLaunchRefusal(client.port) }], isError: true };
         const gitNote = alreadyRunning ? undefined : await client.ensureRunning(gprojPath, unattended, worldPath, ...(addonsDirs ? [addonsDirs] : [])); // without addonsDirs the call keeps its three arguments
 
         // Remember which addon was requested so other tools default to it (not after a refused launch)

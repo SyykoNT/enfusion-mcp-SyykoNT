@@ -57,7 +57,7 @@ Script errors and dialogs in the servers and game clients the MCP starts (`serve
 
 ## Release
 
-Read-only checks before a commit, test pack or Workshop publish, plus one hook installer.
+Read-only checks before a commit, test pack or Workshop publish, a hook installer, and the Workshop update.
 
 | Tool | Purpose |
 |---|---|
@@ -65,6 +65,7 @@ Read-only checks before a commit, test pack or Workshop publish, plus one hook i
 | `addon_deps` | Read-only dependency check before publishing: each dependency's version and source, references into it, and findings such as undeclared, missing, unused or redundant dependencies, cycles and game version drift; plus the load order |
 | `addon_git_guard` | Local git commit guard for addon repos: `status`, `check` (both read-only) and `install` |
 | `workshop_info` | Workshop metadata from an addon's `.gproj` |
+| `workshop_publish` | Headless Workshop **update** of an addon already published (`-publishAddon`, version, one-line change note, preview image, screenshots, output folder). Dry run by default; uploads only with `dryRun: false` and `confirm: true`. The first publish stays in Workbench (File > Publish to Workshop) |
 
 ## Workbench session
 
